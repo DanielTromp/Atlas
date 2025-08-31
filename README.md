@@ -84,6 +84,7 @@ flowchart LR
 
   %% Optional publish step (auto when configured)
   UP["Publish to SharePoint\nnetbox sharepoint publish-cmdb"]
+  MXL --> UP
 ```
 
 Notes
