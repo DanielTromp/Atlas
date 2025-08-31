@@ -1,0 +1,33 @@
+# Environment
+.env
+
+# Python / tooling
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+
+# OS/editor
+.DS_Store
+*.swp
+*.swo
+
+# uv (choose a policy; ignore by default)
+uv.lock
+
+# Project exports/data
+netbox-export/data/
+netbox-export/exports/
+# Common alternates if NETBOX_DATA_DIR changes
+data/
+exports/
+
+# Python packaging artifacts
+*.egg-info/
+*.dist-info/
+build/
+dist/
+
+# Personal
+personal/

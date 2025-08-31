@@ -1,0 +1,41 @@
+[project]
+name = "enreach-tools"
+version = "0.1.0"
+description = "Utilities and CLI tools for Enreach (Jira, Confluence, NetBox, Zabbix, GitLab, etc.)"
+requires-python = ">=3.11"
+readme = "README.md"
+authors = [{ name = "Enreach", email = "Daniel.Tromp@Enreach.com" }]
+dependencies = [
+  "python-dotenv>=1.0",
+  "typer>=0.12",
+  "rich>=13.7",
+  "pynetbox>=7.3",
+  "pandas>=2.0",
+  "openpyxl>=3.1",
+  "Office365-REST-Python-Client>=2.5.10",
+  "msal>=1.30.0",
+  "requests>=2.31",
+]
+
+[project.scripts]
+netbox = "enreach_tools.cli:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+# Use src-layout; only include the project package
+where = ["src"]
+include = ["enreach_tools*"]
+exclude = ["personal*"]
+
+[tool.uv]
+dev-dependencies = [
+  "pytest>=7",
+  "ruff>=0.5",
+  "mypy>=1.8",
+]
