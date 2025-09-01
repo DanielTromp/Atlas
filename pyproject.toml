@@ -15,6 +15,9 @@ dependencies = [
   "Office365-REST-Python-Client>=2.5.10",
   "msal>=1.30.0",
   "requests>=2.31",
+  "fastapi>=0.111",
+  "uvicorn>=0.30",
+  "duckdb>=1.0",
 ]
 
 [project.scripts]

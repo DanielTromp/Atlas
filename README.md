@@ -8,11 +8,14 @@ Usage
 
 - Prepare: copy `.env.example` to `.env` and fill in values.
 - Run via uv without installing:
+  - `uv run netbox status`
   - `uv run netbox export devices`
   - `uv run netbox export vms`
   - `uv run netbox export merge`
   - `uv run netbox export update` (runs devices → vms → merge)
   - After `update`, if SharePoint is configured via `.env` (`SPO_SITE_URL` + user/pass or app creds), it automatically publishes the CMDB Excel to SharePoint.
+  - API server (serves CSVs via DuckDB): `uv run netbox api serve --host 127.0.0.1 --port 8000`
+  - Frontend UI (same server): open http://127.0.0.1:8000/app/
 
 SharePoint Upload
 -----------------
@@ -60,13 +63,53 @@ Diagnostics
 
 - `uv run netbox status` checks `/api/status/` and a token‑protected endpoint for quick 200/403 diagnostics.
 
+API (FastAPI + DuckDB)
+----------------------
+
+- Serve: `uv run netbox api serve --host 127.0.0.1 --port 8000`
+- Endpoints:
+  - `GET /health` — reports `NETBOX_DATA_DIR` and CSV presence
+  - `GET /devices` — devices from `netbox_devices_export.csv`
+  - `GET /vms` — VMs from `netbox_vms_export.csv`
+  - `GET /all` — merged dataset from `netbox_merged_export.csv`
+  - `GET /column-order` — preferred column order derived from `Systems CMDB.xlsx` (fallback to merged CSV header)
+- Query params:
+  - `limit` (1–1000, default 100), `offset` (>=0)
+  - `order_by` (column name), `order_dir` (`asc`|`desc`, default `asc`)
+- Examples:
+  - `curl "http://127.0.0.1:8000/health"`
+  - `curl "http://127.0.0.1:8000/devices?limit=5"`
+  - `curl "http://127.0.0.1:8000/devices?limit=5&order_by=Name&order_dir=desc"`
+  - `curl "http://127.0.0.1:8000/vms?limit=5"`
+- Notes:
+  - CORS is enabled for GET to allow local frontends.
+  - NaN/NaT/±Inf are normalized to `null` in JSON responses.
+
+Frontend (UI)
+-------------
+
+- Open: http://127.0.0.1:8000/app/
+- Datasets: Devices, VMs, and All (merged). The UI fetches the full dataset once and then applies:
+  - Search: text filter across all fields (case-insensitive)
+  - Sort: click any header to toggle asc/desc
+  - Limit: rows per page (client-side). Use the pager for the remaining rows
+- Columns:
+  - Columns button opens a chooser to show/hide columns
+  - Per‑dataset preferences are remembered in the browser (localStorage)
+  - Reset restores defaults or all when defaults are unavailable
+  - Default selection (when no preference exists):
+    - Name, Status, Role, Platform, IP Address, OOB IP, Contacts, Created, Last updated, Cluster, Device
+- Column order:
+  - Matches the header order from `NETBOX_DATA_DIR/Systems CMDB.xlsx` (first sheet, first row) when present
+  - Falls back to the merged CSV header order otherwise; unknown columns are appended at the end
+
 Data Flow
 ---------
 
 ```mermaid
 flowchart LR
 
-  DEV["Devices Export\nnetbox-export/bin/get_netbox_data.py"]
+  DEV["Devices Export\nnetbox-export/bin/get_netbox_devices.py"]
   VMS["VMs Export\nnetbox-export/bin/get_netbox_vms.py"]
   MERGE["Merge CSV + Excel\nnetbox-export/bin/merge_netbox_csvs.py"]
 
@@ -91,3 +134,20 @@ Notes
 -----
 
 - The data directory is configurable via `NETBOX_DATA_DIR`. By default, exports live under `netbox-export/data/`.
+
+Structure
+---------
+
+- CLI:
+  - `src/enreach_tools/cli.py`: Typer CLI entry; delegates to scripts and API
+- Scripts:
+  - `netbox-export/bin/get_netbox_devices.py:1`
+  - `netbox-export/bin/get_netbox_vms.py:1`
+  - `netbox-export/bin/merge_netbox_csvs.py:1`
+  - `netbox-export/bin/netbox_status.py:1`
+  - `netbox-export/bin/netbox_update.py:1`
+  - `netbox-export/bin/sharepoint_upload.py:1`
+  - `netbox-export/bin/sharepoint_publish_cmdb.py:1`
+- API:
+  - `src/enreach_tools/api/app.py:1`
+  - `src/enreach_tools/api/__init__.py:1`

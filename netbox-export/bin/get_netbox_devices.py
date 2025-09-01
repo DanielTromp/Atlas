@@ -7,6 +7,8 @@ import pynetbox
 
 from enreach_tools.env import apply_extra_headers, load_env, project_root, require_env
 
+# Note: file renamed from get_netbox_data.py to get_netbox_devices.py
+
 # Load environment variables from central loader (.env at project root)
 load_env()
 require_env(["NETBOX_URL", "NETBOX_TOKEN"])

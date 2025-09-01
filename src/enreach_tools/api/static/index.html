@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Enreach NetBox Viewer</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Enreach NetBox Viewer</h1>
+      <div class="controls">
+        <label>
+          Dataset:
+          <select id="dataset">
+            <option value="all">All</option>
+            <option value="devices">Devices</option>
+            <option value="vms">VMs</option>
+          </select>
+        </label>
+        <label>
+          Limit:
+          <select id="limit">
+            <option>50</option>
+            <option selected>100</option>
+            <option>250</option>
+            <option>500</option>
+            <option>1000</option>
+          </select>
+        </label>
+        <label class="grow">
+          Search:
+          <input id="search" type="text" placeholder="Filter rows..." />
+        </label>
+        <button id="refresh">Refresh</button>
+        <button id="updateBtn" type="button">Update Dataset</button>
+        <button id="columnsBtn" type="button">Columns</button>
+      </div>
+    </header>
+
+    <main>
+      <div id="status" class="status">Ready.</div>
+      <div class="table-wrap">
+        <table id="grid">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div id="pager" class="pager" aria-label="Pagination"></div>
+    </main>
+
+    <footer>
+      <small>Data served by FastAPI + DuckDB from CSVs in <code>NETBOX_DATA_DIR</code>.</small>
+    </footer>
+
+    <!-- Column chooser panel -->
+    <div id="col-panel" class="col-panel" hidden>
+      <div class="col-panel-head">
+        <strong>Columns</strong>
+        <div class="spacer"></div>
+        <button id="col-close" type="button" class="btn-ghost">Close</button>
+      </div>
+      <div class="col-actions">
+        <button id="col-all" type="button">Select All</button>
+        <button id="col-clear" type="button">Clear</button>
+        <button id="col-reset" type="button" class="danger">Reset</button>
+      </div>
+      <div id="col-list" class="col-list" aria-label="Columns"></div>
+    </div>
+
+    <!-- Progress panel -->
+    <div id="progress-panel" class="col-panel" hidden>
+      <div class="col-panel-head">
+        <strong>Updating dataset…</strong>
+        <div class="spacer"></div>
+        <button id="progress-close" type="button" class="btn-ghost">Close</button>
+      </div>
+      <pre id="progress-log" class="progress-log"></pre>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+  </html>
