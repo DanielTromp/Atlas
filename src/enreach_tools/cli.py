@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import os
-import sys
 import subprocess
+import sys
 
 import typer
 from rich import print
 
-from .env import load_env, project_root, require_env, apply_extra_headers, get_env
-
+from .env import apply_extra_headers, get_env, load_env, project_root, require_env
 
 app = typer.Typer(help="NetBox CLI")
 
@@ -39,7 +38,7 @@ app.add_typer(sharepoint, name="sharepoint")
 @export.command("devices")
 def netbox_devices():
     """Export devices to CSV (incremental)."""
-    require_env(["NETBOX_URL", "NETBOX_TOKEN"]) 
+    require_env(["NETBOX_URL", "NETBOX_TOKEN"])
     raise_code = _run_script("netbox-export/bin/get_netbox_data.py")
     raise SystemExit(raise_code)
 
@@ -47,7 +46,7 @@ def netbox_devices():
 @export.command("vms")
 def netbox_vms():
     """Export VMs to CSV (incremental)."""
-    require_env(["NETBOX_URL", "NETBOX_TOKEN"]) 
+    require_env(["NETBOX_URL", "NETBOX_TOKEN"])
     raise_code = _run_script("netbox-export/bin/get_netbox_vms.py")
     raise SystemExit(raise_code)
 
@@ -183,11 +182,13 @@ def sharepoint_upload(
     # Common
     import os
     from urllib.parse import urlparse
+
     from office365.runtime.client_request_exception import ClientRequestException
 
     site_url = get_env("SPO_SITE_URL", required=True)  # e.g. https://voiceworks0.sharepoint.com/sites/portal/circles/sas
     # Handle URL source download
-    import tempfile, shutil
+    import shutil
+    import tempfile
     src = os.fspath(file)
     tmp_path = None
     if src.lower().startswith(("http://", "https://")):
@@ -195,7 +196,7 @@ def sharepoint_upload(
             import requests
         except Exception:
             print("[red]Missing dependency 'requests' to download URLs[/red]")
-            raise SystemExit(1)
+            raise SystemExit(1) from None
         print(f"[bold]Downloading:[/bold] {src}")
         r = requests.get(src, stream=True, timeout=60)
         r.raise_for_status()
@@ -302,13 +303,12 @@ def sharepoint_upload(
         return
 
     # mode == userpass: SharePoint CSOM with service account
-    from office365.sharepoint.client_context import ClientContext
-    from office365.runtime.auth.user_credential import UserCredential
-    from office365.sharepoint.files.file import File
-    from uuid import uuid4
     from datetime import datetime
-    import time
     from urllib.parse import quote
+    from uuid import uuid4
+
+    from office365.runtime.auth.user_credential import UserCredential
+    from office365.sharepoint.client_context import ClientContext
 
     username = get_env("SPO_USERNAME", required=True)
     password = get_env("SPO_PASSWORD", required=True)
@@ -343,16 +343,15 @@ def sharepoint_upload(
         raise SystemExit(1)
 
     # Navigate/create destination path using ensure_folder_path for robustness
-    from requests import HTTPError as RequestsHTTPError
     if dest_dir:
         print(f"[bold]Destination:[/bold] /{dest_dir}")
         # Normalize if user included the library name in --dest (strip it)
-        lib_name = getattr(lib_folder, 'name', None) or candidates[0]
-        parts = [p for p in dest_dir.split('/') if p]
+        lib_name = getattr(lib_folder, "name", None) or candidates[0]
+        parts = [p for p in dest_dir.split("/") if p]
         if parts:
             first = unquote(parts[0])
             if first.lower() == unquote(lib_name).lower():
-                dest_dir = '/'.join(parts[1:])
+                dest_dir = "/".join(parts[1:])
         # ensure_folder_path expects a web-relative path like "<Library>/foo/bar"
         rel_path = f"{lib_name}/{dest_dir}" if dest_dir else str(lib_name)
         try:
@@ -415,8 +414,8 @@ def sharepoint_upload(
         _do_upload()
     except ClientRequestException as ex:
         msg = str(ex)
-        code = getattr(getattr(ex, 'response', None), 'status_code', None)
-        if force and (code == 423 or 'SPFileLockException' in msg or 'Locked' in msg):
+        code = getattr(getattr(ex, "response", None), "status_code", None)
+        if force and (code == 423 or "SPFileLockException" in msg or "Locked" in msg):
             print("[yellow]File is locked; attempting forced update (checkout -> save -> checkin).[/yellow]")
             try:
                 sp_file = target.files.get_by_url(fname).get().execute_query()
@@ -430,7 +429,7 @@ def sharepoint_upload(
                 pass
             # Try save_binary_stream directly on the existing file
             try:
-                with open(src, 'rb') as fh:
+                with open(src, "rb") as fh:
                     if sp_file is None:
                         sp_file = target.files.get_by_url(fname)
                     sp_file.save_binary_stream(fh.read()).execute_query()
@@ -441,7 +440,7 @@ def sharepoint_upload(
                 base, ext = os.path.splitext(fname)
                 alt_name = f"{base} {ts}{ext or ''}"
                 print(f"[yellow]Uploading with alternate name due to lock:[/yellow] {alt_name}")
-                with open(src, 'rb') as fh:
+                with open(src, "rb") as fh:
                     target.upload_file(alt_name, fh.read()).execute_query()
                 print("[green]Alternate upload complete[/green]")
                 # Exit early after alternate upload
@@ -467,7 +466,6 @@ def sharepoint_upload(
             print(f"[bold]Open (Doc.aspx):[/bold] {doc}")
             # Short viewer link format: /:x:/r/<path>?d=w<guid_nodash_lower>&csf=1&web=1&isSPOFile=1
             try:
-                from urllib.parse import quote as urlquote
                 g_nodash = guid.replace("-", "").lower().strip("{}")
                 origin = f"{urlparse(site_url).scheme}://{urlparse(site_url).netloc}"
                 rel = sp_file.properties.get("ServerRelativeUrl")

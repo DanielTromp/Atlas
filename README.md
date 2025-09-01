@@ -26,10 +26,10 @@ Publish CMDB
 
 - One-shot publish: `uv run netbox sharepoint publish-cmdb` (defaults to user/pass, forced overwrite, destination `Important Info/Autosync/Systems CMDB.xlsx`).
 - Auto-publish after update: running `uv run netbox export update` will, when SharePoint env is set, automatically call the same publish step.
- - After upload, the tool prints stable open links:
-   - Doc.aspx using the file UniqueId (stable link if the same item is overwritten)
-   - Direct web link (`?web=1`) to the file path
-   - Short viewer link (`/:x:/r/...?...d=w<GUID>&csf=1&web=1&isSPOFile=1`)
+- After upload, the tool prints stable open links:
+  - Doc.aspx using the file UniqueId (stable link if the same item is overwritten)
+  - Direct web link (`?web=1`) to the file path
+  - Short viewer link (`/:x:/r/...?...d=w<GUID>&csf=1&web=1&isSPOFile=1`)
 
 Service Account (User/Pass)
 ---------------------------
@@ -89,5 +89,5 @@ flowchart LR
 
 Notes
 -----
+
 - The data directory is configurable via `NETBOX_DATA_DIR`. By default, exports live under `netbox-export/data/`.
-- Set `NETBOX_EXTRA_HEADERS` to pass headers required by proxies/WAF (e.g., Cloudflare/Azure). These are applied to all NetBox requests.

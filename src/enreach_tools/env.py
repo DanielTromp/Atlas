@@ -2,28 +2,21 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Optional
 
 from dotenv import find_dotenv, load_dotenv
 
 
 def project_root() -> Path:
     """Return the repo root (directory containing pyproject.toml)."""
-    # Start from this file and walk up until we find pyproject.toml
     p = Path(__file__).resolve()
-    for parent in [p] + list(p.parents):
-        if (parent / "pyproject.toml").exists():
-            # For a package structure like enreach_tools/, root is parent of the package dir
-            # i.e., the directory that contains pyproject.toml
-            while parent.name != "" and not (parent / "pyproject.toml").exists():
-                parent = parent.parent
-            return parent if (parent / "pyproject.toml").exists() else Path.cwd()
+    for cand in [p, *list(p.parents)]:
+        if (cand / "pyproject.toml").exists():
+            return cand
     return Path.cwd()
 
 
-def load_env(override: bool = False, dotenv_path: Optional[Path] = None) -> Path:
-    """
-    Load environment variables from the nearest .env (defaults to repo root).
+def load_env(override: bool = False, dotenv_path: Path | None = None) -> Path:
+    """Load environment variables from the nearest .env (defaults to repo root).
 
     - If `dotenv_path` is provided, load that file.
     - Else, search from project root using python-dotenv's find_dotenv.
@@ -47,7 +40,7 @@ def require_env(keys: list[str]) -> None:
         raise ValueError(f"Missing required env vars: {', '.join(missing)}{hint}")
 
 
-def get_env(key: str, default: Optional[str] = None, required: bool = False) -> Optional[str]:
+def get_env(key: str, default: str | None = None, required: bool = False) -> str | None:
     """Get an env var with optional required flag."""
     val = os.getenv(key, default)
     if required and (val is None or val == ""):
@@ -56,8 +49,7 @@ def get_env(key: str, default: Optional[str] = None, required: bool = False) -> 
 
 
 def apply_extra_headers(session) -> None:
-    """
-    Apply optional extra HTTP headers from NETBOX_EXTRA_HEADERS env var to a requests.Session.
+    """Apply optional extra HTTP headers from NETBOX_EXTRA_HEADERS env var to a requests.Session.
     Format: semicolon-separated k=v pairs, e.g. "Header1=abc;Header2=xyz".
     """
     raw = os.getenv("NETBOX_EXTRA_HEADERS", "").strip()
