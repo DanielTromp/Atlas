@@ -13,8 +13,10 @@ ToDo list
 - [x] API implementation for endpoints, DuckDB
   - [x] Initial scaffold: FastAPI app with /health, /devices, /vms; CLI `netbox api serve`; dependencies added.
 - [x] Create frontend with a filter- and sortable table
-- [ ] Update the CLI log output, make the output for Devices and vms the same, and have the other endpoint output similar. 
-- [ ] Add logging to a file and make it viewable in the front ui.
+- [x] Replace /app UI with the new virtualized grid and remove all Airtable references (code, assets, docs)
+- [x] Add `scripts/visit_app.py` with delayed Playwright screenshot and `--system` flag to open the default browser
+- [x] Update the CLI log output, make the output for Devices and vms the same, and have the other endpoint output similar. 
+- [x] Add logging to a file and make it viewable in the front ui.
 
 - [ ] Refactor common NetBox helpers into `src/enreach_tools/netbox_common.py` (contacts fetching, incremental update helpers, CSV write util) and reuse in device/VM exporters.
 - [ ] Split long functions: extract focused helpers from `netbox-export/bin/get_netbox_devices.py:get_full_device_data` and `netbox-export/bin/get_netbox_vms.py:get_vm_details`.

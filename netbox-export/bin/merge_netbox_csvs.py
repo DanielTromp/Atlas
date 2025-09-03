@@ -289,7 +289,7 @@ def create_excel_export(csv_file, excel_file):
             file_size = os.path.getsize(excel_file)
             print(f"Excel file created: {file_size:,} bytes ({file_size / 1024 / 1024:.2f} MB)")
 
-        print("✅ Excel export completed with:")
+        print("Excel export completed with:")
         print("  - Data sorted by Name")
         print("  - Filters enabled on header row")
         print("  - Auto-adjusted column widths")
@@ -303,8 +303,7 @@ def create_excel_export(csv_file, excel_file):
 
 def main():
     """Main function."""
-    print("NetBox CSV Merger & Excel Exporter")
-    print("=" * 50)
+    print("Starting NetBox CSV merge and Excel export...")
 
     start_time = datetime.now()
 
@@ -327,12 +326,12 @@ def main():
 
     # Summary
     if csv_success and excel_success:
-        print("✅ Both CSV merge and Excel export completed successfully!")
+        print("Both CSV merge and Excel export completed successfully!")
     elif csv_success:
-        print("✅ CSV merge completed successfully!")
-        print("⚠️  Excel export skipped or failed")
+        print("CSV merge completed successfully!")
+        print("Excel export skipped or failed")
     else:
-        print("❌ CSV merge failed!")
+        print("CSV merge failed!")
         import sys
         sys.exit(1)
 

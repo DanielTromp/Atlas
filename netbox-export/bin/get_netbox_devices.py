@@ -237,6 +237,7 @@ def sync_netbox_to_csv():
     if not NETBOX_URL or not NETBOX_TOKEN:
         print("Error: NETBOX_URL and NETBOX_TOKEN must be set in the .env file.")
         return
+    print("Starting NetBox Devices data synchronization...")
 
     try:
         nb = pynetbox.api(url=NETBOX_URL, token=NETBOX_TOKEN)
@@ -297,10 +298,10 @@ def sync_netbox_to_csv():
         count = 0
         total_to_fetch = len(devices_to_fetch)
         if total_to_fetch > 0:
-            print("Fetching detailed data for new/updated devices...")
+            print(f"Fetching details for {total_to_fetch} devices...")
             for device_id in devices_to_fetch:
                 count += 1
-                print(f"  Fetching device {count}/{total_to_fetch} (ID: {device_id})")
+                print(f"Progress: {count}/{total_to_fetch} devices processed")
                 updated_data[device_id] = get_full_device_data(nb, device_id)
 
         # 5. Update the device dictionary

@@ -31,3 +31,13 @@ dist/
 
 # Personal
 personal/
+
+# Local dev server artifacts
+/.server_pid
+/.server.log
+/server.log
+/export.log
+
+# Local screenshots from visit_app
+/app*.png
+/airtable*.png

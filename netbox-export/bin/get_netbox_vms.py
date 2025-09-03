@@ -388,14 +388,14 @@ def write_csv_data(vm_details, existing_data, deleted_vm_ids):
             for vm_data in vm_details.values():
                 writer.writerow(vm_data)
 
-        print(f"CSV file updated successfully: {CSV_FILE}")
+        # CSV file written; summary printed by caller
 
     except Exception as e:
         print(f"Error writing CSV file: {e}")
 
 def main():
     """Main function"""
-    print("Starting NetBox VM data synchronization...")
+    print("Starting NetBox VMs data synchronization...")
 
     # Connect to NetBox
     nb = connect_to_netbox()

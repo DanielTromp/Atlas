@@ -7,6 +7,7 @@
   const $q = document.getElementById("q");
   const $reload = document.getElementById("reload");
   const $updateBtn = document.getElementById("updateBtn");
+  const $viewLogs = document.getElementById("viewLogs");
   const $summary = document.getElementById("summary");
   const $hideBtn = document.getElementById("hideBtn");
   const $fieldsPanel = document.getElementById("fields-panel");
@@ -18,6 +19,19 @@
   const $progressPanel = document.getElementById("progress-panel");
   const $progressClose = document.getElementById("progress-close");
   const $progressLog = document.getElementById("progress-log");
+  const $resizeSE = document.getElementById("resize-se");
+  const $resizeSW = document.getElementById("resize-sw");
+  // Log autoscroll behavior: follow bottom unless user scrolls up
+  let followTail = true;
+  function atBottom(el, threshold = 24) {
+    if (!el) return true;
+    return (el.scrollHeight - el.scrollTop - el.clientHeight) <= threshold;
+  }
+  $progressLog?.addEventListener('scroll', () => {
+    if (!$progressLog) return;
+    // If user is near the bottom, keep following; otherwise pause follow
+    followTail = atBottom($progressLog);
+  });
   const $density = document.getElementById("density");
   const $downloadCsv = document.getElementById("downloadCsv");
   const $headerScroll = document.getElementById("header-scroll");
@@ -571,8 +585,34 @@
   $q.addEventListener('input', debounce(() => { computeView(); renderVisible(); }, 160));
   $q.addEventListener('input', updateURLDebounced);
 
+  // Logs panel polling helpers
+  let logPollTimer = null;
+  function stopLogPolling() {
+    if (logPollTimer) { clearInterval(logPollTimer); logPollTimer = null; }
+  }
+  async function fetchLogsOnce(n = 300) {
+    try {
+      const res = await fetch(`${API_BASE}/logs/tail?n=${n}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const lines = (data && Array.isArray(data.lines)) ? data.lines : [];
+      if ($progressLog) {
+        $progressLog.textContent = lines.join('\n');
+        if (followTail) $progressLog.scrollTop = $progressLog.scrollHeight;
+      }
+    } catch {}
+  }
+  function startLogPolling(n = 300, intervalMs = 1200) {
+    stopLogPolling();
+    fetchLogsOnce(n);
+    logPollTimer = setInterval(() => fetchLogsOnce(n), intervalMs);
+  }
+
   // Stream export logs to the progress panel
   async function runExportFor(ds) {
+    // New stream: default to following the tail
+    followTail = true;
+    stopLogPolling();
     const url = `${API_BASE}/export/stream?dataset=${encodeURIComponent(ds === 'all' ? 'all' : ds)}`;
     if ($progressPanel && $progressLog) {
       $progressLog.textContent = '';
@@ -593,7 +633,7 @@
           const chunk = td.decode(value, { stream: true });
           $progressLog.textContent += chunk;
           logText += chunk;
-          $progressLog.scrollTop = $progressLog.scrollHeight;
+          if (followTail) $progressLog.scrollTop = $progressLog.scrollHeight;
         }
       }
       // Check exit code footer like "[exit 1]"
@@ -610,6 +650,8 @@
       } else {
         // Keep the panel open so the user can read errors
         if ($progressLog) $progressLog.scrollTop = $progressLog.scrollHeight;
+        // Begin polling recent logs after a short pause
+        setTimeout(() => startLogPolling(300, 1500), 600);
       }
     }
   }
@@ -619,6 +661,60 @@
     await runExportFor(dataset);
   });
   $progressClose?.addEventListener('click', () => { if ($progressPanel) $progressPanel.hidden = true; });
+
+  // View recent logs button
+  $viewLogs?.addEventListener('click', () => {
+    if ($progressPanel && $progressLog) {
+      $progressPanel.hidden = false;
+      $progressLog.textContent = '';
+      followTail = true;
+      startLogPolling(300, 1500);
+    }
+  });
+
+  // Stop polling when panel is hidden via Esc or programmatically
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !$progressPanel.hidden) {
+      $progressPanel.hidden = true;
+      stopLogPolling();
+    }
+  });
+
+  // Add manual resize behavior for both corners
+  function setupResizeHandle(handle, mode) {
+    if (!handle || !$progressPanel) return;
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const rect = $progressPanel.getBoundingClientRect();
+      const startW = rect.width;
+      const startH = rect.height;
+      const startX = e.clientX || 0;
+      const startY = e.clientY || 0;
+      const MIN_W = 320, MIN_H = 180;
+      const MAX_W = Math.max(MIN_W, window.innerWidth - 32);
+      const MAX_H = Math.max(MIN_H, window.innerHeight - 80);
+      const onMove = (ev) => {
+        const dx = (ev.clientX || 0) - startX;
+        const dy = (ev.clientY || 0) - startY;
+        let newW = startW + (mode === 'se' ? dx : -dx);
+        let newH = startH + dy;
+        newW = Math.min(Math.max(MIN_W, newW), MAX_W);
+        newH = Math.min(Math.max(MIN_H, newH), MAX_H);
+        $progressPanel.style.width = Math.round(newW) + 'px';
+        $progressPanel.style.height = Math.round(newH) + 'px';
+        document.body.classList.add('resizing');
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        document.body.classList.remove('resizing');
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  }
+  setupResizeHandle($resizeSE, 'se');
+  setupResizeHandle($resizeSW, 'sw');
 
   // Download CSV of filtered view
   function toCsvValue(v) {

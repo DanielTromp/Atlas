@@ -21,6 +21,7 @@
         </label>
         <button id="hideBtn" class="btn" title="Hide fields">👁️‍🗨️ Hide fields</button>
         <button id="updateBtn" class="btn" title="Run export and refresh">Update dataset</button>
+        <button id="viewLogs" class="btn" title="View recent export logs">View logs</button>
         <button id="downloadCsv" class="btn" title="Download filtered CSV">Download CSV</button>
         <label class="field">
           <span>Density</span>
@@ -78,6 +79,9 @@
         <button id="progress-close" class="btn-icon" title="Close">✕</button>
       </div>
       <pre id="progress-log" class="progress-log"></pre>
+      <!-- Manual resize handles for both corners -->
+      <div id="resize-se" class="resize-handle se" title="Resize"></div>
+      <div id="resize-sw" class="resize-handle sw" title="Resize"></div>
     </div>
 
     <script src="app.js"></script>

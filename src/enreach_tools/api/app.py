@@ -15,6 +15,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from datetime import datetime
 
 from enreach_tools.env import load_env, project_root
 
@@ -37,6 +38,19 @@ def _data_dir() -> Path:
 
 def _csv_path(name: str) -> Path:
     return _data_dir() / name
+
+# Simple export log file (appends)
+LOG_PATH = project_root() / "export.log"
+
+
+def _write_log(msg: str) -> None:
+    try:
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with LOG_PATH.open("a", encoding="utf-8") as fh:
+            fh.write(f"[{ts}] {msg.rstrip()}\n")
+    except Exception:
+        # Logging failures should never crash the API
+        pass
 
 
 def _list_records(
@@ -137,6 +151,22 @@ def root_redirect():
 _static_dir = Path(__file__).parent / "static"
 app.mount("/app", StaticFiles(directory=_static_dir, html=True), name="app")
 
+
+@app.get("/logs/tail")
+def logs_tail(n: int = Query(200, ge=1, le=5000)) -> dict:
+    """
+    Return the last N lines of the export log.
+    Response: { "lines": ["..", ".."] }
+    """
+    if not LOG_PATH.exists():
+        return {"lines": []}
+    try:
+        with LOG_PATH.open("r", encoding="utf-8", errors="ignore") as fh:
+            lines = fh.readlines()[-n:]
+        return {"lines": [ln.rstrip("\n") for ln in lines]}
+    except Exception:
+        return {"lines": []}
+
 @app.get("/export/stream")
 async def export_stream(
     dataset: Literal["devices", "vms", "all"] = "devices",
@@ -160,7 +190,9 @@ async def export_stream(
         cmd = [sys.executable, "-m", "enreach_tools.cli", *sub]
 
     async def runner():
-        yield f"$ {' '.join(cmd)}\n"
+        start_cmd = f"$ {' '.join(cmd)}"
+        yield start_cmd + "\n"
+        _write_log(start_cmd)
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             cwd=str(project_root()),
@@ -174,12 +206,16 @@ async def export_stream(
                 if not line:
                     break
                 try:
-                    yield line.decode(errors="ignore")
+                    txt = line.decode(errors="ignore")
                 except Exception:
-                    yield str(line)
+                    txt = str(line)
+                yield txt
+                _write_log(txt)
         finally:
             rc = await proc.wait()
-            yield f"\n[exit {rc}]\n"
+            exit_line = f"[exit {rc}]"
+            yield f"\n{exit_line}\n"
+            _write_log(exit_line)
 
     return StreamingResponse(runner(), media_type="text/plain")
 

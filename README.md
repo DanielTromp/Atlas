@@ -67,12 +67,14 @@ API (FastAPI + DuckDB)
 ----------------------
 
 - Serve: `uv run netbox api serve --host 127.0.0.1 --port 8000`
-- Endpoints:
+ - Endpoints:
   - `GET /health` — reports `NETBOX_DATA_DIR` and CSV presence
   - `GET /devices` — devices from `netbox_devices_export.csv`
   - `GET /vms` — VMs from `netbox_vms_export.csv`
   - `GET /all` — merged dataset from `netbox_merged_export.csv`
   - `GET /column-order` — preferred column order derived from `Systems CMDB.xlsx` (fallback to merged CSV header)
+  - `GET /logs/tail?n=200` — returns the last N lines of `export.log` as `{ "lines": [...] }` (default N=200, max 5000)
+  - `GET /export/stream?dataset=devices|vms|all` — streams the live export output (text/plain)
 - Query params:
   - `limit` (1–1000, default 100), `offset` (>=0)
   - `order_by` (column name), `order_dir` (`asc`|`desc`, default `asc`)
@@ -81,6 +83,8 @@ API (FastAPI + DuckDB)
   - `curl "http://127.0.0.1:8000/devices?limit=5"`
   - `curl "http://127.0.0.1:8000/devices?limit=5&order_by=Name&order_dir=desc"`
   - `curl "http://127.0.0.1:8000/vms?limit=5"`
+  - `curl "http://127.0.0.1:8000/logs/tail?n=50"`
+  - `curl -N "http://127.0.0.1:8000/export/stream?dataset=devices"`
 - Notes:
   - CORS is enabled for GET to allow local frontends.
   - NaN/NaT/±Inf are normalized to `null` in JSON responses.
@@ -95,7 +99,10 @@ Frontend (UI)
   - Kolommen: drag‑and‑drop herschikken, per‑kolom filters, sorteren via header
   - Snelle zoekbalk: filtert over alle velden (case‑insensitive)
   - Velden verbergen/tonen via paneel; dichtheid (compact/comfortabel)
-  - CSV downloaden van de gefilterde weergave; dataset updaten met live log
+  - CSV downloaden van de gefilterde weergave
+  - Update dataset: voert export uit en toont live log
+  - View logs: opent het log‑paneel met recente regels uit `export.log`
+  - Log‑paneel: resizable (onder‑links en onder‑rechts), slimme autoscroll (blijft boven wanneer je omhoog scrolt), Esc sluit
   - Voorkeuren per dataset worden onthouden (kolomvolgorde, zichtbaarheid, filters)
 - Kolomvolgorde:
   - Volgt de header‑volgorde uit `NETBOX_DATA_DIR/Systems CMDB.xlsx` (sheet 1, rij 1) indien aanwezig
@@ -133,19 +140,10 @@ Notes
 
 - The data directory is configurable via `NETBOX_DATA_DIR`. By default, exports live under `netbox-export/data/`.
 
-Structure
+Utilities
 ---------
 
-- CLI:
-  - `src/enreach_tools/cli.py`: Typer CLI entry; delegates to scripts and API
-- Scripts:
-  - `netbox-export/bin/get_netbox_devices.py:1`
-  - `netbox-export/bin/get_netbox_vms.py:1`
-  - `netbox-export/bin/merge_netbox_csvs.py:1`
-  - `netbox-export/bin/netbox_status.py:1`
-  - `netbox-export/bin/netbox_update.py:1`
-  - `netbox-export/bin/sharepoint_upload.py:1`
-  - `netbox-export/bin/sharepoint_publish_cmdb.py:1`
-- API:
-  - `src/enreach_tools/api/app.py:1`
-  - `src/enreach_tools/api/__init__.py:1`
+- Open in systeem‑browser:
+  - `python scripts/visit_app.py --system --url http://127.0.0.1:8000/app/`
+- Headless screenshot (met vertraging voor rendering):
+  - `python scripts/visit_app.py --headless --screenshot app.png --delay-ms 1200`
