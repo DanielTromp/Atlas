@@ -89,19 +89,17 @@ Frontend (UI)
 -------------
 
 - Open: http://127.0.0.1:8000/app/
-- Datasets: Devices, VMs, and All (merged). The UI fetches the full dataset once and then applies:
-  - Search: text filter across all fields (case-insensitive)
-  - Sort: click any header to toggle asc/desc
-  - Limit: rows per page (client-side). Use the pager for the remaining rows
-- Columns:
-  - Columns button opens a chooser to show/hide columns
-  - Per‑dataset preferences are remembered in the browser (localStorage)
-  - Reset restores defaults or all when defaults are unavailable
-  - Default selection (when no preference exists):
-    - Name, Status, Role, Platform, IP Address, OOB IP, Contacts, Created, Last updated, Cluster, Device
-- Column order:
-  - Matches the header order from `NETBOX_DATA_DIR/Systems CMDB.xlsx` (first sheet, first row) when present
-  - Falls back to the merged CSV header order otherwise; unknown columns are appended at the end
+- Datasets: tabs voor Devices, VMs en All (merged)
+- Grid‑functies:
+  - Virtueel scrollen (vloeiend bij grote datasets)
+  - Kolommen: drag‑and‑drop herschikken, per‑kolom filters, sorteren via header
+  - Snelle zoekbalk: filtert over alle velden (case‑insensitive)
+  - Velden verbergen/tonen via paneel; dichtheid (compact/comfortabel)
+  - CSV downloaden van de gefilterde weergave; dataset updaten met live log
+  - Voorkeuren per dataset worden onthouden (kolomvolgorde, zichtbaarheid, filters)
+- Kolomvolgorde:
+  - Volgt de header‑volgorde uit `NETBOX_DATA_DIR/Systems CMDB.xlsx` (sheet 1, rij 1) indien aanwezig
+  - Valt anders terug op de volgorde van de merged CSV; onbekende kolommen komen achteraan
 
 Data Flow
 ---------

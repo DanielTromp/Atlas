@@ -1,79 +1,81 @@
 <!doctype html>
-<html lang="en">
+<html lang="nl">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Enreach NetBox Viewer</title>
+    <title>Dataset Viewer</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <header>
-      <h1>Enreach NetBox Viewer</h1>
-      <div class="controls">
-        <label>
-          Dataset:
-          <select id="dataset">
-            <option value="all">All</option>
-            <option value="devices">Devices</option>
-            <option value="vms">VMs</option>
+    <header class="topbar">
+      <h1 class="brand">Dataset Viewer</h1>
+      <nav class="tabs" id="tabs" aria-label="Datasets">
+        <button class="tab active" data-ds="devices">Devices</button>
+        <button class="tab" data-ds="vms">VMs</button>
+        <button class="tab" data-ds="all">All</button>
+      </nav>
+      <div class="toolbar">
+        <label class="field grow">
+          <span>Search</span>
+          <input id="q" type="text" placeholder="Search all columns" />
+        </label>
+        <button id="hideBtn" class="btn" title="Hide fields">👁️‍🗨️ Hide fields</button>
+        <button id="updateBtn" class="btn" title="Run export and refresh">Update dataset</button>
+        <button id="downloadCsv" class="btn" title="Download filtered CSV">Download CSV</button>
+        <label class="field">
+          <span>Density</span>
+          <select id="density">
+            <option value="comfortable" selected>Comfortable</option>
+            <option value="compact">Compact</option>
           </select>
         </label>
-        <label>
-          Limit:
-          <select id="limit">
-            <option>50</option>
-            <option selected>100</option>
-            <option>250</option>
-            <option>500</option>
-            <option>1000</option>
-          </select>
-        </label>
-        <label class="grow">
-          Search:
-          <input id="search" type="text" placeholder="Filter rows..." />
-        </label>
-        <button id="refresh">Refresh</button>
-        <button id="updateBtn" type="button">Update Dataset</button>
-        <button id="columnsBtn" type="button">Columns</button>
+        <button id="reload" class="btn">Refresh</button>
+        <span id="summary" class="summary"></span>
       </div>
     </header>
 
-    <main>
-      <div id="status" class="status">Ready.</div>
-      <div class="table-wrap">
-        <table id="grid">
-          <thead></thead>
-          <tbody></tbody>
-        </table>
+    <main class="main">
+      <div class="grid root" id="grid-root">
+        <div class="grid header">
+          <div class="header-scroll" id="header-scroll">
+            <div class="header-rows">
+              <div class="header-row" id="header-row"></div>
+              <div class="filter-row" id="filter-row"></div>
+            </div>
+          </div>
+        </div>
+        <div class="grid body" id="body">
+          <div class="body-scroll" id="body-scroll">
+            <div class="canvas" id="canvas"></div>
+            <div class="rows" id="rows"></div>
+          </div>
+        </div>
       </div>
-      <div id="pager" class="pager" aria-label="Pagination"></div>
     </main>
 
-    <footer>
-      <small>Data served by FastAPI + DuckDB from CSVs in <code>NETBOX_DATA_DIR</code>.</small>
-    </footer>
-
-    <!-- Column chooser panel -->
-    <div id="col-panel" class="col-panel" hidden>
-      <div class="col-panel-head">
-        <strong>Columns</strong>
-        <div class="spacer"></div>
-        <button id="col-close" type="button" class="btn-ghost">Close</button>
+    <!-- Hide fields panel -->
+    <div id="fields-panel" class="fields-panel" hidden>
+      <div class="fields-head">
+        <div class="fields-title">
+          <strong>Hide fields</strong>
+          <div class="spacer"></div>
+          <button id="fields-collapse" class="btn-icon" title="Close">✕</button>
+        </div>
+        <input id="fields-search" class="fields-search" type="text" placeholder="Find a field" />
       </div>
-      <div class="col-actions">
-        <button id="col-all" type="button">Select All</button>
-        <button id="col-clear" type="button">Clear</button>
-        <button id="col-reset" type="button" class="danger">Reset</button>
+      <div id="fields-list" class="fields-list" role="listbox" aria-label="Columns"></div>
+      <div class="fields-actions">
+        <button id="hide-all" class="btn ghost">Hide all</button>
+        <button id="show-all" class="btn ghost">Show all</button>
       </div>
-      <div id="col-list" class="col-list" aria-label="Columns"></div>
     </div>
 
     <!-- Progress panel -->
-    <div id="progress-panel" class="col-panel" hidden>
-      <div class="col-panel-head">
+    <div id="progress-panel" class="progress-panel" hidden>
+      <div class="progress-head">
         <strong>Updating dataset…</strong>
         <div class="spacer"></div>
-        <button id="progress-close" type="button" class="btn-ghost">Close</button>
+        <button id="progress-close" class="btn-icon" title="Close">✕</button>
       </div>
       <pre id="progress-log" class="progress-log"></pre>
     </div>
