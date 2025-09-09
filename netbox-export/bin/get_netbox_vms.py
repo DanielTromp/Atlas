@@ -9,6 +9,7 @@ import csv
 import os
 import sys
 from pathlib import Path
+import argparse
 
 import pynetbox
 
@@ -395,6 +396,10 @@ def write_csv_data(vm_details, existing_data, deleted_vm_ids):
 
 def main():
     """Main function"""
+    parser = argparse.ArgumentParser(description="Export NetBox VMs to CSV")
+    parser.add_argument("--force", action="store_true", help="Re-fetch all VMs and rewrite CSV")
+    args = parser.parse_args()
+
     print("Starting NetBox VMs data synchronization...")
 
     # Connect to NetBox
@@ -406,14 +411,19 @@ def main():
         print("No VMs found in NetBox or error occurred.")
         return
 
-    # Read existing CSV data
-    existing_data = read_existing_csv()
+    if args.force:
+        print("Force refresh enabled: re-fetching all VMs...")
+        existing_data = {}
+        vms_to_fetch = list(netbox_metadata.keys())
+        deleted_vms = []
+    else:
+        # Read existing CSV data
+        existing_data = read_existing_csv()
+        # Identify changes
+        new_vms, updated_vms, deleted_vms = identify_changes(netbox_metadata, existing_data)
+        vms_to_fetch = new_vms + updated_vms
 
-    # Identify changes
-    new_vms, updated_vms, deleted_vms = identify_changes(netbox_metadata, existing_data)
-
-    # Get details for new and updated VMs
-    vms_to_fetch = new_vms + updated_vms
+    # Get details for target VMs
     vm_details = get_vm_details(nb, vms_to_fetch)
 
     # Write updated data to CSV

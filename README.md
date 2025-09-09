@@ -9,10 +9,10 @@ Usage
 - Prepare: copy `.env.example` to `.env` and fill in values.
 - Run via uv without installing:
   - `uv run netbox status`
-  - `uv run netbox export devices`
-  - `uv run netbox export vms`
+  - `uv run netbox export devices` (add `--force` to re-fetch all)
+  - `uv run netbox export vms` (add `--force` to re-fetch all)
   - `uv run netbox export merge`
-  - `uv run netbox export update` (runs devices → vms → merge)
+  - `uv run netbox export update` (runs devices → vms → merge; supports `--force` to re-fetch all before merge)
   - After `update`, if SharePoint is configured via `.env` (`SPO_SITE_URL` + user/pass or app creds), it automatically publishes the CMDB Excel to SharePoint.
   - API server (serves CSVs via DuckDB): `uv run netbox api serve --host 127.0.0.1 --port 8000`
   - Frontend UI (same server): open http://127.0.0.1:8000/app/
@@ -43,7 +43,11 @@ You can also use a service account with username/password (no MFA) via SharePoin
 - Optional: `SPO_DOC_LIB` to force the document library name (otherwise the tool tries "Shared Documents", then "Documents").
 - Run: `uv run netbox sharepoint upload --auth userpass --file "netbox-export/data/Systems CMDB.xlsx"`.
 
-Note: user/pass works only without MFA and is less secure than app‑only. Prefer app‑only when possible.
+Notes:
+- The account must be a native user in the target tenant (not a B2B/guest) and must not require MFA or extra prompts.
+- Conditional Access policies may block programmatic cookie-based auth.
+- If you hit an auth cookies error during `userpass`, switch to app-only auth.
+  Set `SPO_TENANT_ID`, `SPO_CLIENT_ID`, `SPO_CLIENT_SECRET` and run with `--auth app` (recommended).
 
 .env behavior
 -------------
@@ -93,20 +97,51 @@ Frontend (UI)
 -------------
 
 - Open: http://127.0.0.1:8000/app/
-- Datasets: tabs voor Devices, VMs en All (merged)
-- Grid‑functies:
-  - Virtueel scrollen (vloeiend bij grote datasets)
-  - Kolommen: drag‑and‑drop herschikken, per‑kolom filters, sorteren via header
-  - Snelle zoekbalk: filtert over alle velden (case‑insensitive)
-  - Velden verbergen/tonen via paneel; dichtheid (compact/comfortabel)
-  - CSV downloaden van de gefilterde weergave
-  - Update dataset: voert export uit en toont live log
-  - View logs: opent het log‑paneel met recente regels uit `export.log`
-  - Log‑paneel: resizable (onder‑links en onder‑rechts), slimme autoscroll (blijft boven wanneer je omhoog scrolt), Esc sluit
-  - Voorkeuren per dataset worden onthouden (kolomvolgorde, zichtbaarheid, filters)
-- Kolomvolgorde:
-  - Volgt de header‑volgorde uit `NETBOX_DATA_DIR/Systems CMDB.xlsx` (sheet 1, rij 1) indien aanwezig
-  - Valt anders terug op de volgorde van de merged CSV; onbekende kolommen komen achteraan
+- Pages (top navigation):
+  - NetBox: dataset viewer with Devices, VMs and All (merged)
+  - Chat: AI chat (suggestions only; no automatic actions). Provider selection (OpenAI/OpenRouter/Claude/Gemini/Other).
+  - Zabbix: problems overview with client-side filtering, host groups, host details and bulk acknowledge.
+  - Jira: placeholder for open tickets as a knowledge source (integration later)
+  - Confluence: placeholder for search and documentation suggestions (integration later)
+- NetBox grid features:
+  - Virtual scrolling (smooth with large datasets)
+  - Columns: drag‑and‑drop reorder, per‑column filters, header sort (multi‑sort with Shift)
+  - Quick search box: filters across all fields (case‑insensitive)
+  - Hide/show fields via panel; density settings (compact/comfortable)
+  - Download filtered CSV
+  - Update dataset: runs export and shows a live log stream
+  - View logs: opens the log panel with recent lines from `export.log`
+  - Log panel: resizable (both bottom corners), smart autoscroll (stops when you scroll up), Esc closes
+  - Per‑dataset preferences are remembered (column order, visibility, filters)
+- Column order:
+  - Follows the header order from `NETBOX_DATA_DIR/Systems CMDB.xlsx` (sheet 1, row 1) when present
+  - Otherwise falls back to merged CSV order; unknown columns are appended at the end
+
+Notes (Chat/Zabbix/Jira/Confluence)
+-----------------------------------
+
+- Chat does not make automatic changes; it only shows suggestions/text (e.g., for Jira/Confluence).
+- Jira/Confluence pages are placeholders; integrations will be added later.
+
+Chat configuration
+------------------
+
+- Set one or more API keys in `.env`:
+  - `OPENAI_API_KEY`
+  - `OPENROUTER_API_KEY`
+  - `ANTHROPIC_API_KEY` (Claude)
+  - `GOOGLE_API_KEY` (Gemini)
+-- Optional defaults:
+  - `CHAT_DEFAULT_PROVIDER` (openai|openrouter|claude|gemini)
+  - `CHAT_DEFAULT_MODEL_OPENAI` (e.g. `gpt-4o-mini`)
+  - `CHAT_DEFAULT_MODEL_OPENROUTER` (e.g. `openrouter/auto` or a specific model)
+  - `CHAT_DEFAULT_MODEL_CLAUDE` (e.g. `claude-3-5-sonnet-20240620`)
+  - `CHAT_DEFAULT_MODEL_GEMINI` (e.g. `gemini-1.5-flash`)
+
+Behavior:
+- Chat opens with your last used provider/model (stored in localStorage) or the defaults from `.env`.
+- The chat session is preserved while navigating (session_id in localStorage, server keeps history in memory).
+- Answers are suggestions/example text only; no automatic actions toward Jira/Confluence or other systems.
 
 Data Flow
 ---------
@@ -143,7 +178,7 @@ Notes
 Utilities
 ---------
 
-- Open in systeem‑browser:
+- Open in system browser:
   - `python scripts/visit_app.py --system --url http://127.0.0.1:8000/app/`
-- Headless screenshot (met vertraging voor rendering):
+- Headless screenshot (with small render delay):
   - `python scripts/visit_app.py --headless --screenshot app.png --delay-ms 1200`

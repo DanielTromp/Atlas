@@ -3,13 +3,23 @@
   const API_BASE = ""; // same origin
 
   // Elements
-  const $tabs = document.getElementById("tabs");
+  // Page router
+  const $pages = document.getElementById("pages");
+  const $pageNetbox = document.getElementById("page-netbox");
+  const $pageChat = document.getElementById("page-chat");
+  const $pageZabbix = document.getElementById("page-zabbix");
+  const $pageZhost = document.getElementById("page-zhost");
+  const $pageJira = document.getElementById("page-jira");
+  const $pageConfluence = document.getElementById("page-confluence");
+  // Dataset tabs (inside NetBox page)
+  const $dsTabs = document.getElementById("ds-tabs");
   const $q = document.getElementById("q");
   const $reload = document.getElementById("reload");
   const $updateBtn = document.getElementById("updateBtn");
   const $viewLogs = document.getElementById("viewLogs");
   const $summary = document.getElementById("summary");
   const $hideBtn = document.getElementById("hideBtn");
+  const $resetFilters = document.getElementById("resetFilters");
   const $fieldsPanel = document.getElementById("fields-panel");
   const $fieldsSearch = document.getElementById("fields-search");
   const $fieldsList = document.getElementById("fields-list");
@@ -54,6 +64,7 @@
   // Array of { key: string, dir: 'asc'|'desc' }
   let sortRules = [];
   let dataset = "devices";
+  let page = 'netbox';
   let dragSrcIndex = -1; // global src index for DnD across headers
   // Density
   const ROW_COMFORT = 36;
@@ -426,8 +437,12 @@
       const raw = localStorage.getItem(keyCols(dataset));
       if (!raw) return headers.slice();
       const arr = JSON.parse(raw);
+      if (!Array.isArray(arr)) return headers.slice();
       const set = new Set(headers);
-      return Array.isArray(arr) ? arr.filter((c) => set.has(c)) : headers.slice();
+      const ordered = arr.filter((c) => set.has(c));
+      const rest = headers.filter((c) => !ordered.includes(c));
+      // Append any new headers not present in the saved order
+      return ordered.concat(rest);
     } catch { return headers.slice(); }
   }
   function loadWidths() {
@@ -551,9 +566,9 @@
           if (p) {
             const st = JSON.parse(decodeURIComponent(p));
             applyViewState(st);
-            // Update active tab UI to reflect dataset from URL
-            if ($tabs) {
-              $tabs.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.getAttribute('data-ds') === dataset));
+            // Update active dataset tab UI to reflect dataset from URL
+            if ($dsTabs) {
+              $dsTabs.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.getAttribute('data-ds') === dataset));
             }
             if ($density) $density.value = (rowHeight === ROW_COMPACT ? 'compact' : 'comfortable');
           }
@@ -584,6 +599,16 @@
   $reload.addEventListener('click', () => { fetchData(); updateURLDebounced(); });
   $q.addEventListener('input', debounce(() => { computeView(); renderVisible(); }, 160));
   $q.addEventListener('input', updateURLDebounced);
+
+  // Reset all column filters (does not clear global Search)
+  $resetFilters?.addEventListener('click', () => {
+    colFilters = {};
+    persistFilters();
+    renderFilters();
+    computeView();
+    renderVisible();
+    updateURLDebounced();
+  });
 
   // Logs panel polling helpers
   let logPollTimer = null;
@@ -740,18 +765,7 @@
     setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0);
   });
 
-  // Tabs: dataset switch
-  $tabs?.addEventListener('click', (e) => {
-    const btn = e.target.closest('.tab');
-    if (!btn) return;
-    const ds = btn.getAttribute('data-ds');
-    if (!ds || ds === dataset) return;
-    dataset = ds;
-    // Active state
-    $tabs.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t === btn));
-    fetchData();
-    updateURLDebounced();
-  });
+  // (replaced) Dataset tab switch handled later via $dsTabs handlers
 
   // Hide fields panel
   function rebuildFieldsPanel() {
@@ -877,6 +891,671 @@
     }
   });
 
+  // Page routing
+  function showPage(p) {
+    page = p;
+    // Toggle page sections
+    const map = { netbox: $pageNetbox, chat: $pageChat, zabbix: $pageZabbix, zhost: $pageZhost, jira: $pageJira, confluence: $pageConfluence };
+    for (const k of Object.keys(map)) {
+      if (!map[k]) continue;
+      if (k === p) map[k].removeAttribute('hidden'); else map[k].setAttribute('hidden', '');
+    }
+    // Toggle tabs
+    $pages?.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.getAttribute('data-page') === p));
+    // Update hash
+    try {
+      const url = new URL(window.location.href);
+      url.hash = `#${p}`;
+      history.replaceState(null, '', url.toString());
+    } catch {}
+    // When switching into NetBox, ensure data is loaded/refreshed
+    if (p === 'netbox') {
+      fetchData();
+    } else if (p === 'chat') {
+      ensureChatSession();
+      loadChatDefaults();
+      refreshChatHistory();
+    } else if (p === 'zabbix') {
+      fetchZabbix();
+    } else if (p === 'zhost') {
+      // page-specific loader handled via showZabbixHost()
+    }
+  }
+  function parseHashPage() {
+    try {
+      const h = (window.location.hash || '').replace(/^#/, '').trim().toLowerCase();
+      if (["netbox","chat","zabbix","zhost","jira","confluence"].includes(h)) return h;
+    } catch {}
+    return 'netbox';
+  }
+  window.addEventListener('hashchange', () => showPage(parseHashPage()));
+  // Attach click handlers to each top-level page button (robust against text-node targets)
+  if ($pages) {
+    const pgBtns = Array.from($pages.querySelectorAll('button.tab'));
+    pgBtns.forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        const p = btn.getAttribute('data-page') || 'netbox';
+        showPage(p);
+      });
+    });
+  }
+
+  // Dataset tab switching (NetBox page)
+  if ($dsTabs) {
+    const dsBtns = Array.from($dsTabs.querySelectorAll('button.tab'));
+    dsBtns.forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        const ds = btn.getAttribute('data-ds') || 'devices';
+        dataset = ds;
+        // Toggle active
+        $dsTabs.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.getAttribute('data-ds') === ds));
+        fetchData();
+        updateURLDebounced();
+      });
+    });
+  }
+
+  // Chat placeholder
+  const $chatProvider = document.getElementById('chat-provider');
+  const $chatModel = document.getElementById('chat-model');
+  const $chatInput = document.getElementById('chat-input');
+  const $chatSend = document.getElementById('chat-send');
+  const $chatLog = document.getElementById('chat-log');
+  let chatSessionId = null;
+  function ensureChatSession() {
+    if (chatSessionId) return chatSessionId;
+    try { chatSessionId = localStorage.getItem('chat_session_id'); } catch {}
+    if (!chatSessionId) {
+      // Simple random id
+      chatSessionId = 'c_' + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+      try { localStorage.setItem('chat_session_id', chatSessionId); } catch {}
+    }
+    return chatSessionId;
+  }
+  function saveChatPrefs() {
+    try {
+      if ($chatProvider) localStorage.setItem('chat_provider', $chatProvider.value || '');
+      if ($chatModel) localStorage.setItem('chat_model', $chatModel.value || '');
+      const streamEl = document.getElementById('chat-stream');
+      if (streamEl) localStorage.setItem('chat_stream', streamEl.checked ? '1' : '0');
+      const ctxEl = document.getElementById('chat-include-data');
+      if (ctxEl) localStorage.setItem('chat_include_data', ctxEl.checked ? '1' : '0');
+    } catch {}
+  }
+  function loadChatPrefs() {
+    try {
+      const prov = localStorage.getItem('chat_provider');
+      const model = localStorage.getItem('chat_model');
+      if (prov && $chatProvider) $chatProvider.value = prov;
+      if (model && $chatModel) $chatModel.value = model;
+      const streamEl = document.getElementById('chat-stream');
+      const savedStream = localStorage.getItem('chat_stream');
+      if (streamEl && savedStream != null) streamEl.checked = savedStream === '1';
+      const ctxEl = document.getElementById('chat-include-data');
+      const savedCtx = localStorage.getItem('chat_include_data');
+      if (ctxEl && savedCtx != null) ctxEl.checked = savedCtx === '1';
+    } catch {}
+  }
+  async function loadChatDefaults() {
+    try {
+      const res = await fetch(`${API_BASE}/chat/providers`);
+      if (!res.ok) return;
+      const data = await res.json();
+      // Set default provider if none selected
+      const dprov = data?.default_provider || 'openai';
+      if ($chatProvider && !$chatProvider.value) $chatProvider.value = dprov;
+      // If model empty, set default for selected provider
+      const sel = $chatProvider?.value || dprov;
+      const cfg = (data?.providers || []).find(p => p.id === sel);
+      if ($chatModel && !$chatModel.value && cfg && cfg.default_model) $chatModel.value = cfg.default_model;
+    } catch {}
+  }
+  function appendChat(role, text) {
+    if (!$chatLog) return;
+    const who = role === 'user' ? 'Jij' : 'AI';
+    const div = document.createElement('div');
+    div.innerHTML = `<strong>${who}:</strong> ${text}`;
+    $chatLog.appendChild(div);
+    $chatLog.scrollTop = $chatLog.scrollHeight;
+  }
+  async function refreshChatHistory() {
+    const sid = ensureChatSession();
+    try {
+      const res = await fetch(`${API_BASE}/chat/history?session_id=${encodeURIComponent(sid)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const msgs = Array.isArray(data?.messages) ? data.messages : [];
+      if ($chatLog) $chatLog.innerHTML = '';
+      for (const m of msgs) {
+        if (m && typeof m.content === 'string' && typeof m.role === 'string') appendChat(m.role, m.content);
+      }
+    } catch {}
+  }
+  async function sendChat() {
+    const q = ($chatInput?.value || '').trim();
+    if (!q) return;
+    appendChat('user', q);
+    if ($chatInput) $chatInput.value = '';
+    const prov = ($chatProvider?.value || 'openai');
+    const mdl = ($chatModel?.value || '');
+    saveChatPrefs();
+    const sid = ensureChatSession();
+    const sys = 'You only provide suggestions and example text. You do not perform actions. Where possible, provide ready-to-copy text the user can paste into Jira or Confluence.';
+    // Placeholder tijdens verwerken
+    let placeholder = document.createElement('div');
+    placeholder.innerHTML = `<em>AI is thinking…</em>`;
+    $chatLog?.appendChild(placeholder);
+    $chatLog?.scrollTo(0, $chatLog.scrollHeight);
+    try {
+      const includeData = !!document.getElementById('chat-include-data')?.checked;
+      const wantStream = !!document.getElementById('chat-stream')?.checked;
+      // Streaming verzoek naar /chat/stream, met fallback naar /chat/complete
+      const res = wantStream ? await fetch(`${API_BASE}/chat/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: prov, model: mdl, message: q, session_id: sid, system: sys, temperature: 0.2, include_context: includeData, dataset: 'all' }),
+      }) : null;
+      if (!wantStream || !res || !res.ok || !res.body) {
+        // Fallback to non-streaming
+        const res2 = await fetch(`${API_BASE}/chat/complete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider: prov, model: mdl, message: q, session_id: sid, system: sys, temperature: 0.2, include_context: includeData, dataset: 'all' }),
+        });
+        const data2 = await res2.json().catch(() => ({}));
+        placeholder.remove();
+        if (!res2.ok) {
+          appendChat('assistant', data2?.detail || `Error: ${res2.status} ${res2.statusText}`);
+        } else {
+          appendChat('assistant', data2?.reply || '(empty response)');
+        }
+        return;
+      }
+      // Stream tonen
+      const msgDiv = document.createElement('div');
+      msgDiv.innerHTML = `<strong>AI:</strong> `;
+      placeholder.replaceWith(msgDiv);
+      const reader = res.body.getReader();
+      const td = new TextDecoder();
+      let gotAny = false;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const text = td.decode(value, { stream: true });
+        if (text) {
+          gotAny = true;
+          const span = document.createElement('span');
+          span.textContent = text;
+          msgDiv.appendChild(span);
+          $chatLog?.scrollTo(0, $chatLog.scrollHeight);
+        }
+      }
+      // No chunks? Fallback to complete
+      if (!gotAny) {
+        const res3 = await fetch(`${API_BASE}/chat/complete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider: prov, model: mdl, message: q, session_id: sid, system: sys, temperature: 0.2, include_context: includeData, dataset: 'all' }),
+        });
+        const data3 = await res3.json().catch(() => ({}));
+        if (!res3.ok) {
+          msgDiv.appendChild(document.createTextNode(data3?.detail || ` Error: ${res3.status} ${res3.statusText}`));
+        } else {
+          msgDiv.appendChild(document.createTextNode(data3?.reply || ''));
+        }
+      }
+    } catch (e) {
+      placeholder.remove();
+      appendChat('assistant', `Error: ${e?.message || e}`);
+    }
+  }
+  $chatSend?.addEventListener('click', () => { sendChat(); });
+  $chatInput?.addEventListener('keydown', (e) => {
+    // Enter = verzenden; Shift+Enter = nieuwe regel
+    if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      sendChat();
+    }
+  });
+
+  // Zabbix/Jira/Confluence placeholders
+  // --- Zabbix helpers: GUI-like filtering ---
+
+  // Apply Zabbix GUI-like filters to events array
+  // Order of operations (important):
+  // 1) Deduplicate per host + problem-prefix (text before ':'):
+  //    - Keep the highest severity as the representative for the group
+  //    - If severities are equal, keep the newest (highest clock)
+  // 2) Apply "Show unacknowledged only" on this clean, deduplicated list
+  // 3) Sort by newest first
+  // opts: { unackOnly: boolean }
+  function applyZabbixGuiFilter(events, opts) {
+    const list = Array.isArray(events) ? events.slice() : [];
+    const getNum = (v, d = 0) => { const n = Number(v); return Number.isFinite(n) ? n : d; };
+    // 1) Hide duplicate Problems per host, based on prefix before ':'
+    //    Key = (hostid|host) + '|' + problemPrefix
+    const baseKey = (ev) => {
+      const nm = String(ev?.name || '').trim();
+      const i = nm.indexOf(':');
+      const prefix = (i >= 0 ? nm.slice(0, i) : nm).trim();
+      const hostKey = String(ev?.hostid ?? ev?.host ?? '').trim();
+      if (hostKey && prefix) return `${hostKey}|${prefix}`;
+      if (hostKey) return `${hostKey}|${nm}`;
+      if (prefix) return `${prefix}|${String(ev?.eventid || '').trim()}`;
+      return String(ev?.eventid || '').trim();
+    };
+    const byPrefix = new Map();
+    for (const ev of list) {
+      const key = baseKey(ev);
+      const prev = byPrefix.get(key);
+      if (!prev) { byPrefix.set(key, ev); continue; }
+      const sevPrev = getNum(prev?.severity, -1);
+      const sevCur = getNum(ev?.severity, -1);
+      if (sevCur > sevPrev) { byPrefix.set(key, ev); continue; }
+      if (sevCur < sevPrev) { continue; }
+      // Same severity: prefer the newest by clock
+      const cPrev = getNum(prev?.clock, 0);
+      const cCur = getNum(ev?.clock, 0);
+      if (cCur >= cPrev) byPrefix.set(key, ev);
+    }
+    let deduped = Array.from(byPrefix.values());
+    // 2) Apply unacknowledged-only AFTER producing the clean list
+    if (opts && opts.unackOnly) {
+      deduped = deduped.filter((ev) => String(ev?.acknowledged ?? '0') === '0');
+    }
+    // 3) Sort newest first (like Problems view)
+    deduped.sort((a, b) => getNum(b?.clock, 0) - getNum(a?.clock, 0));
+    return deduped;
+  }
+
+  async function fetchZabbix() {
+    const el = document.getElementById('zbx-feed');
+    if (!el) return;
+    el.textContent = 'Loading…';
+    try {
+      const systemsOnly = !!document.getElementById('zbx-systems')?.checked;
+      // Build URL with optional Systems group (27) and including subgroups.
+      // All other filtering is applied client-side to match the Zabbix GUI behavior.
+      const params = new URLSearchParams();
+      if (systemsOnly) { params.set('groupids', '27'); params.set('include_subgroups', '1'); }
+      const url = `${API_BASE}/zabbix/problems?${params.toString()}`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        const t = await res.text();
+        el.textContent = `Failed to load Zabbix: ${res.status} ${res.statusText} ${t || ''}`.trim();
+        return;
+      }
+      const data = await res.json();
+      let items = Array.isArray(data?.items) ? data.items : [];
+      // Apply GUI-like filters before rendering
+      const opts = {
+        unackOnly: !!document.querySelector('#zbx-unack')?.checked,
+      };
+      items = applyZabbixGuiFilter(items, opts);
+      if (!items.length) {
+        el.textContent = 'No problems found.';
+        try {
+          const s = document.getElementById('zbx-stats');
+          if (s) s.textContent = `0 problems — last: ${formatNowTime()}`;
+        } catch {}
+        return;
+      }
+      // Build table: Time, [ ], Severity, Status, Host, Problem, Duration
+      const table = document.createElement('table');
+      table.className = 'zbx-table';
+      const thead = document.createElement('thead');
+      thead.innerHTML = '<tr><th style="width:28px;"><input id="zbx-sel-all" type="checkbox" /></th><th>Time</th><th>Severity</th><th>Status</th><th>Host</th><th>Problem</th><th>Duration</th></tr>';
+      table.appendChild(thead);
+      const tbody = document.createElement('tbody');
+      const sevName = (s) => ['Not classified','Information','Warning','Average','High','Disaster'][Math.max(0, Math.min(5, Number(s)||0))];
+      const sevClass = (s) => ['sev-0','sev-1','sev-2','sev-3','sev-4','sev-5'][Math.max(0, Math.min(5, Number(s)||0))];
+      const fmtTime = (iso) => {
+        if (!iso) return '';
+        // Show HH:MM:SS if today, else YYYY-MM-DD HH:MM:SS
+        try {
+          const d = new Date(iso.replace(' ', 'T') + 'Z');
+          const now = new Date();
+          const pad = (n) => String(n).padStart(2, '0');
+          const sameDay = d.getUTCFullYear() === now.getUTCFullYear() && d.getUTCMonth() === now.getUTCMonth() && d.getUTCDate() === now.getUTCDate();
+          if (sameDay) return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+          return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+        } catch { return iso; }
+      };
+      const fmtDur = (sec) => {
+        sec = Math.max(0, Number(sec) || 0);
+        const d = Math.floor(sec / 86400); sec -= d*86400;
+        const h = Math.floor(sec / 3600); sec -= h*3600;
+        const m = Math.floor(sec / 60); const s = sec - m*60;
+        const parts = [];
+        if (d) parts.push(`${d}d`);
+        if (h) parts.push(`${h}h`);
+        if (m) parts.push(`${m}m`);
+        if (!d && !h) parts.push(`${s}s`);
+        return parts.join(' ');
+      };
+      const nowSec = Math.floor(Date.now() / 1000);
+      for (const it of items) {
+        const tr = document.createElement('tr');
+        const tdSel = document.createElement('td');
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.className = 'zbx-ev';
+        cb.dataset.eventid = String(it.eventid || '');
+        tdSel.appendChild(cb);
+        const tdTime = document.createElement('td');
+        tdTime.textContent = fmtTime(it.clock_iso) || '';
+        const tdSev = document.createElement('td');
+        const sev = document.createElement('span');
+        sev.className = `sev ${sevClass(it.severity)}`;
+        sev.textContent = sevName(it.severity);
+        tdSev.appendChild(sev);
+        const tdStatus = document.createElement('td');
+        tdStatus.textContent = (it.status || '').toUpperCase();
+        tdStatus.style.color = (it.status || '').toUpperCase() === 'RESOLVED' ? '#16a34a' : '#ef4444';
+        const tdHost = document.createElement('td');
+        if (it.host) {
+          const a = document.createElement('a');
+          a.href = '#zhost'; a.textContent = it.host; a.title = 'Bekijk hostdetails';
+          a.addEventListener('click', (e) => { e.preventDefault(); showZabbixHost(it.hostid, it.host, it.host_url); });
+          tdHost.appendChild(a);
+        } else { tdHost.textContent = it.host || ''; }
+        const tdProblem = document.createElement('td');
+        if (it.problem_url) {
+          const a2 = document.createElement('a');
+          a2.href = it.problem_url; a2.textContent = it.name || ''; a2.target = '_blank'; a2.rel = 'noopener';
+          tdProblem.appendChild(a2);
+        } else { tdProblem.textContent = it.name || ''; }
+        const tdDur = document.createElement('td');
+        const durSec = Math.max(0, (nowSec - (Number(it.clock)||0)));
+        tdDur.textContent = fmtDur(durSec);
+        tr.appendChild(tdSel);
+        tr.appendChild(tdTime);
+        tr.appendChild(tdSev);
+        tr.appendChild(tdStatus);
+        tr.appendChild(tdHost);
+        tr.appendChild(tdProblem);
+        tr.appendChild(tdDur);
+        tbody.appendChild(tr);
+      }
+      table.appendChild(tbody);
+      // Apply density class
+      try {
+        const dens = document.getElementById('zbx-density');
+        const val = dens ? dens.value : 'comfortable';
+        if (val === 'compact') table.classList.add('compact'); else table.classList.remove('compact');
+      } catch {}
+      el.innerHTML = '';
+      el.appendChild(table);
+      // Update stats: count and last refresh time
+      try {
+        const s = document.getElementById('zbx-stats');
+        if (s) s.textContent = `${items.length} problems — last: ${formatNowTime()}`;
+      } catch {}
+      // Select-all behavior for main problems list
+      const selAll = document.getElementById('zbx-sel-all');
+      selAll?.addEventListener('change', () => {
+        const boxes = el.querySelectorAll('input.zbx-ev[type="checkbox"]');
+        boxes.forEach(b => { b.checked = selAll.checked; });
+      });
+    } catch (e) {
+      el.textContent = `Error: ${e?.message || e}`;
+    }
+  }
+  document.getElementById('zbx-refresh')?.addEventListener('click', () => { fetchZabbix(); });
+  // Density persistence and control for Zabbix
+  const $zbxDensity = document.getElementById('zbx-density');
+  if ($zbxDensity) {
+    try { const saved = localStorage.getItem('zbx_density'); if (saved) $zbxDensity.value = saved; } catch {}
+    $zbxDensity.addEventListener('change', () => { try { localStorage.setItem('zbx_density', $zbxDensity.value); } catch {}; fetchZabbix(); });
+  }
+  // Auto refresh interval handling
+  let zbxAutoTimer = null;
+  function clearZbxAuto() { if (zbxAutoTimer) { clearInterval(zbxAutoTimer); zbxAutoTimer = null; } }
+  function setZbxAuto(ms) {
+    clearZbxAuto();
+    if (ms && ms > 0) {
+      zbxAutoTimer = setInterval(() => { if (page === 'zabbix') fetchZabbix(); }, ms);
+    }
+  }
+  const $zbxRefreshSel = document.getElementById('zbx-refresh-interval');
+  if ($zbxRefreshSel) {
+    try {
+      const saved = localStorage.getItem('zbx_refresh_interval');
+      if (saved != null && $zbxRefreshSel.querySelector(`option[value="${saved}"]`)) {
+        $zbxRefreshSel.value = saved;
+        setZbxAuto(Number(saved));
+      }
+    } catch {}
+    $zbxRefreshSel.addEventListener('change', () => {
+      const ms = Number($zbxRefreshSel.value || '0') || 0;
+      try { localStorage.setItem('zbx_refresh_interval', String(ms)); } catch {}
+      setZbxAuto(ms);
+    });
+  }
+  // Ack selected events on main Zabbix page
+  document.getElementById('zbx-ack')?.addEventListener('click', async (e) => {
+    e.preventDefault();
+    try {
+      const feed = document.getElementById('zbx-feed');
+      if (!feed) { alert('No list loaded.'); return; }
+      const boxes = Array.from(feed.querySelectorAll('input.zbx-ev[type="checkbox"]'));
+      const ids = boxes.filter(b => b.checked).map(b => b.dataset.eventid).filter(Boolean);
+      if (!ids.length) { alert('No problems selected.'); return; }
+      const msg = prompt('Ack message (optional):', 'Acknowledged via Enreach Tools');
+      const res = await fetch(`${API_BASE}/zabbix/ack`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ eventids: ids, message: msg || '' }) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { alert(`Ack failed: ${data?.detail || res.statusText}`); return; }
+      alert('Acknowledged. Refreshing list.');
+      fetchZabbix();
+    } catch (err) {
+      alert(`Error: ${err?.message || err}`);
+    }
+  });
+  // Persist and react to unack toggle
+  const $zbxUnack = document.getElementById('zbx-unack');
+  const $zbxSystems = document.getElementById('zbx-systems');
+  function formatNowTime() {
+    try {
+      const d = new Date();
+      const pad = (n) => String(n).padStart(2, '0');
+      return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    } catch { return ''; }
+  }
+  try {
+    const saved = localStorage.getItem('zbx_unack_only');
+    if ($zbxUnack && saved != null) $zbxUnack.checked = saved === '1';
+    const savedSystems = localStorage.getItem('zbx_systems_only');
+    if ($zbxSystems && savedSystems != null) $zbxSystems.checked = savedSystems === '1';
+  } catch {}
+  $zbxUnack?.addEventListener('change', () => {
+    try { localStorage.setItem('zbx_unack_only', $zbxUnack.checked ? '1' : '0'); } catch {}
+    fetchZabbix();
+  });
+  $zbxSystems?.addEventListener('change', () => {
+    try { localStorage.setItem('zbx_systems_only', $zbxSystems.checked ? '1' : '0'); } catch {}
+    fetchZabbix();
+  });
+
+  // When changing pages, stop auto refresh unless we're on Zabbix
+  const _origShowPage = showPage;
+  showPage = function(p) { // eslint-disable-line no-global-assign
+    _origShowPage(p);
+    if (p !== 'zabbix') clearZbxAuto();
+    else if ($zbxRefreshSel) setZbxAuto(Number($zbxRefreshSel.value || '0') || 0);
+  };
+
+  // Expose helpers for debugging/ESM-like usage in non-module context
+  try {
+    if (typeof window !== 'undefined') {
+      window.applyZabbixGuiFilter = applyZabbixGuiFilter;
+    }
+  } catch {}
+
+  // ---------------------------
+  // Zabbix Host details page
+  // ---------------------------
+  const $zhostTitle = document.getElementById('zhost-title');
+  const $zhostInfo = document.getElementById('zhost-info');
+  const $zhostProblems = document.getElementById('zhost-problems');
+  document.getElementById('zhost-back')?.addEventListener('click', (e) => { e.preventDefault(); showPage('zabbix'); });
+  const $zhostOpenZbx = document.getElementById('zhost-open-zbx');
+
+  let lastZHostId = null;
+
+  function renderHostInfo(h) {
+    if (!$zhostInfo) return;
+    if (!h || typeof h !== 'object') { $zhostInfo.textContent = 'No info found.'; return; }
+    const wrap = document.createElement('div');
+    wrap.className = 'feed';
+    const basics = document.createElement('div');
+    basics.innerHTML = `<strong>Host:</strong> ${h.host || ''} &nbsp; <strong>Visible name:</strong> ${h.name || ''} &nbsp; <strong>ID:</strong> ${h.hostid || ''}`;
+    wrap.appendChild(basics);
+    // Groups
+    const groups = Array.isArray(h.groups) ? h.groups.map(g => g?.name).filter(Boolean) : [];
+    if (groups.length) {
+      const div = document.createElement('div');
+      div.innerHTML = `<strong>Groups:</strong> ${groups.join(', ')}`;
+      wrap.appendChild(div);
+    }
+    // Interfaces
+    const ifs = Array.isArray(h.interfaces) ? h.interfaces : [];
+    if (ifs.length) {
+      const tbl = document.createElement('table'); tbl.className = 'zbx-table';
+      const th = document.createElement('thead'); th.innerHTML = '<tr><th>Type</th><th>IP</th><th>DNS</th><th>Port</th><th>Main</th></tr>'; tbl.appendChild(th);
+      const bd = document.createElement('tbody');
+      for (const it of ifs) {
+        const tr = document.createElement('tr');
+        const tdT = document.createElement('td'); tdT.textContent = String(it?.type || '');
+        const tdIP = document.createElement('td'); tdIP.textContent = String(it?.ip || '');
+        const tdDNS = document.createElement('td'); tdDNS.textContent = String(it?.dns || '');
+        const tdP = document.createElement('td'); tdP.textContent = String(it?.port || '');
+        const tdM = document.createElement('td'); tdM.textContent = String(it?.main || '');
+        tr.appendChild(tdT); tr.appendChild(tdIP); tr.appendChild(tdDNS); tr.appendChild(tdP); tr.appendChild(tdM); bd.appendChild(tr);
+      }
+      tbl.appendChild(bd); wrap.appendChild(tbl);
+    }
+    // Inventory
+    const inv = h.inventory || {};
+    if (inv && Object.keys(inv).length) {
+      const pre = document.createElement('pre'); pre.textContent = JSON.stringify(inv, null, 2); wrap.appendChild(pre);
+    }
+    $zhostInfo.innerHTML = ''; $zhostInfo.appendChild(wrap);
+  }
+
+  async function fetchZabbixHost(hostid, hostName, hostUrl) {
+    if (!hostid) return;
+    try {
+      $zhostTitle.textContent = `Host: ${hostName || hostid}`;
+      if ($zhostOpenZbx) {
+        if (hostUrl) { $zhostOpenZbx.href = hostUrl; $zhostOpenZbx.removeAttribute('hidden'); }
+        else { $zhostOpenZbx.setAttribute('hidden', ''); }
+      }
+      $zhostInfo.textContent = 'Loading…';
+      const res = await fetch(`${API_BASE}/zabbix/host?hostid=${encodeURIComponent(hostid)}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { $zhostInfo.textContent = `Failed to load host: ${res.status} ${res.statusText}`; }
+      else { renderHostInfo(data?.host); }
+    } catch (e) {
+      $zhostInfo.textContent = `Error: ${e?.message || e}`;
+    }
+  }
+
+  async function fetchZabbixHostProblems(hostid) {
+    if (!hostid) return;
+    try {
+      $zhostProblems.textContent = 'Loading…';
+      const url = `${API_BASE}/zabbix/problems?hostids=${encodeURIComponent(hostid)}`;
+      const res = await fetch(url);
+      if (!res.ok) { const t = await res.text(); $zhostProblems.textContent = `Failed to load problems: ${res.status} ${res.statusText} ${t || ''}`.trim(); return; }
+      const data = await res.json();
+      const items = Array.isArray(data?.items) ? data.items : [];
+      if (!items.length) {
+        $zhostProblems.textContent = 'No problems found.';
+        try { const s = document.getElementById('zhost-stats'); if (s) s.textContent = `0 problems — last: ${formatNowTime()}`; } catch {}
+        return;
+      }
+      // Build simple problems table (no client-side filters)
+      const table = document.createElement('table'); table.className = 'zbx-table';
+      const thead = document.createElement('thead'); thead.innerHTML = '<tr><th style="width:28px;"><input id="zhost-sel-all" type="checkbox" /></th><th>Time</th><th>Severity</th><th>Status</th><th>Problem</th><th>Duration</th></tr>'; table.appendChild(thead);
+      const tbody = document.createElement('tbody');
+      const sevName = (s) => ['Not classified','Information','Warning','Average','High','Disaster'][Math.max(0, Math.min(5, Number(s)||0))];
+      const fmtTime = (iso) => {
+        if (!iso) return '';
+        try { const d = new Date(iso.replace(' ', 'T') + 'Z'); const pad = (n)=> String(n).padStart(2,'0'); return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`; } catch { return iso; }
+      };
+      const nowSec = Math.floor(Date.now() / 1000);
+      const fmtDur = (sec) => { sec = Math.max(0, Number(sec)||0); const d=Math.floor(sec/86400); sec-=d*86400; const h=Math.floor(sec/3600); sec-=h*3600; const m=Math.floor(sec/60); const s=sec-m*60; const parts=[]; if(d)parts.push(`${d}d`); if(h)parts.push(`${h}h`); if(m)parts.push(`${m}m`); if(!d && !h) parts.push(`${s}s`); return parts.join(' '); };
+      for (const it of items) {
+        const tr = document.createElement('tr');
+        const tdSel = document.createElement('td'); const cb = document.createElement('input'); cb.type = 'checkbox'; cb.className = 'zhost-ev'; cb.dataset.eventid = String(it.eventid || ''); tdSel.appendChild(cb);
+        const tdTime = document.createElement('td'); tdTime.textContent = fmtTime(it.clock_iso) || '';
+        const tdSev = document.createElement('td'); tdSev.textContent = sevName(it.severity);
+        const tdStatus = document.createElement('td'); tdStatus.textContent = (it.status||'').toUpperCase(); tdStatus.style.color = (it.status||'').toUpperCase()==='RESOLVED'?'#16a34a':'#ef4444';
+        const tdProblem = document.createElement('td');
+        if (it.problem_url) {
+          const a = document.createElement('a'); a.href = it.problem_url; a.textContent = it.name || ''; a.target = '_blank'; a.rel = 'noopener'; tdProblem.appendChild(a);
+        } else { tdProblem.textContent = it.name || ''; }
+        const tdDur = document.createElement('td'); const durSec = Math.max(0, (nowSec - (Number(it.clock)||0))); tdDur.textContent = fmtDur(durSec);
+        tr.appendChild(tdSel); tr.appendChild(tdTime); tr.appendChild(tdSev); tr.appendChild(tdStatus); tr.appendChild(tdProblem); tr.appendChild(tdDur);
+        tbody.appendChild(tr);
+      }
+      table.appendChild(tbody);
+      try { const dens = document.getElementById('zbx-density'); const val = dens ? dens.value : 'comfortable'; if (val === 'compact') table.classList.add('compact'); else table.classList.remove('compact'); } catch {}
+      $zhostProblems.innerHTML = ''; $zhostProblems.appendChild(table);
+      try { const s = document.getElementById('zhost-stats'); if (s) s.textContent = `${items.length} problems — last: ${formatNowTime()}`; } catch {}
+      // Select-all behavior
+      const selAll = document.getElementById('zhost-sel-all');
+      selAll?.addEventListener('change', () => {
+        const boxes = $zhostProblems.querySelectorAll('input.zhost-ev[type="checkbox"]');
+        boxes.forEach(b => { b.checked = selAll.checked; });
+      });
+    } catch (e) {
+      $zhostProblems.textContent = `Error: ${e?.message || e}`;
+    }
+  }
+
+  function showZabbixHost(hostid, hostName, hostUrl) {
+    showPage('zhost');
+    lastZHostId = hostid || null;
+    try { window._lastZHostId = lastZHostId; } catch {}
+    fetchZabbixHost(hostid, hostName, hostUrl);
+    fetchZabbixHostProblems(hostid);
+  }
+
+  // Ack selected events on host details page
+  document.getElementById('zhost-ack')?.addEventListener('click', async (e) => {
+    e.preventDefault();
+    try {
+      const boxes = Array.from($zhostProblems.querySelectorAll('input.zhost-ev[type="checkbox"]'));
+      const ids = boxes.filter(b => b.checked).map(b => b.dataset.eventid).filter(Boolean);
+      if (!ids.length) { alert('No problems selected.'); return; }
+      const msg = prompt('Ack message (optional):', 'Acknowledged via Enreach Tools');
+      const res = await fetch(`${API_BASE}/zabbix/ack`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ eventids: ids, message: msg || '' }) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { alert(`Ack failed: ${data?.detail || res.statusText}`); return; }
+      alert('Acknowledged. Refreshing list.');
+      if (lastZHostId) {
+        fetchZabbixHostProblems(lastZHostId);
+      } else {
+        // Do a minimal refresh by refetching the problems via the last anchor click handler path; as a fallback, just show Zabbix then go back
+        fetchZabbix();
+      }
+    } catch (err) {
+      alert(`Error: ${err?.message || err}`);
+    }
+  });
+  document.getElementById('jira-refresh')?.addEventListener('click', () => {
+    const el = document.getElementById('jira-list');
+    if (el) el.textContent = 'No Jira integration configured yet: configure token and JQL later.';
+  });
+  document.getElementById('conf-search')?.addEventListener('click', () => {
+    const el = document.getElementById('conf-results');
+    const q = (document.getElementById('conf-q')?.value || '').trim();
+    if (el) el.textContent = q ? `Searching for "${q}"… (placeholder)` : 'Enter a search term.';
+  });
+
   // Init
   // Ensure fields panel is closed on load
   if ($fieldsPanel) $fieldsPanel.hidden = true;
@@ -888,9 +1567,20 @@
       if (st && typeof st === 'object' && typeof st.ds === 'string') dataset = st.ds;
     }
   } catch {}
-  // Set initial tab active
-  $tabs?.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.getAttribute('data-ds') === dataset));
-  fetchData();
+  // Set initial dataset tab active
+  $dsTabs?.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.getAttribute('data-ds') === dataset));
+  // Initial page from hash
+  // Prepare chat defaults before showing the page (so UI sensible)
+  loadChatPrefs();
+  loadChatDefaults();
+  const initialPage = parseHashPage();
+  if (initialPage === 'chat') {
+    ensureChatSession();
+    refreshChatHistory();
+  }
+  showPage(initialPage);
+  // When switching to chat, ensure session and history are loaded
+  
 
   // Keyboard hotkeys
   function isTypingTarget(el) {

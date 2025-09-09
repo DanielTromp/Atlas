@@ -18,6 +18,7 @@ dependencies = [
   "fastapi>=0.111",
   "uvicorn>=0.30",
   "duckdb>=1.0",
+  "openai>=1.42.0",
 ]
 
 [project.scripts]

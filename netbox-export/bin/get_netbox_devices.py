@@ -1,5 +1,6 @@
 import csv
 import os
+import argparse
 from datetime import datetime
 from pathlib import Path
 
@@ -36,6 +37,35 @@ def _preview(obj):
         return f"obj attrs={attrs[:PREVIEW_ATTR_LIMIT]}{'...' if len(attrs)>PREVIEW_ATTR_LIMIT else ''}"
     except Exception as e:
         return f"<preview-error {e}>"
+
+
+def _norm_key(s: str) -> str:
+    """Normalize a custom-field key for robust matching: lowercase, strip non-alnum."""
+    try:
+        return "".join(ch.lower() for ch in str(s) if ch.isalnum())
+    except Exception:
+        return str(s).lower()
+
+
+def _cf_get(cf: dict, *candidates: str):
+    """Get a custom field by trying multiple candidate names (robust to spaces/underscores/case).
+
+    Returns a string representation; lists are joined by ", ".
+    """
+    if not isinstance(cf, dict) or not candidates:
+        return ""
+    # Build normalized lookup once
+    lookup = { _norm_key(k): v for k, v in cf.items() }
+    for cand in candidates:
+        v = lookup.get(_norm_key(cand))
+        if v is not None:
+            try:
+                if isinstance(v, list):
+                    return ", ".join(str(x) for x in v)
+                return str(v)
+            except Exception:
+                return str(v)
+    return ""
 
 def _get_ct_id(nb, app_label: str, model: str) -> int:
     """Get content type ID for the given app_label and model."""
@@ -170,6 +200,9 @@ def get_device_contacts(nb, device):
 def get_full_device_data(nb, device_id):
     """Fetches detailed data for a single device."""
     device = nb.dcim.devices.get(device_id)
+    # Extract custom fields safely (NetBox may return dict or None)
+    custom_fields = getattr(device, "custom_fields", None) or {}
+
     return {
         "Name": getattr(device, "name", ""),
         "Status": getattr(device.status, "label", "") if device.status else "",
@@ -219,6 +252,18 @@ def get_full_device_data(nb, device_id):
         "Created": str(getattr(device, "created", "") or ""),
         "Last updated": str(getattr(device, "last_updated", "") or ""),
         "Platform": getattr(device.platform, "name", "") if device.platform else "",
+        # Common and requested custom fields; include for devices when present
+        "Server Group": _cf_get(custom_fields, "Server Group", "Server_Group"),
+        "Backup": _cf_get(custom_fields, "Backup"),
+        "DTAP state": _cf_get(custom_fields, "DTAP state", "DTAP_state"),
+        "Harddisk": _cf_get(custom_fields, "Harddisk"),
+        "open actions": _cf_get(custom_fields, "open actions", "open_actions"),
+        "CPU": _cf_get(custom_fields, "CPU"),
+        "Memory": _cf_get(custom_fields, "Memory"),
+        "Monitor hardware": _cf_get(custom_fields, "Monitor hardware", "Monitor_hardware"),
+        "HW buy date": _cf_get(custom_fields, "HW buy date", "HW_buy_date", "HW purchase date", "Purchase date"),
+        "HW warranty expiration": _cf_get(custom_fields, "HW warranty expiration", "HW_warranty_expiration", "Warranty expiration", "Warranty expiry", "Warranty until"),
+        "Warranty type": _cf_get(custom_fields, "Warranty type", "Warranty_type"),
         "Console ports": getattr(device, "console_port_count", 0),
         "Console server ports": getattr(device, "console_server_port_count", 0),
         "Power ports": getattr(device, "power_port_count", 0),
@@ -231,7 +276,7 @@ def get_full_device_data(nb, device_id):
         "Inventory items": len(list(device.inventory_items.all())) if hasattr(device, "inventory_items") else 0,
     }
 
-def sync_netbox_to_csv():
+def sync_netbox_to_csv(force: bool = False):
     """Connects to NetBox, retrieves all devices, and incrementally updates a CSV file.
     """
     if not NETBOX_URL or not NETBOX_TOKEN:
@@ -264,23 +309,28 @@ def sync_netbox_to_csv():
                     existing_devices[row["ID"]] = row
             print(f"Found {len(existing_devices)} devices in the CSV file.")
 
-        # 3. Identify changes
+        # 3. Identify changes (or force full refresh)
         to_update = []
         to_add = []
 
-        for device_id, last_updated_str in netbox_device_info.items():
-            last_updated_dt = datetime.fromisoformat(last_updated_str.replace("Z", "+00:00"))
+        if force:
+            print("Force refresh enabled: re-fetching all devices...")
+            to_add = list(netbox_device_info.keys())
+            to_update = []
+        else:
+            for device_id, last_updated_str in netbox_device_info.items():
+                last_updated_dt = datetime.fromisoformat(last_updated_str.replace("Z", "+00:00"))
 
-            if device_id not in existing_devices:
-                to_add.append(device_id)
-            else:
-                csv_last_updated_str = existing_devices[device_id].get("Last updated")
-                if csv_last_updated_str:
-                    csv_last_updated_dt = datetime.fromisoformat(csv_last_updated_str.replace("Z", "+00:00"))
-                    if last_updated_dt > csv_last_updated_dt:
-                        to_update.append(device_id)
+                if device_id not in existing_devices:
+                    to_add.append(device_id)
                 else:
-                    to_update.append(device_id)
+                    csv_last_updated_str = existing_devices[device_id].get("Last updated")
+                    if csv_last_updated_str:
+                        csv_last_updated_dt = datetime.fromisoformat(csv_last_updated_str.replace("Z", "+00:00"))
+                        if last_updated_dt > csv_last_updated_dt:
+                            to_update.append(device_id)
+                    else:
+                        to_update.append(device_id)
 
         to_delete = {k for k in existing_devices if k not in netbox_device_info}
 
@@ -316,14 +366,43 @@ def sync_netbox_to_csv():
         os.makedirs(data_dir_path, exist_ok=True)
 
         print("Writing updated data to CSV...")
-        headers = list(next(iter(existing_devices.values())).keys()) if existing_devices else []
-        if not headers and netbox_device_info:
-            # Fetch one device to get headers if CSV is empty
-            first_device_id = next(iter(netbox_device_info.keys()))
-            headers = list(get_full_device_data(nb, first_device_id).keys())
-        # Ensure new fields like Comments are present even if the CSV predates them
-        if "Comments" not in headers:
-            headers.append("Comments")
+        # Build a robust header list that includes all observed keys across rows,
+        # preserving a canonical order derived from a sample device.
+        headers = []
+        if netbox_device_info:
+            try:
+                first_device_id = next(iter(netbox_device_info.keys()))
+                headers = list(get_full_device_data(nb, first_device_id).keys())
+            except Exception:
+                headers = []
+
+        seen = set(headers)
+        def _extend_headers_from_rows(rows_dict):
+            for row in rows_dict.values():
+                for k in row.keys():
+                    if k not in seen:
+                        headers.append(k)
+                        seen.add(k)
+
+        _extend_headers_from_rows(existing_devices)
+        _extend_headers_from_rows(updated_data)
+
+        # Ensure important fields are present even if empty in sample/legacy CSVs
+        for must_have in [
+            "Comments",
+            "Platform",
+            "Server Group",
+            "DTAP state",
+            "CPU",
+            "Memory",
+            "Monitor hardware",
+            "HW buy date",
+            "HW warranty expiration",
+            "Warranty type",
+        ]:
+            if must_have not in seen:
+                headers.append(must_have)
+                seen.add(must_have)
 
 
         with open(csv_file_path, "w", newline="") as file:
@@ -357,5 +436,12 @@ def sync_netbox_to_csv():
     except Exception as e:
         print(f"An error occurred: {e}")
 
+def main():
+    parser = argparse.ArgumentParser(description="Export NetBox devices to CSV")
+    parser.add_argument("--force", action="store_true", help="Re-fetch all devices and rewrite CSV")
+    args = parser.parse_args()
+    sync_netbox_to_csv(force=args.force)
+
+
 if __name__ == "__main__":
-    sync_netbox_to_csv()
+    main()

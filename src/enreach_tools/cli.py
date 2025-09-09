@@ -35,21 +35,29 @@ sharepoint = typer.Typer(help="SharePoint helpers")
 app.add_typer(sharepoint, name="sharepoint")
 api = typer.Typer(help="API server")
 app.add_typer(api, name="api")
+zabbix = typer.Typer(help="Zabbix helpers")
+app.add_typer(zabbix, name="zabbix")
 
 
 @export.command("devices")
-def netbox_devices():
+def netbox_devices(
+    force: bool = typer.Option(False, "--force", help="Re-fetch all devices and rewrite CSV"),
+):
     """Export devices to CSV (incremental)."""
     require_env(["NETBOX_URL", "NETBOX_TOKEN"])
-    raise_code = _run_script("netbox-export/bin/get_netbox_devices.py")
+    args = ["--force"] if force else []
+    raise_code = _run_script("netbox-export/bin/get_netbox_devices.py", *args)
     raise SystemExit(raise_code)
 
 
 @export.command("vms")
-def netbox_vms():
+def netbox_vms(
+    force: bool = typer.Option(False, "--force", help="Re-fetch all VMs and rewrite CSV"),
+):
     """Export VMs to CSV (incremental)."""
     require_env(["NETBOX_URL", "NETBOX_TOKEN"])
-    raise_code = _run_script("netbox-export/bin/get_netbox_vms.py")
+    args = ["--force"] if force else []
+    raise_code = _run_script("netbox-export/bin/get_netbox_vms.py", *args)
     raise SystemExit(raise_code)
 
 
@@ -68,10 +76,13 @@ def netbox_status():
 
 
 @export.command("update")
-def netbox_update():
+def netbox_update(
+    force: bool = typer.Option(False, "--force", help="Re-fetch all devices and VMs before merge"),
+):
     """Run devices, vms, then merge exports in sequence."""
     require_env(["NETBOX_URL", "NETBOX_TOKEN"])  # token needed for export endpoints
-    code = _run_script("netbox-export/bin/netbox_update.py")
+    args = ["--force"] if force else []
+    code = _run_script("netbox-export/bin/netbox_update.py", *args)
     if code != 0:
         raise SystemExit(code)
 
@@ -101,6 +112,96 @@ def api_serve(
 
     # ASGI app path: src/enreach_tools/api/app.py -> app
     uvicorn.run("enreach_tools.api.app:app", host=host, port=port, reload=reload)
+
+
+@zabbix.command("problems")
+def zabbix_problems_cli(
+    limit: int = typer.Option(20, "--limit", help="Max items"),
+    severities: str = typer.Option("", "--severities", help="Comma list, e.g. 2,3,4 (defaults from .env)"),
+    groupids: str = typer.Option("", "--groupids", help="Comma list group IDs (default from .env)"),
+    all: bool = typer.Option(False, "--all", help="Include acknowledged (unacknowledged=0)"),
+):
+    """Fetch problems from Zabbix via JSON-RPC and print a summary."""
+    import requests as _rq
+    from rich import print as _print
+    from .env import load_env as _load
+
+    _load()
+    base = os.getenv("ZABBIX_API_URL", "").strip() or os.getenv("ZABBIX_HOST", "").strip()
+    if not base:
+        _print("[red]ZABBIX_API_URL or ZABBIX_HOST not set[/red]")
+        raise SystemExit(1)
+    if not base.endswith("/api_jsonrpc.php"):
+        base = base.rstrip("/") + "/api_jsonrpc.php"
+    token = os.getenv("ZABBIX_API_TOKEN", "").strip()
+    if not token:
+        _print("[yellow]Warning:[/yellow] ZABBIX_API_TOKEN not set; request may be unauthorized")
+
+    def _rpc(method: str, params: dict) -> dict:
+        body = {"jsonrpc": "2.0", "method": method, "params": params, "id": 1}
+        if token:
+            body["auth"] = token
+        headers = {"Content-Type": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        r = _rq.post(base, headers=headers, json=body, timeout=30)
+        r.raise_for_status()
+        data = r.json()
+        if data.get("error"):
+            raise RuntimeError(f"Zabbix error: {data['error']}")
+        return data.get("result", {})
+
+    # Params
+    sev_list = []
+    if severities.strip():
+        try:
+            sev_list = [int(x) for x in severities.split(",") if x.strip()]
+        except Exception:
+            pass
+    elif os.getenv("ZABBIX_SEVERITIES", "").strip():
+        try:
+            sev_list = [int(x) for x in os.getenv("ZABBIX_SEVERITIES").split(",") if x.strip()]
+        except Exception:
+            pass
+    grp_list = []
+    if groupids.strip():
+        try:
+            grp_list = [int(x) for x in groupids.split(",") if x.strip()]
+        except Exception:
+            pass
+    elif os.getenv("ZABBIX_GROUP_ID", "").strip().isdigit():
+        grp_list = [int(os.getenv("ZABBIX_GROUP_ID").strip())]
+
+    params = {
+        "output": ["eventid", "name", "severity", "clock", "acknowledged", "r_eventid", "source", "object", "objectid"],
+        "selectTags": "extend",
+        "recent": True,
+        "limit": int(limit),
+    }
+    if sev_list:
+        params["severities"] = sev_list
+    if grp_list:
+        params["groupids"] = grp_list
+    # Default: show only unacknowledged; when --all, remove filter to show both
+    if not all:
+        params["acknowledged"] = 0
+
+    try:
+        res = _rpc("problem.get", params)
+    except Exception as ex:
+        _print(f"[red]Request failed:[/red] {ex}")
+        raise SystemExit(1)
+
+    items = res if isinstance(res, list) else []
+    items.sort(key=lambda x: int(x.get("clock") or 0), reverse=True)
+    _print(f"[bold]Problems:[/bold] {len(items)} (showing up to {limit})")
+    from datetime import datetime as _dt
+    for it in items[: limit]:
+        clk = int(it.get("clock") or 0)
+        ts = _dt.utcfromtimestamp(clk).strftime("%Y-%m-%d %H:%M:%S") if clk else "?"
+        sev = int(it.get("severity") or 0)
+        name = it.get("name") or ""
+        _print(f"- [{ts}] sev={sev} {name}")
 
 
 @sharepoint.command("upload")

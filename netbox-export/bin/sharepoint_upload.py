@@ -100,6 +100,8 @@ def upload_app_mode(site_url: str, src: str, dest_dir: str, fname: str, replace:
 def upload_userpass_mode(site_url: str, src: str, dest_dir: str, fname: str, replace: bool, force: bool):
     from datetime import datetime
 
+    from urllib.parse import urlparse as _urlparse
+
     from office365.runtime.auth.user_credential import UserCredential
     from office365.runtime.client_request_exception import ClientRequestException
     from office365.sharepoint.client_context import ClientContext
@@ -107,7 +109,39 @@ def upload_userpass_mode(site_url: str, src: str, dest_dir: str, fname: str, rep
     username = get_env("SPO_USERNAME", required=True)
     password = get_env("SPO_PASSWORD", required=True)
 
-    ctx = ClientContext(site_url).with_credentials(UserCredential(username, password))
+    # Establish CSOM context with user/pass credentials
+    try:
+        ctx = ClientContext(site_url).with_credentials(UserCredential(username, password))
+    except Exception as auth_exc:  # Authentication or cookie bootstrap failed
+        msg = str(auth_exc)
+        host = _urlparse(site_url).netloc
+        hints: list[str] = []
+
+        # Cross-tenant/guest indicator: username domain and site tenant differ
+        upn_domain = username.split("@", 1)[-1] if "@" in username else ""
+        if upn_domain and upn_domain.lower() not in host.lower():
+            hints.append(
+                "Account domain differs from tenant; user/pass CSOM may not work for guest/B2B users."
+            )
+
+        # Common conditional access / MFA cases
+        hints.extend([
+            "Verify the service account can sign into the site in a browser without extra prompts (no MFA/consent).",
+            "Ensure the password is correct and not expired/locked (try changing it and re-run).",
+            "Check tenant Conditional Access; programmatic legacy cookie auth can be blocked.",
+            "If possible, prefer app-only auth (SPO_TENANT_ID/CLIENT_ID/CLIENT_SECRET).",
+        ])
+
+        print(
+            "[red]User/pass authentication failed[/red]: "
+            + ("auth cookies error; " if "wsignin1.0" in msg or "auth cookies" in msg.lower() else "")
+            + f"{msg}"
+        )
+        print("[bold]Site:[/bold] " + site_url)
+        print("[bold]User:[/bold] " + username)
+        for h in hints:
+            print("[dim]- " + h + "[/dim]")
+        raise SystemExit(1)
 
     # Resolve server-relative site path
     site_rel = urlparse(site_url).path.rstrip("/") or "/"
@@ -342,4 +376,3 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"[red]Unhandled error:[/red] {e}")
         sys.exit(1)
-

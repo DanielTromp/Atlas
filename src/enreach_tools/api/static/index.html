@@ -1,57 +1,203 @@
 <!doctype html>
-<html lang="nl">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Dataset Viewer</title>
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="styles.css?v=6" />
+    <link rel="icon" href="/favicon.ico" type="image/png" />
   </head>
   <body>
     <header class="topbar">
-      <h1 class="brand">Dataset Viewer</h1>
-      <nav class="tabs" id="tabs" aria-label="Datasets">
-        <button class="tab active" data-ds="devices">Devices</button>
-        <button class="tab" data-ds="vms">VMs</button>
-        <button class="tab" data-ds="all">All</button>
+      <h1 class="brand">Enreach Tools</h1>
+      <!-- Top-level pages navigation -->
+      <nav class="tabs" id="pages" aria-label="Pages">
+        <button class="tab active" data-page="netbox">NetBox</button>
+        <button class="tab" data-page="chat">Chat</button>
+        <button class="tab" data-page="zabbix">Zabbix</button>
+        <button class="tab" data-page="jira">Jira</button>
+        <button class="tab" data-page="confluence">Confluence</button>
       </nav>
-      <div class="toolbar">
-        <label class="field grow">
-          <span>Search</span>
-          <input id="q" type="text" placeholder="Search all columns" />
-        </label>
-        <button id="hideBtn" class="btn" title="Hide fields">👁️‍🗨️ Hide fields</button>
-        <button id="updateBtn" class="btn" title="Run export and refresh">Update dataset</button>
-        <button id="viewLogs" class="btn" title="View recent export logs">View logs</button>
-        <button id="downloadCsv" class="btn" title="Download filtered CSV">Download CSV</button>
-        <label class="field">
-          <span>Density</span>
-          <select id="density">
-            <option value="comfortable" selected>Comfortable</option>
-            <option value="compact">Compact</option>
-          </select>
-        </label>
-        <button id="reload" class="btn">Refresh</button>
-        <span id="summary" class="summary"></span>
-      </div>
     </header>
 
     <main class="main">
-      <div class="grid root" id="grid-root">
-        <div class="grid header">
-          <div class="header-scroll" id="header-scroll">
-            <div class="header-rows">
-              <div class="header-row" id="header-row"></div>
-              <div class="filter-row" id="filter-row"></div>
+      <!-- NetBox Page -->
+      <section class="page" id="page-netbox">
+        <nav class="tabs" id="ds-tabs" aria-label="Datasets">
+          <button class="tab active" data-ds="devices">Devices</button>
+          <button class="tab" data-ds="vms">VMs</button>
+          <button class="tab" data-ds="all">All</button>
+        </nav>
+        <div class="toolbar">
+          <label class="field grow">
+            <span>Search</span>
+            <input id="q" type="text" placeholder="Search all columns" />
+          </label>
+          <button id="hideBtn" class="btn" title="Hide fields">👁️‍🗨️ Hide fields</button>
+          <button id="resetFilters" class="btn ghost" title="Reset all column filters">Reset filters</button>
+          <button id="updateBtn" class="btn" title="Run export and refresh">Update dataset</button>
+          <button id="viewLogs" class="btn" title="View recent export logs">View logs</button>
+          <button id="downloadCsv" class="btn" title="Download filtered CSV">Download CSV</button>
+          <label class="field">
+            <span>Density</span>
+            <select id="density">
+              <option value="comfortable" selected>Comfortable</option>
+              <option value="compact">Compact</option>
+            </select>
+          </label>
+          <button id="reload" class="btn">Refresh</button>
+          <span id="summary" class="summary"></span>
+        </div>
+        <div class="grid root" id="grid-root">
+          <div class="grid header">
+            <div class="header-scroll" id="header-scroll">
+              <div class="header-rows">
+                <div class="header-row" id="header-row"></div>
+                <div class="filter-row" id="filter-row"></div>
+              </div>
+            </div>
+          </div>
+          <div class="grid body" id="body">
+            <div class="body-scroll" id="body-scroll">
+              <div class="canvas" id="canvas"></div>
+              <div class="rows" id="rows"></div>
             </div>
           </div>
         </div>
-        <div class="grid body" id="body">
-          <div class="body-scroll" id="body-scroll">
-            <div class="canvas" id="canvas"></div>
-            <div class="rows" id="rows"></div>
+      </section>
+
+      <!-- Chat Page -->
+      <section class="page" id="page-chat" hidden>
+        <div class="panel">
+          <h2>AI Chat (suggestions only, no direct actions)</h2>
+          <p class="muted">Choose a provider and ask questions about the data. Answers may include suggested text for Jira/Confluence. Nothing is written automatically.</p>
+          <div class="toolbar" style="margin: 8px 0 12px">
+            <label class="field">
+              <span>Provider</span>
+              <select id="chat-provider">
+                <option value="openai">OpenAI</option>
+                <option value="openrouter">OpenRouter</option>
+                <option value="claude">Claude</option>
+                <option value="gemini">Gemini</option>
+                <option value="other">Other</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Model</span>
+              <input id="chat-model" type="text" placeholder="e.g. gpt-4o, claude-3-5, gemini-1.5" />
+            </label>
+            <label class="field">
+              <input id="chat-include-data" type="checkbox" checked />
+              <span>Use data context</span>
+            </label>
+            <label class="field">
+              <input id="chat-stream" type="checkbox" checked />
+              <span>Stream</span>
+            </label>
           </div>
+          <div class="chat">
+            <div id="chat-log" class="chat-log"></div>
+            <div class="chat-input">
+              <textarea id="chat-input" rows="3" placeholder="Type your question…"></textarea>
+              <div class="chat-actions">
+                <button id="chat-send" class="btn">Ask</button>
+              </div>
+            </div>
+          </div>
+          <p class="muted">Configuration: set API keys in .env; pick a provider. Results may include suggested text for Jira tickets and Confluence pages (no auto‑publish).</p>
         </div>
-      </div>
+      </section>
+
+      <!-- Zabbix Page -->
+      <section class="page" id="page-zabbix" hidden>
+        <div class="panel panel-zbx">
+          <h2 class="panel-title">Zabbix</h2>
+          <div class="toolbar" style="margin: 4px 0 8px">
+            <button id="zbx-refresh" class="btn-icon btn-refresh" title="Refresh" aria-label="Refresh">
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                <!-- Dual-arrow refresh icon (simple) -->
+                <path d="M8 6a8 8 0 0 1 11 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <path d="M18 4v6h-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <path d="M16 18a8 8 0 0 1-11-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <path d="M6 20v-6h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+            </button>
+            <button id="zbx-ack" class="btn" title="Acknowledge selected problems">Ack</button>
+            <a class="btn" href="https://zabbix.enreach.tech/zabbix.php" target="_blank" rel="noopener">Open Zabbix</a>
+            <div class="spacer"></div>
+            <label class="field">
+              <input id="zbx-unack" type="checkbox" />
+              <span>Show unacknowledged only</span>
+            </label>
+            <label class="field">
+              <input id="zbx-systems" type="checkbox" checked />
+              <span>Only System (+ subgroups)</span>
+            </label>
+            <label class="field">
+              <span>Auto refresh</span>
+              <select id="zbx-refresh-interval">
+                <option value="0" selected>Off</option>
+                <option value="30000">30s</option>
+                <option value="60000">1m</option>
+                <option value="120000">2m</option>
+                <option value="300000">5m</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Density</span>
+              <select id="zbx-density">
+                <option value="comfortable" selected>Comfortable</option>
+                <option value="compact">Compact</option>
+              </select>
+            </label>
+            <span id="zbx-stats" class="summary"></span>
+          </div>
+          <div id="zbx-feed" class="feed empty">No Zabbix connection configured yet.</div>
+        </div>
+      </section>
+
+      <!-- Zabbix Host Details Page -->
+      <section class="page" id="page-zhost" hidden>
+        <div class="panel">
+          <h2 id="zhost-title">Host</h2>
+          <div class="toolbar" style="margin: 8px 0 12px">
+            <button id="zhost-back" class="btn">⬅ Back to Zabbix</button>
+            <a id="zhost-open-zbx" class="btn" href="#" target="_blank" rel="noopener">Open in Zabbix</a>
+            <div class="spacer"></div>
+            <button id="zhost-ack" class="btn" title="Acknowledge selected problems">Ack</button>
+            <span id="zhost-stats" class="summary" style="margin-left: 8px;"></span>
+          </div>
+          <div id="zhost-info" class="feed empty">Loading…</div>
+          <hr />
+          <h3>Problems (no filters)</h3>
+          <div id="zhost-problems" class="feed empty">Loading…</div>
+        </div>
+      </section>
+
+      <!-- Jira Page -->
+      <section class="page" id="page-jira" hidden>
+        <div class="panel">
+          <h2>Jira</h2>
+          <p class="muted">Fetches open tickets and uses them as a knowledge source (later). For now a placeholder. The system does not perform automatic updates, only suggestions.</p>
+          <div class="toolbar" style="margin: 8px 0 12px">
+            <button id="jira-refresh" class="btn">Refresh</button>
+          </div>
+          <div id="jira-list" class="feed empty">No Jira connection configured yet.</div>
+        </div>
+      </section>
+
+      <!-- Confluence Page -->
+      <section class="page" id="page-confluence" hidden>
+        <div class="panel">
+          <h2>Confluence</h2>
+          <p class="muted">Search Confluence and get documentation suggestions (later). No auto‑publish.</p>
+          <div class="toolbar" style="margin: 8px 0 12px">
+            <input id="conf-q" type="text" placeholder="Search term…" />
+            <button id="conf-search" class="btn">Search</button>
+          </div>
+          <div id="conf-results" class="feed empty">No Confluence connection configured yet.</div>
+        </div>
+      </section>
     </main>
 
     <!-- Hide fields panel -->
@@ -84,6 +230,6 @@
       <div id="resize-sw" class="resize-handle sw" title="Resize"></div>
     </div>
 
-    <script src="app.js"></script>
+    <script src="app.js?v=6"></script>
   </body>
   </html>
