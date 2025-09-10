@@ -22,7 +22,7 @@ dependencies = [
 ]
 
 [project.scripts]
-netbox = "enreach_tools.cli:main"
+enreach = "enreach_tools.cli:main"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]

@@ -8,27 +8,27 @@ Usage
 
 - Prepare: copy `.env.example` to `.env` and fill in values.
 - Run via uv without installing:
-  - `uv run netbox status`
-  - `uv run netbox export devices` (add `--force` to re-fetch all)
-  - `uv run netbox export vms` (add `--force` to re-fetch all)
-  - `uv run netbox export merge`
-  - `uv run netbox export update` (runs devices → vms → merge; supports `--force` to re-fetch all before merge)
+  - `uv run enreach status`
+  - `uv run enreach export devices` (add `--force` to re-fetch all)
+  - `uv run enreach export vms` (add `--force` to re-fetch all)
+  - `uv run enreach export merge`
+  - `uv run enreach export update` (runs devices → vms → merge; supports `--force` to re-fetch all before merge)
   - After `update`, if SharePoint is configured via `.env` (`SPO_SITE_URL` + user/pass or app creds), it automatically publishes the CMDB Excel to SharePoint.
-  - API server (serves CSVs via DuckDB): `uv run netbox api serve --host 127.0.0.1 --port 8000`
+  - API server (serves CSVs via DuckDB): `uv run enreach api serve --host 127.0.0.1 --port 8000`
   - Frontend UI (same server): open http://127.0.0.1:8000/app/
 
 SharePoint Upload
 -----------------
 
-- Run: `uv run netbox sharepoint upload --file "netbox-export/data/Systems CMDB.xlsx"`
+- Run: `uv run enreach sharepoint upload --file "netbox-export/data/Systems CMDB.xlsx"`
 - Use `--dest "Important Info/Autosync/Systems CMDB.xlsx"` to override destination path.
 - Disable overwrite with `--no-replace`.
 
 Publish CMDB
 ------------
 
-- One-shot publish: `uv run netbox sharepoint publish-cmdb` (defaults to user/pass, forced overwrite, destination `Important Info/Autosync/Systems CMDB.xlsx`).
-- Auto-publish after update: running `uv run netbox export update` will, when SharePoint env is set, automatically call the same publish step.
+- One-shot publish: `uv run enreach sharepoint publish-cmdb` (defaults to user/pass, forced overwrite, destination `Important Info/Autosync/Systems CMDB.xlsx`).
+- Auto-publish after update: running `uv run enreach export update` will, when SharePoint env is set, automatically call the same publish step.
 - After upload, the tool prints stable open links:
   - Doc.aspx using the file UniqueId (stable link if the same item is overwritten)
   - Direct web link (`?web=1`) to the file path
@@ -41,7 +41,7 @@ You can also use a service account with username/password (no MFA) via SharePoin
 
 - In `.env`, set `SPO_SITE_URL`, `SPO_USERNAME`, `SPO_PASSWORD`.
 - Optional: `SPO_DOC_LIB` to force the document library name (otherwise the tool tries "Shared Documents", then "Documents").
-- Run: `uv run netbox sharepoint upload --auth userpass --file "netbox-export/data/Systems CMDB.xlsx"`.
+- Run: `uv run enreach sharepoint upload --auth userpass --file "netbox-export/data/Systems CMDB.xlsx"`.
 
 Notes:
 - The account must be a native user in the target tenant (not a B2B/guest) and must not require MFA or extra prompts.
@@ -60,17 +60,17 @@ Structure
 ---------
 
 - `src/enreach_tools/env.py`: central dotenv loader, validates required variables.
-- `src/enreach_tools/cli.py`: Typer CLI with `netbox export ...` subcommands; calls existing scripts under `netbox-export/bin/`.
+- `src/enreach_tools/cli.py`: Typer CLI with `enreach export ...` subcommands; calls existing scripts under `netbox-export/bin/`.
 
 Diagnostics
 -----------
 
-- `uv run netbox status` checks `/api/status/` and a token‑protected endpoint for quick 200/403 diagnostics.
+- `uv run enreach status` checks `/api/status/` and a token‑protected endpoint for quick 200/403 diagnostics.
 
 API (FastAPI + DuckDB)
 ----------------------
 
-- Serve: `uv run netbox api serve --host 127.0.0.1 --port 8000`
+- Serve: `uv run enreach api serve --host 127.0.0.1 --port 8000`
  - Endpoints:
   - `GET /health` — reports `NETBOX_DATA_DIR` and CSV presence
   - `GET /devices` — devices from `netbox_devices_export.csv`
@@ -94,16 +94,17 @@ API (FastAPI + DuckDB)
   - NaN/NaT/±Inf are normalized to `null` in JSON responses.
 
 Frontend (UI)
--------------
+--------------
 
 - Open: http://127.0.0.1:8000/app/
-- Pages (top navigation):
-  - NetBox: dataset viewer with Devices, VMs and All (merged)
-  - Chat: AI chat (suggestions only; no automatic actions). Provider selection (OpenAI/OpenRouter/Claude/Gemini/Other).
+- Pages (top navigation, left → right):
   - Zabbix: problems overview with client-side filtering, host groups, host details and bulk acknowledge.
-  - Jira: placeholder for open tickets as a knowledge source (integration later)
-  - Confluence: placeholder for search and documentation suggestions (integration later)
-- NetBox grid features:
+  - NetBox: read‑only search across exported datasets (All/Devices/VMs).
+  - Jira: read‑only search (full‑text + filters). Clicking the key opens the issue in Jira.
+  - Confluence: read‑only CQL search. Clicking the title opens the page in Confluence.
+  - Chat: AI chat (suggestions only; no automatic actions). Provider selection (OpenAI/OpenRouter/Claude/Gemini/Other).
+  - Export: dataset viewer with Devices, VMs and All (merged)
+- Export grid features:
   - Virtual scrolling (smooth with large datasets)
   - Columns: drag‑and‑drop reorder, per‑column filters, header sort (multi‑sort with Shift)
   - Quick search box: filters across all fields (case‑insensitive)
@@ -117,11 +118,51 @@ Frontend (UI)
   - Follows the header order from `NETBOX_DATA_DIR/Systems CMDB.xlsx` (sheet 1, row 1) when present
   - Otherwise falls back to merged CSV order; unknown columns are appended at the end
 
-Notes (Chat/Zabbix/Jira/Confluence)
------------------------------------
+Atlassian (Jira & Confluence)
+-----------------------------
 
-- Chat does not make automatic changes; it only shows suggestions/text (e.g., for Jira/Confluence).
-- Jira/Confluence pages are placeholders; integrations will be added later.
+- Env (preferred): `ATLASSIAN_BASE_URL`, `ATLASSIAN_EMAIL`, `ATLASSIAN_API_TOKEN`.
+- Legacy fallback: `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN`.
+- Jira page filters: Search, Project, Status, Assignee, Priority, Type, Team (Service Desk), Updated, Max, Open only.
+- Confluence page filters: Search, Space (key or exact name), Type, Labels, Updated, Max.
+- Space resolution: exact space names are resolved to keys and enforced (no partial matches).
+- All labels and messages in Jira/Confluence pages are in English. Read‑only (no writes).
+
+CLI (Jira/Confluence/Zabbix)
+----------------------------
+
+- Jira search:
+  - `uv run enreach jira search --q "router" --project ABC --updated -30d --open`
+  - Options: `--jql`, `--project`, `--status`, `--assignee`, `--priority`, `--type`, `--team`, `--updated`, `--open/--all`, `--max`
+
+- Confluence search:
+  - `uv run enreach confluence search --q "vm" --space "Operations - Network" --type page --updated -90d --max 50`
+  - `--space` accepts a space key or exact space name (comma‑separated allowed)
+
+- Zabbix problems (existing):
+  - `uv run enreach zabbix problems --limit 20 --severities 2,3,4`
+  - Filters: `--groupids`, `--all` (include acknowledged)
+
+- NetBox helpers:
+  - Live search (no CSV):
+    - `uv run enreach netbox search --q "edge01" --dataset devices --limit 25`
+    - Datasets: `all|devices|vms`; `--limit 0` fetches all pages.
+  - Device JSON (full object):
+    - By id: `uv run enreach netbox device-json --id 1202`
+    - By name: `uv run enreach netbox device-json --name edge01`
+    - Add `--raw` to print raw JSON without pretty formatting.
+
+- Cross-system search (Home aggregator):
+  - `uv run enreach search run --q "vw746" --json`
+  - Options:
+    - `--zlimit 0` (Zabbix max items; 0 = no limit)
+    - `--jlimit 0` (Jira max issues; 0 = no limit; upstream caps may apply)
+    - `--climit 0` (Confluence max results; 0 = no limit; upstream caps may apply)
+    - `--json` to output full JSON with all fields (links, statuses, timestamps)
+    - `--out home.json` to save the full JSON to a file
+
+Notes:
+- `-h` is available as an alias for `--help` on all commands and groups.
 
 Chat configuration
 ------------------
@@ -182,3 +223,7 @@ Utilities
   - `python scripts/visit_app.py --system --url http://127.0.0.1:8000/app/`
 - Headless screenshot (with small render delay):
   - `python scripts/visit_app.py --headless --screenshot app.png --delay-ms 1200`
+- NetBox page (Search):
+  - Filters: Search (full‑text), Dataset (All/Devices/VMs), Max (0 = All).
+  - Data source: Live NetBox API (`?q=`) — results may include devices, VMs and IP addresses (when Dataset = All).
+  - Name links open the exact object in NetBox (no intermediate search). Internal helper fields are hidden.

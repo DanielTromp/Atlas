@@ -12,21 +12,23 @@
       <h1 class="brand">Enreach Tools</h1>
       <!-- Top-level pages navigation -->
       <nav class="tabs" id="pages" aria-label="Pages">
-        <button class="tab active" data-page="netbox">NetBox</button>
-        <button class="tab" data-page="chat">Chat</button>
+        <button class="tab active" data-page="home">Home</button>
         <button class="tab" data-page="zabbix">Zabbix</button>
+        <button class="tab" data-page="netbox">NetBox</button>
         <button class="tab" data-page="jira">Jira</button>
         <button class="tab" data-page="confluence">Confluence</button>
+        <button class="tab" data-page="chat">Chat</button>
+        <button class="tab" data-page="export">Export</button>
       </nav>
     </header>
 
     <main class="main">
-      <!-- NetBox Page -->
-      <section class="page" id="page-netbox">
+      <!-- Export Page -->
+      <section class="page" id="page-export">
         <nav class="tabs" id="ds-tabs" aria-label="Datasets">
-          <button class="tab active" data-ds="devices">Devices</button>
+          <button class="tab" data-ds="devices">Devices</button>
           <button class="tab" data-ds="vms">VMs</button>
-          <button class="tab" data-ds="all">All</button>
+          <button class="tab active" data-ds="all">All</button>
         </nav>
         <div class="toolbar">
           <label class="field grow">
@@ -63,6 +65,61 @@
               <div class="rows" id="rows"></div>
             </div>
           </div>
+        </div>
+      </section>
+
+      <!-- NetBox Search Page -->
+      <section class="page" id="page-netbox" hidden>
+        <div class="panel">
+          <h2>NetBox Search</h2>
+          <div class="toolbar" style="margin: 8px 0 12px">
+            <label class="field grow">
+              <span>Search</span>
+              <input id="nb-q" type="text" placeholder="Full‑text query" />
+            </label>
+            <button id="nb-search" class="btn">Search</button>
+            <div class="spacer"></div>
+            <label class="field">
+              <span>Max</span>
+              <select id="nb-max">
+                <option value="0">All</option>
+                <option value="25">25</option>
+                <option value="50" selected>50</option>
+                <option value="100">100</option>
+                <option value="200">200</option>
+              </select>
+            </label>
+            <button id="nb-reset" class="btn ghost">Reset</button>
+          </div>
+          <div id="nb-results" class="feed empty">Not searched yet.</div>
+        </div>
+      </section>
+
+      <!-- Home Page -->
+      <section class="page" id="page-home" hidden>
+        <div class="panel">
+          <h2>Home</h2>
+          <div class="toolbar" style="margin: 8px 0 12px">
+            <label class="field grow">
+              <span>Search</span>
+              <input id="home-q" type="text" placeholder="Object name (e.g., device, vm, IP, keyword)" />
+            </label>
+            <button id="home-search" class="btn">Search</button>
+            <div class="spacer"></div>
+            <label class="field">
+              <span>Zabbix</span>
+              <input id="home-zlimit" type="number" min="0" value="10" style="width:80px" />
+            </label>
+            <label class="field">
+              <span>Jira</span>
+              <input id="home-jlimit" type="number" min="0" value="10" style="width:80px" />
+            </label>
+            <label class="field">
+              <span>Confluence</span>
+              <input id="home-climit" type="number" min="0" value="10" style="width:100px" />
+            </label>
+          </div>
+          <div id="home-results" class="feed empty">Enter a search term and press Search.</div>
         </div>
       </section>
 
@@ -178,11 +235,60 @@
       <section class="page" id="page-jira" hidden>
         <div class="panel">
           <h2>Jira</h2>
-          <p class="muted">Fetches open tickets and uses them as a knowledge source (later). For now a placeholder. The system does not perform automatic updates, only suggestions.</p>
           <div class="toolbar" style="margin: 8px 0 12px">
-            <button id="jira-refresh" class="btn">Refresh</button>
+            <label class="field grow">
+              <span>Search</span>
+              <input id="jira-q" type="text" placeholder="Full‑text (text ~ ...)" />
+            </label>
+            <label class="field">
+              <span>Project</span>
+              <input id="jira-project" type="text" placeholder="e.g. ABC" />
+            </label>
+            <label class="field">
+              <span>Status</span>
+              <input id="jira-status" type="text" placeholder="e.g. To Do, In Progress" />
+            </label>
+            <label class="field">
+              <span>Assignee</span>
+              <input id="jira-assignee" type="text" placeholder="name/email" />
+            </label>
+            <label class="field">
+              <span>Priority</span>
+              <input id="jira-priority" type="text" placeholder="e.g. High" />
+            </label>
+            <label class="field">
+              <span>Type</span>
+              <input id="jira-type" type="text" placeholder="e.g. Bug, Task" />
+            </label>
+            <label class="field">
+              <span>Team (Service Desk)</span>
+              <input id="jira-team" type="text" value="Systems Infrastructure" placeholder="e.g. Systems Infrastructure" />
+            </label>
+            <label class="field">
+              <span>Updated</span>
+              <select id="jira-updated">
+                <option value="-7d">7d</option>
+                <option value="-14d">14d</option>
+                <option value="-30d" selected>30d</option>
+                <option value="">All</option>
+              </select>
+            </label>
+            <label class="field">
+              <input id="jira-open" type="checkbox" checked />
+              <span>Open only</span>
+            </label>
+            <label class="field">
+              <span>Max</span>
+              <select id="jira-max">
+                <option value="25">25</option>
+                <option value="50" selected>50</option>
+                <option value="100">100</option>
+              </select>
+            </label>
+            <button id="jira-search" class="btn">Search</button>
+            <button id="jira-reset" class="btn ghost">Reset</button>
           </div>
-          <div id="jira-list" class="feed empty">No Jira connection configured yet.</div>
+          <div id="jira-results" class="feed empty">Not searched yet or configuration missing.</div>
         </div>
       </section>
 
@@ -190,12 +296,48 @@
       <section class="page" id="page-confluence" hidden>
         <div class="panel">
           <h2>Confluence</h2>
-          <p class="muted">Search Confluence and get documentation suggestions (later). No auto‑publish.</p>
           <div class="toolbar" style="margin: 8px 0 12px">
-            <input id="conf-q" type="text" placeholder="Search term…" />
+            <label class="field grow">
+              <span>Search</span>
+              <input id="conf-q" type="text" placeholder="Full‑text (text ~ …)" />
+            </label>
+            <label class="field">
+              <span>Space</span>
+              <input id="conf-space" type="text" placeholder="e.g. DOCS or exact name" />
+            </label>
+            <label class="field">
+              <span>Type</span>
+              <select id="conf-type">
+                <option value="page" selected>Page</option>
+                <option value="blogpost">Blog post</option>
+                <option value="attachment">Attachment</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Labels</span>
+              <input id="conf-labels" type="text" placeholder="comma‑separated" />
+            </label>
+            <label class="field">
+              <span>Updated</span>
+              <select id="conf-updated">
+                <option value="" selected>All</option>
+                <option value="-7d">7d</option>
+                <option value="-30d">30d</option>
+                <option value="-90d">90d</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Max</span>
+              <select id="conf-max">
+                <option value="25">25</option>
+                <option value="50" selected>50</option>
+                <option value="100">100</option>
+              </select>
+            </label>
             <button id="conf-search" class="btn">Search</button>
+            <button id="conf-reset" class="btn ghost">Reset</button>
           </div>
-          <div id="conf-results" class="feed empty">No Confluence connection configured yet.</div>
+          <div id="conf-results" class="feed empty">Not searched yet.</div>
         </div>
       </section>
     </main>
@@ -230,6 +372,6 @@
       <div id="resize-sw" class="resize-handle sw" title="Resize"></div>
     </div>
 
-    <script src="app.js?v=6"></script>
+    <script src="app.js?v=7"></script>
   </body>
   </html>

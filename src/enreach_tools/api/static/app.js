@@ -5,13 +5,35 @@
   // Elements
   // Page router
   const $pages = document.getElementById("pages");
+  const $pageExport = document.getElementById("page-export");
   const $pageNetbox = document.getElementById("page-netbox");
+  const $pageHome = document.getElementById("page-home");
   const $pageChat = document.getElementById("page-chat");
   const $pageZabbix = document.getElementById("page-zabbix");
   const $pageZhost = document.getElementById("page-zhost");
   const $pageJira = document.getElementById("page-jira");
   const $pageConfluence = document.getElementById("page-confluence");
-  // Dataset tabs (inside NetBox page)
+  // Confluence elements
+  const $confQ = document.getElementById('conf-q');
+  const $confSpace = document.getElementById('conf-space');
+  const $confType = document.getElementById('conf-type');
+  const $confLabels = document.getElementById('conf-labels');
+  const $confUpdated = document.getElementById('conf-updated');
+  const $confMax = document.getElementById('conf-max');
+  const $confResults = document.getElementById('conf-results');
+  // Jira elements
+  const $jiraQ = document.getElementById('jira-q');
+  const $jiraProject = document.getElementById('jira-project');
+  const $jiraStatus = document.getElementById('jira-status');
+  const $jiraAssignee = document.getElementById('jira-assignee');
+  const $jiraPriority = document.getElementById('jira-priority');
+  const $jiraType = document.getElementById('jira-type');
+  const $jiraTeam = document.getElementById('jira-team');
+  const $jiraUpdated = document.getElementById('jira-updated');
+  const $jiraOpen = document.getElementById('jira-open');
+  const $jiraMax = document.getElementById('jira-max');
+  const $jiraResults = document.getElementById('jira-results');
+  // Dataset tabs (inside Export page)
   const $dsTabs = document.getElementById("ds-tabs");
   const $q = document.getElementById("q");
   const $reload = document.getElementById("reload");
@@ -63,8 +85,8 @@
   // Sorting (multi-sort)
   // Array of { key: string, dir: 'asc'|'desc' }
   let sortRules = [];
-  let dataset = "devices";
-  let page = 'netbox';
+  let dataset = "all";
+  let page = 'export';
   let dragSrcIndex = -1; // global src index for DnD across headers
   // Density
   const ROW_COMFORT = 36;
@@ -940,7 +962,7 @@
   function showPage(p) {
     page = p;
     // Toggle page sections
-    const map = { netbox: $pageNetbox, chat: $pageChat, zabbix: $pageZabbix, zhost: $pageZhost, jira: $pageJira, confluence: $pageConfluence };
+    const map = { home: $pageHome, zabbix: $pageZabbix, netbox: $pageNetbox, jira: $pageJira, confluence: $pageConfluence, chat: $pageChat, export: $pageExport, zhost: $pageZhost };
     for (const k of Object.keys(map)) {
       if (!map[k]) continue;
       if (k === p) map[k].removeAttribute('hidden'); else map[k].setAttribute('hidden', '');
@@ -953,8 +975,8 @@
       url.hash = `#${p}`;
       history.replaceState(null, '', url.toString());
     } catch {}
-    // When switching into NetBox, ensure data is loaded/refreshed
-    if (p === 'netbox') {
+    // When switching into Export, ensure data is loaded/refreshed
+    if (p === 'export') {
       fetchData();
     } else if (p === 'chat') {
       ensureChatSession();
@@ -964,14 +986,26 @@
       fetchZabbix();
     } else if (p === 'zhost') {
       // page-specific loader handled via showZabbixHost()
+    } else if (p === 'jira') {
+      ensureJiraDefaults();
+      // If user has previous search, auto-run
+      try { const prev = localStorage.getItem('jira_last_query'); if (prev) searchJira(false); } catch { searchJira(false); }
+    } else if (p === 'netbox') {
+      ensureNbDefaults();
+      try { const prev = localStorage.getItem('nb_last_query'); if (prev) searchNetbox(false); } catch {}
+    } else if (p === 'confluence') {
+      ensureConfDefaults();
+      try { const prev = localStorage.getItem('conf_last_query'); if (prev) searchConfluence(false); } catch { /* noop */ }
+    } else if (p === 'home') {
+      // no-op; wait for user query
     }
   }
   function parseHashPage() {
     try {
       const h = (window.location.hash || '').replace(/^#/, '').trim().toLowerCase();
-      if (["netbox","chat","zabbix","zhost","jira","confluence"].includes(h)) return h;
+      if (["home","zabbix","netbox","jira","confluence","chat","export","zhost"].includes(h)) return h;
     } catch {}
-    return 'netbox';
+    return 'home';
   }
   window.addEventListener('hashchange', () => showPage(parseHashPage()));
   // Attach click handlers to each top-level page button (robust against text-node targets)
@@ -980,13 +1014,13 @@
     pgBtns.forEach((btn) => {
       btn.addEventListener('click', (e) => {
         e.preventDefault();
-        const p = btn.getAttribute('data-page') || 'netbox';
+        const p = btn.getAttribute('data-page') || 'export';
         showPage(p);
       });
     });
   }
 
-  // Dataset tab switching (NetBox page)
+  // Dataset tab switching (Export page)
   if ($dsTabs) {
     const dsBtns = Array.from($dsTabs.querySelectorAll('button.tab'));
     dsBtns.forEach((btn) => {
@@ -1590,14 +1624,438 @@
     }
   });
   document.getElementById('jira-refresh')?.addEventListener('click', () => {
-    const el = document.getElementById('jira-list');
-    if (el) el.textContent = 'No Jira integration configured yet: configure token and JQL later.';
+    searchJira();
   });
-  document.getElementById('conf-search')?.addEventListener('click', () => {
-    const el = document.getElementById('conf-results');
-    const q = (document.getElementById('conf-q')?.value || '').trim();
-    if (el) el.textContent = q ? `Searching for "${q}"… (placeholder)` : 'Enter a search term.';
+  // Confluence helpers
+  function ensureConfDefaults() {
+    try {
+      const saved = JSON.parse(localStorage.getItem('conf_filters') || '{}');
+      if ($confQ && typeof saved.q === 'string') $confQ.value = saved.q;
+      if ($confSpace && typeof saved.space === 'string') $confSpace.value = saved.space;
+      if ($confType && typeof saved.ctype === 'string') $confType.value = saved.ctype;
+      if ($confLabels && typeof saved.labels === 'string') $confLabels.value = saved.labels;
+      if ($confUpdated && typeof saved.updated === 'string') $confUpdated.value = saved.updated;
+      if ($confMax && typeof saved.max_results === 'number') $confMax.value = String(saved.max_results);
+    } catch {}
+  }
+  function saveConfFilters(filters) {
+    try { localStorage.setItem('conf_filters', JSON.stringify(filters)); } catch {}
+  }
+  function buildConfParams() {
+    const params = new URLSearchParams();
+    const q = ($confQ?.value || '').trim(); if (q) params.set('q', q);
+    const space = ($confSpace?.value || '').trim(); if (space) params.set('space', space);
+    const ctype = ($confType?.value || '').trim(); if (ctype) params.set('ctype', ctype);
+    const labels = ($confLabels?.value || '').trim(); if (labels) params.set('labels', labels);
+    const updated = ($confUpdated?.value || '').trim(); if (updated) params.set('updated', updated);
+    const max = Number($confMax?.value || 50) || 50; params.set('max_results', String(max));
+    saveConfFilters({ q, space, ctype, labels, updated, max_results: max });
+    try { localStorage.setItem('conf_last_query', params.toString()); } catch {}
+    return params.toString();
+  }
+  async function searchConfluence(showSpinner = true) {
+    if ($confResults && showSpinner) $confResults.textContent = 'Searching…';
+    // Check configuration
+    try {
+      const chk = await fetch(`${API_BASE}/confluence/config`);
+      const cfg = await chk.json().catch(() => ({}));
+      if (!cfg?.configured) { if ($confResults) $confResults.textContent = 'Confluence not configured (ATLASSIAN_* missing).'; return; }
+    } catch {}
+    const qs = buildConfParams();
+    const url = `${API_BASE}/confluence/search?${qs}`;
+    try {
+      const res = await fetch(url);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { if ($confResults) $confResults.textContent = data?.detail || `${res.status} ${res.statusText}`; return; }
+      let items = Array.isArray(data?.results) ? data.results.slice() : [];
+      try { items.sort((a,b) => (new Date(b.updated||0)) - (new Date(a.updated||0))); } catch {}
+      if (!items.length) { if ($confResults) $confResults.textContent = 'No results.'; return; }
+      const table = document.createElement('table'); table.className = 'zbx-table';
+      const thead = document.createElement('thead'); thead.innerHTML = '<tr><th>Titel</th><th>Space</th><th>Type</th><th>Updated</th></tr>';
+      const tbody = document.createElement('tbody');
+      const fmtTime = (iso) => { if (!iso) return ''; try { return amsDateTimeString(new Date(iso)); } catch { return iso; } };
+      for (const it of items) {
+        const tr = document.createElement('tr');
+        const tdTitle = document.createElement('td');
+        if (it.url) { const a = document.createElement('a'); a.href = it.url; a.textContent = it.title || '(untitled)'; a.target = '_blank'; a.rel = 'noopener'; tdTitle.appendChild(a); } else { tdTitle.textContent = it.title || '(untitled)'; }
+        const tdSpace = document.createElement('td'); tdSpace.textContent = it.space || '';
+        const tdType = document.createElement('td'); tdType.textContent = it.type || '';
+        const tdUpd = document.createElement('td'); tdUpd.textContent = fmtTime(it.updated);
+        tr.appendChild(tdTitle); tr.appendChild(tdSpace); tr.appendChild(tdType); tr.appendChild(tdUpd);
+        tbody.appendChild(tr);
+      }
+      table.appendChild(thead); table.appendChild(tbody);
+      if ($confResults) { $confResults.innerHTML = ''; $confResults.appendChild(table); }
+    } catch (e) {
+      if ($confResults) $confResults.textContent = `Error: ${e?.message || e}`;
+    }
+  }
+  document.getElementById('conf-search')?.addEventListener('click', () => searchConfluence());
+  document.getElementById('conf-reset')?.addEventListener('click', () => {
+    if ($confQ) $confQ.value = '';
+    if ($confSpace) $confSpace.value = '';
+    if ($confType) $confType.value = 'page';
+    if ($confLabels) $confLabels.value = '';
+    if ($confUpdated) $confUpdated.value = '';
+    if ($confMax) $confMax.value = '50';
+    saveConfFilters({ q: '', space: '', ctype: 'page', labels: '', updated: '', max_results: 50 });
+    searchConfluence();
   });
+  $confQ?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); searchConfluence(); } });
+  $confSpace?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); searchConfluence(); } });
+  $confLabels?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); searchConfluence(); } });
+
+  // NetBox search helpers
+  const $nbQ = document.getElementById('nb-q');
+  const $nbDs = document.getElementById('nb-ds');
+  const $nbMax = document.getElementById('nb-max');
+  const $nbResults = document.getElementById('nb-results');
+  let NB_BASE = '';
+  function ensureNbDefaults() {
+    try {
+      const saved = JSON.parse(localStorage.getItem('nb_filters') || '{}');
+      if ($nbQ && typeof saved.q === 'string') $nbQ.value = saved.q;
+      if ($nbDs && typeof saved.dataset === 'string') $nbDs.value = saved.dataset;
+      if ($nbMax && typeof saved.max_results === 'number') $nbMax.value = String(saved.max_results);
+    } catch {}
+    // Load NetBox base URL once
+    (async () => {
+      try { const r = await fetch(`${API_BASE}/netbox/config`); const d = await r.json(); NB_BASE = (d && d.base_url) || ''; } catch {}
+    })();
+  }
+  function saveNbFilters(filters) {
+    try { localStorage.setItem('nb_filters', JSON.stringify(filters)); } catch {}
+  }
+  function buildNbParams() {
+    const q = ($nbQ?.value || '').trim();
+    const ds = ($nbDs?.value || 'all');
+    const max = Number($nbMax?.value || 50) || 50;
+    const params = new URLSearchParams();
+    if (q) params.set('q', q);
+    params.set('dataset', ds);
+    params.set('limit', String(max));
+    saveNbFilters({ q, dataset: ds, max_results: max });
+    try { localStorage.setItem('nb_last_query', params.toString()); } catch {}
+    return params.toString();
+  }
+  async function searchNetbox(showSpinner = true) {
+    if ($nbResults && showSpinner) $nbResults.textContent = 'Searching…';
+    try {
+      const qs = buildNbParams();
+      const res = await fetch(`${API_BASE}/netbox/search?${qs}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { if ($nbResults) $nbResults.textContent = data?.detail || `${res.status} ${res.statusText}`; return; }
+      let rows = Array.isArray(data?.rows) ? data.rows.slice() : [];
+      try { rows.sort((a,b) => (new Date(b['Updated']||0)) - (new Date(a['Updated']||0))); } catch {}
+      if (!rows.length) { if ($nbResults) $nbResults.textContent = 'No results.'; return; }
+      // Determine columns: prefer /column-order intersection if available
+      let columns = [];
+      try {
+        const pref = await fetch(`${API_BASE}/column-order`);
+        const order = await pref.json();
+        const keys = Object.keys(rows[0] || {});
+        if (Array.isArray(order) && order.length) {
+          columns = order.filter(c => keys.includes(c));
+          for (const k of keys) if (!columns.includes(k)) columns.push(k);
+        } else {
+          columns = keys;
+        }
+      } catch {
+        columns = Object.keys(rows[0] || {});
+      }
+      // Hide internal helper fields
+      columns = columns.filter(c => String(c).toLowerCase() !== 'ui_path');
+      // Ensure Updated column is visible and placed near the end
+      const updIdx = columns.findIndex(c => String(c).toLowerCase() === 'updated');
+      if (updIdx === -1) {
+        // If rows contain Updated key but it didn't make it into columns, add it
+        if (rows.length && Object.prototype.hasOwnProperty.call(rows[0], 'Updated')) columns.push('Updated');
+      } else {
+        // Move Updated near the end (before the very last column to keep layout stable)
+        const [u] = columns.splice(updIdx, 1);
+        columns.push(u);
+      }
+      const table = document.createElement('table'); table.className = 'zbx-table';
+      const thead = document.createElement('thead');
+      thead.innerHTML = '<tr>' + columns.map(c => `<th>${c}</th>`).join('') + '</tr>';
+      const tbody = document.createElement('tbody');
+      const nameKey = (() => {
+        const keys = columns.map(c => String(c).toLowerCase());
+        const cand = ['name', 'device', 'vm name', 'hostname'];
+        for (const c of cand) { const i = keys.indexOf(c); if (i !== -1) return columns[i]; }
+        return columns[0] || '';
+      })();
+      for (const r of rows) {
+        const tr = document.createElement('tr');
+        for (const c of columns) {
+          const td = document.createElement('td');
+          const v = r[c];
+          if (String(c).toLowerCase() === 'updated') {
+            // Pretty print timestamp
+            try { td.textContent = v ? amsDateTimeString(new Date(v)) : ''; }
+            catch { td.textContent = v == null ? '' : String(v); }
+          } else if (NB_BASE && c === nameKey && v != null && String(v).trim()) {
+            const a = document.createElement('a');
+            // Prefer direct object path when available from API
+            const uiPath = r && typeof r === 'object' ? (r.ui_path || r.UI_PATH || r.UiPath) : '';
+            let href = '';
+            if (uiPath && typeof uiPath === 'string') {
+              href = NB_BASE.replace(/\/$/, '') + uiPath;
+            } else {
+              // Fallback to NetBox search
+              const ds = ($nbDs?.value || 'all');
+              const q = encodeURIComponent(String(v));
+              href = NB_BASE.replace(/\/$/, '') + '/search/?q=' + q;
+              if (ds === 'devices') href = NB_BASE.replace(/\/$/, '') + '/dcim/devices/?q=' + q;
+              if (ds === 'vms') href = NB_BASE.replace(/\/$/, '') + '/virtualization/virtual-machines/?q=' + q;
+            }
+            a.href = href; a.target = '_blank'; a.rel = 'noopener';
+            a.textContent = String(v);
+            td.appendChild(a);
+          } else {
+            td.textContent = (v == null ? '' : String(v));
+          }
+          tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+      }
+      table.appendChild(thead); table.appendChild(tbody);
+      if ($nbResults) { $nbResults.innerHTML = ''; $nbResults.appendChild(table); }
+    } catch (e) {
+      if ($nbResults) $nbResults.textContent = `Error: ${e?.message || e}`;
+    }
+  }
+  document.getElementById('nb-search')?.addEventListener('click', () => searchNetbox());
+  document.getElementById('nb-reset')?.addEventListener('click', () => {
+    if ($nbQ) $nbQ.value = '';
+    if ($nbDs) $nbDs.value = 'all';
+    if ($nbMax) $nbMax.value = '50';
+    saveNbFilters({ q: '', dataset: 'all', max_results: 50 });
+    searchNetbox();
+  });
+  $nbQ?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); searchNetbox(); } });
+
+  // Home aggregator
+  const $homeQ = document.getElementById('home-q');
+  const $homeResults = document.getElementById('home-results');
+  const $homeZ = document.getElementById('home-zlimit');
+  const $homeJ = document.getElementById('home-jlimit');
+  const $homeC = document.getElementById('home-climit');
+  async function searchHome() {
+    if ($homeResults) $homeResults.textContent = 'Searching…';
+    const q = ($homeQ?.value || '').trim();
+    if (!q) { if ($homeResults) $homeResults.textContent = 'Enter a search term.'; return; }
+    try {
+      if (!NB_BASE) {
+        try { const r0 = await fetch(`${API_BASE}/netbox/config`); const d0 = await r0.json(); NB_BASE = (d0 && d0.base_url) || ''; } catch {}
+      }
+      // Build limits (defaults 10; 0 means no limit; NetBox unlimited server-side)
+      const zl = Number($homeZ?.value || 10) || 10;
+      const jl = Number($homeJ?.value || 10) || 10;
+      const cl = Number($homeC?.value || 10) || 10;
+      const qs = new URLSearchParams({ q, zlimit: String(zl), jlimit: String(jl), climit: String(cl) });
+      const res = await fetch(`${API_BASE}/home/aggregate?${qs.toString()}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { if ($homeResults) $homeResults.textContent = data?.detail || `${res.status} ${res.statusText}`; return; }
+      const wrap = document.createElement('div');
+      function section(title, contentNode) { const d = document.createElement('div'); d.className = 'panel'; const h = document.createElement('h3'); h.textContent = title; d.appendChild(h); d.appendChild(contentNode); return d; }
+      // Zabbix
+      const z = data?.zabbix || {}; const znode = document.createElement('div'); const zlist = document.createElement('ul'); zlist.style.paddingLeft = '18px';
+      (z?.active || []).forEach(it => {
+        const li = document.createElement('li');
+        const st = it.status || (it.resolved ? 'RESOLVED' : 'ACTIVE');
+        const prefix = `[${it.clock || ''}] [${st}]` + (it.severity != null ? ` sev=${it.severity}` : '');
+        const a = document.createElement('a');
+        const href = it.problem_url || it.host_url || '';
+        if (href) { a.href = href; a.target = '_blank'; a.rel = 'noopener'; a.textContent = ` ${it.name || ''}`; li.textContent = prefix + ' '; li.appendChild(a); }
+        else { li.textContent = `${prefix} ${it.name || ''}`; }
+        zlist.appendChild(li);
+      });
+      (z?.historical || []).slice(0, 20).forEach(it => {
+        const li = document.createElement('li');
+        const st = it.status || (String(it.value||'')==='1' ? 'PROBLEM' : 'OK');
+        const prefix = `[${it.clock || ''}] [${st}]`;
+        const a = document.createElement('a');
+        const href = it.event_url || it.host_url || '';
+        if (href) { a.href = href; a.target = '_blank'; a.rel = 'noopener'; a.textContent = ` ${it.name || ''}`; li.textContent = prefix + ' '; li.appendChild(a); }
+        else { li.textContent = `${prefix} ${it.name || ''}`; }
+        zlist.appendChild(li);
+      });
+      if (!zlist.childNodes.length) znode.textContent = 'No Zabbix data.'; else znode.appendChild(zlist);
+      wrap.appendChild(section('Zabbix', znode));
+      // Jira
+      const j = data?.jira || {}; const jnode = document.createElement('div');
+      if (Array.isArray(j.issues) && j.issues.length) {
+        const ul = document.createElement('ul'); ul.style.paddingLeft = '18px';
+        const issues = j.issues.slice();
+        try { issues.sort((a,b) => (new Date(b.updated||0)) - (new Date(a.updated||0))); } catch {}
+        issues.forEach(it => {
+          const li = document.createElement('li');
+          const a = document.createElement('a'); a.href = it.url || '#'; a.target = '_blank'; a.rel = 'noopener'; a.textContent = `${it.key || ''} — ${it.summary || ''}`;
+          const ts = (() => { try { return it.updated ? amsDateTimeString(new Date(it.updated)) : ''; } catch { return it.updated || ''; } })();
+          li.textContent = ts ? `[${ts}] ` : '';
+          li.appendChild(a);
+          ul.appendChild(li);
+        });
+        jnode.appendChild(ul);
+      } else { jnode.textContent = 'No Jira data.'; }
+      wrap.appendChild(section('Jira', jnode));
+      // Confluence
+      const c = data?.confluence || {}; const cnode = document.createElement('div');
+      if (Array.isArray(c.results) && c.results.length) {
+        const ul = document.createElement('ul'); ul.style.paddingLeft = '18px';
+        const pages = c.results.slice();
+        try { pages.sort((a,b) => (new Date(b.updated||0)) - (new Date(a.updated||0))); } catch {}
+        pages.forEach(it => {
+          const li = document.createElement('li');
+          const a = document.createElement('a'); a.href = it.url || '#'; a.target = '_blank'; a.rel = 'noopener'; a.textContent = it.title || '';
+          const ts = (() => { try { return it.updated ? amsDateTimeString(new Date(it.updated)) : ''; } catch { return it.updated || ''; } })();
+          li.textContent = ts ? `[${ts}] ` : '';
+          li.appendChild(a);
+          ul.appendChild(li);
+        });
+        cnode.appendChild(ul);
+      } else { cnode.textContent = 'No Confluence data.'; }
+      wrap.appendChild(section('Confluence', cnode));
+      // NetBox
+      const n = data?.netbox || {}; const nnode = document.createElement('div');
+      if (Array.isArray(n.items) && n.items.length) {
+        const ul = document.createElement('ul'); ul.style.paddingLeft = '18px';
+        const items = n.items.slice();
+        try { items.sort((a,b) => (new Date(b.Updated||0)) - (new Date(a.Updated||0))); } catch {}
+        items.forEach(it => {
+          const li = document.createElement('li');
+          const a = document.createElement('a'); const href = (NB_BASE ? NB_BASE.replace(/\/$/, '') + (it.ui_path || '') : '#'); a.href = href; a.target = '_blank'; a.rel = 'noopener'; a.textContent = `${it.Name || ''} ${it.Type ? '('+it.Type+')' : ''}`;
+          const ts = (() => { try { return it.Updated ? amsDateTimeString(new Date(it.Updated)) : ''; } catch { return it.Updated || ''; } })();
+          li.textContent = ts ? `[${ts}] ` : '';
+          li.appendChild(a);
+          ul.appendChild(li);
+        });
+        nnode.appendChild(ul);
+      } else { nnode.textContent = 'No NetBox data.'; }
+      wrap.appendChild(section('NetBox', nnode));
+      if ($homeResults) { $homeResults.innerHTML = ''; $homeResults.appendChild(wrap); }
+    } catch (e) { if ($homeResults) $homeResults.textContent = `Error: ${e?.message || e}`; }
+  }
+  document.getElementById('home-search')?.addEventListener('click', () => searchHome());
+  $homeQ?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); searchHome(); } });
+
+  // Jira helpers
+  function ensureJiraDefaults() {
+    try {
+      const saved = JSON.parse(localStorage.getItem('jira_filters') || '{}');
+      if ($jiraQ && typeof saved.q === 'string') $jiraQ.value = saved.q;
+      if ($jiraProject && typeof saved.project === 'string') $jiraProject.value = saved.project;
+      if ($jiraStatus && typeof saved.status === 'string') $jiraStatus.value = saved.status;
+      if ($jiraAssignee && typeof saved.assignee === 'string') $jiraAssignee.value = saved.assignee;
+      if ($jiraPriority && typeof saved.priority === 'string') $jiraPriority.value = saved.priority;
+      if ($jiraType && typeof saved.issuetype === 'string') $jiraType.value = saved.issuetype;
+      if ($jiraTeam && typeof saved.team === 'string') $jiraTeam.value = saved.team;
+      if ($jiraUpdated && typeof saved.updated === 'string') $jiraUpdated.value = saved.updated;
+      if ($jiraOpen && typeof saved.only_open !== 'undefined') $jiraOpen.checked = !!saved.only_open;
+      if ($jiraMax && typeof saved.max_results === 'number') $jiraMax.value = String(saved.max_results);
+      // Default Team when nothing saved
+      if ($jiraTeam && (!$jiraTeam.value || !$jiraTeam.value.trim())) $jiraTeam.value = 'Systems Infrastructure';
+    } catch {}
+  }
+  function saveJiraFilters(filters) {
+    try { localStorage.setItem('jira_filters', JSON.stringify(filters)); } catch {}
+  }
+  function buildJiraParams() {
+    const params = new URLSearchParams();
+    const q = ($jiraQ?.value || '').trim(); if (q) params.set('q', q);
+    const project = ($jiraProject?.value || '').trim(); if (project) params.set('project', project);
+    const status = ($jiraStatus?.value || '').trim(); if (status) params.set('status', status);
+    const assignee = ($jiraAssignee?.value || '').trim(); if (assignee) params.set('assignee', assignee);
+    const priority = ($jiraPriority?.value || '').trim(); if (priority) params.set('priority', priority);
+    const issuetype = ($jiraType?.value || '').trim(); if (issuetype) params.set('issuetype', issuetype);
+    const team = ($jiraTeam?.value || '').trim(); if (team) params.set('team', team);
+    const updated = ($jiraUpdated?.value || '').trim(); if (updated) params.set('updated', updated);
+    const onlyOpen = $jiraOpen ? ($jiraOpen.checked ? '1' : '0') : '1'; params.set('only_open', onlyOpen);
+    const max = Number($jiraMax?.value || 50) || 50; params.set('max_results', String(max));
+    saveJiraFilters({ q, project, status, assignee, priority, issuetype, team, updated, only_open: onlyOpen === '1', max_results: max });
+    try { localStorage.setItem('jira_last_query', params.toString()); } catch {}
+    return params.toString();
+  }
+  function jiraConfiguredBadge(ok) {
+    if (!$jiraResults) return;
+    const div = document.createElement('div');
+    div.className = 'muted';
+    div.style.margin = '4px 0 8px';
+    div.textContent = ok ? '' : 'Jira not configured: set ATLASSIAN_BASE_URL, ATLASSIAN_EMAIL and ATLASSIAN_API_TOKEN in .env.';
+    return div;
+  }
+  async function searchJira(showSpinner = true) {
+    if (!$jiraResults) return;
+    // Check configuration
+    try {
+      const chk = await fetch(`${API_BASE}/jira/config`);
+      const cfg = await chk.json().catch(() => ({}));
+      if (!cfg?.configured) {
+        $jiraResults.textContent = 'Jira not configured. Add ATLASSIAN_BASE_URL, ATLASSIAN_EMAIL and ATLASSIAN_API_TOKEN to .env.';
+        return;
+      }
+    } catch {}
+    const qs = buildJiraParams();
+    const url = `${API_BASE}/jira/search?${qs}`;
+    if (showSpinner) $jiraResults.textContent = 'Searching…';
+    try {
+      const res = await fetch(url);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { $jiraResults.textContent = data?.detail || `${res.status} ${res.statusText}`; return; }
+      let issues = Array.isArray(data?.issues) ? data.issues.slice() : [];
+      try { issues.sort((a,b) => (new Date(b.updated||0)) - (new Date(a.updated||0))); } catch {}
+      if (!issues.length) { $jiraResults.textContent = 'No results.'; return; }
+      // Build table
+      const table = document.createElement('table');
+      table.className = 'zbx-table';
+      const thead = document.createElement('thead');
+      thead.innerHTML = '<tr><th>Key</th><th>Summary</th><th>Status</th><th>Assignee</th><th>Priority</th><th>Type</th><th>Project</th><th>Updated</th></tr>';
+      table.appendChild(thead);
+      const tbody = document.createElement('tbody');
+      const fmtTime = (iso) => { if (!iso) return ''; try { const d = new Date(iso); return amsDateTimeString(d); } catch { return iso; } };
+      for (const it of issues) {
+        const tr = document.createElement('tr');
+        const tdKey = document.createElement('td');
+        if (it.url) { const a = document.createElement('a'); a.href = it.url; a.textContent = it.key; a.target = '_blank'; a.rel = 'noopener'; tdKey.appendChild(a); } else { tdKey.textContent = it.key || ''; }
+        const tdSummary = document.createElement('td'); tdSummary.textContent = it.summary || '';
+        const tdStatus = document.createElement('td'); tdStatus.textContent = it.status || '';
+        const tdAssignee = document.createElement('td'); tdAssignee.textContent = it.assignee || '';
+        const tdPriority = document.createElement('td'); tdPriority.textContent = it.priority || '';
+        const tdType = document.createElement('td'); tdType.textContent = it.issuetype || '';
+        const tdProj = document.createElement('td'); tdProj.textContent = it.project || '';
+        const tdUpd = document.createElement('td'); tdUpd.textContent = fmtTime(it.updated);
+        tr.appendChild(tdKey); tr.appendChild(tdSummary); tr.appendChild(tdStatus); tr.appendChild(tdAssignee); tr.appendChild(tdPriority); tr.appendChild(tdType); tr.appendChild(tdProj); tr.appendChild(tdUpd);
+        tbody.appendChild(tr);
+      }
+      table.appendChild(tbody);
+      $jiraResults.innerHTML = '';
+      $jiraResults.appendChild(table);
+    } catch (e) {
+      $jiraResults.textContent = `Error: ${e?.message || e}`;
+    }
+  }
+  document.getElementById('jira-search')?.addEventListener('click', () => searchJira());
+  document.getElementById('jira-reset')?.addEventListener('click', () => {
+    if ($jiraQ) $jiraQ.value = '';
+    if ($jiraProject) $jiraProject.value = '';
+    if ($jiraStatus) $jiraStatus.value = '';
+    if ($jiraAssignee) $jiraAssignee.value = '';
+    if ($jiraPriority) $jiraPriority.value = '';
+    if ($jiraType) $jiraType.value = '';
+    if ($jiraUpdated) $jiraUpdated.value = '';
+    if ($jiraOpen) $jiraOpen.checked = true;
+    if ($jiraMax) $jiraMax.value = '50';
+    saveJiraFilters({ q: '', project: '', status: '', assignee: '', priority: '', issuetype: '', updated: '', only_open: true, max_results: 50 });
+    searchJira();
+  });
+  $jiraQ?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); searchJira(); } });
+  $jiraProject?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); searchJira(); } });
+  $jiraStatus?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); searchJira(); } });
+  $jiraAssignee?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); searchJira(); } });
+  $jiraPriority?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); searchJira(); } });
+  $jiraType?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); searchJira(); } });
+  $jiraTeam?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); searchJira(); } });
 
   // Init
   // Ensure fields panel is closed on load
@@ -1622,6 +2080,10 @@
     refreshChatHistory();
   }
   showPage(initialPage);
+  // Ensure Export dataset loads immediately on first load
+  if (initialPage === 'export') {
+    try { fetchData(); } catch {}
+  }
   // When switching to chat, ensure session and history are loaded
   
 

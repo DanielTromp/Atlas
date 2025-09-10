@@ -8,10 +8,10 @@
 - `pyproject.toml`: tooling config (setuptools, ruff, mypy, uv deps).
 
 ## Build, Test, and Development Commands
-- Run CLI: `uv run netbox status` — quick API/token check.
-- Export all: `uv run netbox export update --force` — devices → vms → merge.
-- Serve API/UI: `uv run netbox api serve --host 127.0.0.1 --port 8000` then open `/app/`.
-- SharePoint: `uv run netbox sharepoint publish-cmdb` — publish CMDB Excel.
+- Run CLI: `uv run enreach status` — quick API/token check.
+- Export all: `uv run enreach export update --force` — devices → vms → merge.
+- Serve API/UI: `uv run enreach api serve --host 127.0.0.1 --port 8000` then open `/app/`.
+- SharePoint: `uv run enreach sharepoint publish-cmdb` — publish CMDB Excel.
 - Lint: `uv run ruff check .` • Format: `uv run ruff format .`.
 - Types: `uv run mypy src`.
 - Tests (when added): `uv run -m pytest`.
