@@ -104,6 +104,51 @@
     return String(a).localeCompare(String(b), undefined, { sensitivity: "base", numeric: true });
   };
 
+  // Amsterdam timezone helpers (Europe/Amsterdam)
+  const AMSTERDAM_TZ = 'Europe/Amsterdam';
+  function amsParts(date) {
+    try {
+      return new Intl.DateTimeFormat('nl-NL', {
+        timeZone: AMSTERDAM_TZ,
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+        hour12: false,
+      }).formatToParts(date);
+    } catch { return []; }
+  }
+  function partsToObj(parts) {
+    const obj = {};
+    for (const p of parts || []) obj[p.type] = p.value;
+    return obj;
+  }
+  function amsDateString(date) {
+    const p = partsToObj(amsParts(date));
+    return `${p.year || '0000'}-${(p.month || '00')}-${(p.day || '00')}`;
+  }
+  function amsTimeString(date) {
+    const p = partsToObj(amsParts(date));
+    return `${(p.hour || '00')}:${(p.minute || '00')}:${(p.second || '00')}`;
+  }
+  function amsDateTimeString(date) {
+    return `${amsDateString(date)} ${amsTimeString(date)}`;
+  }
+  function sameAmsDay(a, b) {
+    return amsDateString(a) === amsDateString(b);
+  }
+  function amsTzShort(date) {
+    try {
+      const parts = new Intl.DateTimeFormat('en-GB', { timeZone: AMSTERDAM_TZ, timeZoneName: 'long' }).formatToParts(date);
+      const tz = (parts.find(p => p.type === 'timeZoneName') || {}).value || '';
+      if (/summer/i.test(tz)) return 'CEST';
+      if (/standard/i.test(tz)) return 'CET';
+    } catch {}
+    try {
+      const parts = new Intl.DateTimeFormat('en-GB', { timeZone: AMSTERDAM_TZ, timeZoneName: 'short' }).formatToParts(date);
+      return (parts.find(p => p.type === 'timeZoneName') || {}).value || '';
+    } catch {}
+    return 'CET';
+  }
+
   // Layout helpers
   function getVisibleColumns() {
     const vis = [];
@@ -1213,14 +1258,10 @@
       const sevClass = (s) => ['sev-0','sev-1','sev-2','sev-3','sev-4','sev-5'][Math.max(0, Math.min(5, Number(s)||0))];
       const fmtTime = (iso) => {
         if (!iso) return '';
-        // Show HH:MM:SS if today, else YYYY-MM-DD HH:MM:SS
         try {
           const d = new Date(iso.replace(' ', 'T') + 'Z');
           const now = new Date();
-          const pad = (n) => String(n).padStart(2, '0');
-          const sameDay = d.getUTCFullYear() === now.getUTCFullYear() && d.getUTCMonth() === now.getUTCMonth() && d.getUTCDate() === now.getUTCDate();
-          if (sameDay) return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
-          return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+          return sameAmsDay(d, now) ? amsTimeString(d) : amsDateTimeString(d);
         } catch { return iso; }
       };
       const fmtDur = (sec) => {
@@ -1359,8 +1400,7 @@
   function formatNowTime() {
     try {
       const d = new Date();
-      const pad = (n) => String(n).padStart(2, '0');
-      return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+      return `${amsTimeString(d)} ${amsTzShort(d)}`;
     } catch { return ''; }
   }
   try {
@@ -1483,7 +1523,10 @@
       const sevName = (s) => ['Not classified','Information','Warning','Average','High','Disaster'][Math.max(0, Math.min(5, Number(s)||0))];
       const fmtTime = (iso) => {
         if (!iso) return '';
-        try { const d = new Date(iso.replace(' ', 'T') + 'Z'); const pad = (n)=> String(n).padStart(2,'0'); return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`; } catch { return iso; }
+        try {
+          const d = new Date(iso.replace(' ', 'T') + 'Z');
+          return amsDateTimeString(d);
+        } catch { return iso; }
       };
       const nowSec = Math.floor(Date.now() / 1000);
       const fmtDur = (sec) => { sec = Math.max(0, Number(sec)||0); const d=Math.floor(sec/86400); sec-=d*86400; const h=Math.floor(sec/3600); sec-=h*3600; const m=Math.floor(sec/60); const s=sec-m*60; const parts=[]; if(d)parts.push(`${d}d`); if(h)parts.push(`${h}h`); if(m)parts.push(`${m}m`); if(!d && !h) parts.push(`${s}s`); return parts.join(' '); };
