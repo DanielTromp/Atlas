@@ -14,8 +14,10 @@ Usage
   - `uv run enreach export merge`
   - `uv run enreach export update` (runs devices → vms → merge; supports `--force` to re-fetch all before merge)
   - After `update`, if SharePoint is configured via `.env` (`SPO_SITE_URL` + user/pass or app creds), it automatically publishes the CMDB Excel to SharePoint.
-  - API server (serves CSVs via DuckDB): `uv run enreach api serve --host 127.0.0.1 --port 8000`
-  - Frontend UI (same server): open http://127.0.0.1:8000/app/
+  - API server (HTTP): `uv run enreach api serve --host 127.0.0.1 --port 8000`
+  - API server (HTTPS): `uv run enreach api serve --host 127.0.0.1 --port 8443 --ssl-certfile certs/localhost.pem --ssl-keyfile certs/localhost-key.pem`
+    - Alternatively set env vars `ENREACH_SSL_CERTFILE` and `ENREACH_SSL_KEYFILE` and omit the flags
+  - Frontend UI (same server): open http://127.0.0.1:8000/app/ or https://127.0.0.1:8443/app/
 
 SharePoint Upload
 -----------------
@@ -70,7 +72,8 @@ Diagnostics
 API (FastAPI + DuckDB)
 ----------------------
 
-- Serve: `uv run enreach api serve --host 127.0.0.1 --port 8000`
+- Serve (HTTP): `uv run enreach api serve --host 127.0.0.1 --port 8000`
+- Serve (HTTPS): `uv run enreach api serve --host 127.0.0.1 --port 8443 --ssl-certfile certs/localhost.pem --ssl-keyfile certs/localhost-key.pem`
  - Endpoints:
   - `GET /health` — reports `NETBOX_DATA_DIR` and CSV presence
   - `GET /devices` — devices from `netbox_devices_export.csv`
@@ -92,6 +95,34 @@ API (FastAPI + DuckDB)
 - Notes:
   - CORS is enabled for GET to allow local frontends.
   - NaN/NaT/±Inf are normalized to `null` in JSON responses.
+
+Authentication
+--------------
+
+- API (Bearer token):
+  - Set `ENREACH_API_TOKEN` in `.env` to require `Authorization: Bearer <token>` on all API endpoints.
+  - Example: `curl -H "Authorization: Bearer $ENREACH_API_TOKEN" https://127.0.0.1:8443/devices`
+  - `/health` remains public for simple checks.
+- Web UI (session login):
+  - Set `ENREACH_UI_PASSWORD` to require a login for `/app/*`.
+  - Login at `/auth/login`; a secure session cookie (`enreach_ui`) is set on success.
+  - When logged in, the browser session may call API endpoints without the Bearer token.
+  - Optional: set `ENREACH_UI_SECRET` to control the session secret; otherwise a random secret is generated each start.
+
+HTTPS (local certificates)
+--------------------------
+
+- Quick self-signed via OpenSSL (dev only):
+  - `mkdir -p certs`
+  - `openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout certs/localhost-key.pem -out certs/localhost.pem -subj "/CN=localhost"`
+  - Run: `uv run enreach api serve --port 8443 --ssl-certfile certs/localhost.pem --ssl-keyfile certs/localhost-key.pem`
+- Or use mkcert (trusted in local OS):
+  - Install mkcert, then: `mkcert -key-file certs/localhost-key.pem -cert-file certs/localhost.pem localhost 127.0.0.1 ::1`
+  - Run same command as above.
+- You can set env vars and skip flags:
+  - `ENREACH_SSL_CERTFILE=certs/localhost.pem`
+  - `ENREACH_SSL_KEYFILE=certs/localhost-key.pem`
+  - Optional: `ENREACH_SSL_KEY_PASSWORD` if your key is encrypted
 
 Frontend (UI)
 --------------

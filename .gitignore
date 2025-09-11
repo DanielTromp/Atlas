@@ -38,6 +38,7 @@ personal/
 /server.log
 /export.log
 
-# Local screenshots from visit_app
+# appdata
 /app*.png
 /airtable*.png
+/certs

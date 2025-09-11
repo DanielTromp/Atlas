@@ -121,12 +121,48 @@ def api_serve(
     host: str = typer.Option("127.0.0.1", "--host", help="Bind host"),
     port: int = typer.Option(8000, "--port", help="Bind port"),
     reload: bool = typer.Option(True, "--reload/--no-reload", help="Auto-reload on changes"),
+    ssl_certfile: str | None = typer.Option(
+        None,
+        "--ssl-certfile",
+        help="Path to SSL certificate (PEM). If omitted, uses ENREACH_SSL_CERTFILE when set.",
+    ),
+    ssl_keyfile: str | None = typer.Option(
+        None,
+        "--ssl-keyfile",
+        help="Path to SSL private key (PEM). If omitted, uses ENREACH_SSL_KEYFILE when set.",
+    ),
+    ssl_keyfile_password: str | None = typer.Option(
+        None,
+        "--ssl-keyfile-password",
+        help="Password for encrypted SSL keyfile (optional). If omitted, uses ENREACH_SSL_KEY_PASSWORD when set.",
+        show_default=False,
+    ),
 ):
-    """Run the FastAPI server (serves CSV data via DuckDB)."""
+    """Run the FastAPI server (HTTP or HTTPS).
+
+    Provide --ssl-certfile/--ssl-keyfile (or ENREACH_SSL_CERTFILE/ENREACH_SSL_KEYFILE)
+    to enable HTTPS. When not provided, server runs over HTTP.
+    """
     import uvicorn
 
+    # Resolve SSL params from env when not explicitly provided
+    ssl_certfile = ssl_certfile or os.getenv("ENREACH_SSL_CERTFILE") or None
+    ssl_keyfile = ssl_keyfile or os.getenv("ENREACH_SSL_KEYFILE") or None
+    ssl_keyfile_password = ssl_keyfile_password or os.getenv("ENREACH_SSL_KEY_PASSWORD") or None
+
+    kwargs: dict = {"host": host, "port": port, "reload": reload}
+    if ssl_certfile and ssl_keyfile:
+        kwargs.update(
+            {
+                "ssl_certfile": ssl_certfile,
+                "ssl_keyfile": ssl_keyfile,
+            }
+        )
+        if ssl_keyfile_password:
+            kwargs["ssl_keyfile_password"] = ssl_keyfile_password
+
     # ASGI app path: src/enreach_tools/api/app.py -> app
-    uvicorn.run("enreach_tools.api.app:app", host=host, port=port, reload=reload)
+    uvicorn.run("enreach_tools.api.app:app", **kwargs)
 
 
 @zabbix.command("problems")

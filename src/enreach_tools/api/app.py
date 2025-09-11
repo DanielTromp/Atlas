@@ -11,13 +11,15 @@ from typing import Literal, Any
 import duckdb
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Query, Body
+from fastapi import FastAPI, HTTPException, Query, Body, Request
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse, StreamingResponse, FileResponse
+from fastapi.responses import RedirectResponse, StreamingResponse, FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from datetime import datetime
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.sessions import SessionMiddleware
+import secrets
 
 from enreach_tools.env import load_env, project_root
 import requests
@@ -50,6 +52,160 @@ async def no_cache_static(request, call_next):
     except Exception:
         pass
     return response
+
+
+# ---------------------------
+# Auth configuration
+# ---------------------------
+
+API_TOKEN = os.getenv("ENREACH_API_TOKEN", "").strip()
+UI_PASSWORD = os.getenv("ENREACH_UI_PASSWORD", "").strip()
+UI_SECRET = os.getenv("ENREACH_UI_SECRET", "").strip() or secrets.token_hex(16)
+SESSION_COOKIE_NAME = "enreach_ui"
+
+class AuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path or "/"
+
+        # Public endpoints
+        if path in ("/favicon.ico", "/health"):
+            return await call_next(request)
+
+        # UI protection when a password is configured
+        if path == "/":
+            if UI_PASSWORD and not _has_ui_session(request):
+                return RedirectResponse(url="/auth/login")
+            return await call_next(request)
+        if path.startswith("/app"):
+            if UI_PASSWORD and not _has_ui_session(request):
+                # Redirect to login, preserve next param
+                return RedirectResponse(url=f"/auth/login?next={path}")
+            return await call_next(request)
+
+        # Auth endpoints are always allowed
+        if path.startswith("/auth/"):
+            return await call_next(request)
+
+        # API protection via Bearer token; allow UI session as alternative
+        if API_TOKEN and _is_api_path(path):
+            if _has_bearer_token(request) or _has_ui_session(request):
+                return await call_next(request)
+            # Unauthorized
+            return JSONResponse({"detail": "Unauthorized"}, status_code=401, headers={"WWW-Authenticate": "Bearer"})
+
+        return await call_next(request)
+
+
+def _has_bearer_token(request: Request) -> bool:
+    if not API_TOKEN:
+        return False
+    auth = request.headers.get("Authorization", "")
+    if not auth.lower().startswith("bearer "):
+        return False
+    token = auth[7:].strip()
+    return secrets.compare_digest(token, API_TOKEN)
+
+
+def _has_ui_session(request: Request) -> bool:
+    try:
+        return bool(request.session.get("ui_auth") is True)
+    except Exception:
+        return False
+
+
+def _is_api_path(path: str) -> bool:
+    # Treat everything except static/frontend and auth endpoints as API
+    if path.startswith("/app") or path.startswith("/auth"):
+        return False
+    if path in ("/", "/favicon.ico"):
+        return False
+    return True
+
+
+app.add_middleware(AuthMiddleware)
+
+# Session support for UI auth (cookie-based). Added AFTER AuthMiddleware so
+# that Session is applied first (outermost), making request.session available.
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=UI_SECRET,
+    session_cookie=SESSION_COOKIE_NAME,
+    same_site="lax",
+)
+
+
+def _login_html(next_url: str, error: str | None = None) -> HTMLResponse:
+    err_html = f"<div class=\"error\">{error}</div>" if error else ""
+    return HTMLResponse(
+        f"""
+        <!doctype html>
+        <html><head>
+        <meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
+        <title>Login — Enreach Tools</title>
+        <style>
+        * {{ box-sizing: border-box; }}
+        body {{ font-family: -apple-system, system-ui, Segoe UI, Roboto, Ubuntu, Cantarell, 'Helvetica Neue', Arial, 'Noto Sans', 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol';
+               background: #0b1120; color: #e5e7eb; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }}
+        .box {{ background: #111827; padding: 24px 28px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.4); width: 360px; }}
+        h1 {{ font-size: 18px; margin: 0 0 12px; }}
+        input[type=password] {{ width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #374151; background: #0f172a; color: #e5e7eb; }}
+        button {{ display: block; width: 100%; padding: 10px 12px; border-radius: 8px; border: 0; background: #2563eb; color: #fff; margin-top: 12px; cursor: pointer; }}
+        .hint {{ color: #9ca3af; font-size: 12px; margin-top: 10px; }}
+        .error {{ background: #7f1d1d; color: #fecaca; padding: 8px 10px; border-radius: 8px; margin-bottom: 10px; border: 1px solid #b91c1c; }}
+        </style>
+        </head><body>
+        <form class=\"box\" method=\"post\" action=\"/auth/login\"> 
+          <h1>Enreach Tools — Login</h1>
+          {err_html}
+          <input type=\"hidden\" name=\"next\" value=\"{next_url}\" />
+          <label>
+            <input type=\"password\" name=\"password\" placeholder=\"Password\" autofocus required />
+          </label>
+          <button type=\"submit\">Sign in</button>
+          <div class=\"hint\">UI access enables API calls from this browser.</div>
+        </form>
+        </body></html>
+        """
+    )
+
+
+@app.get("/auth/login")
+def auth_login_form(request: Request, next: str | None = None):
+    # If no password configured, allow pass-through
+    n = next or "/app/"
+    if not UI_PASSWORD:
+        return RedirectResponse(url=n)
+    # If already logged in, hop to target
+    if _has_ui_session(request):
+        return RedirectResponse(url=n)
+    return _login_html(n)
+
+
+@app.post("/auth/login")
+async def auth_login(request: Request):
+    if not UI_PASSWORD:
+        return RedirectResponse(url="/app/", status_code=302)
+    form = await request.form()
+    password = str(form.get("password") or "")
+    next_url = str(form.get("next") or "/app/")
+    # Sanitize next_url to avoid open redirects
+    if not next_url.startswith("/"):
+        next_url = "/app/"
+    if secrets.compare_digest(password, UI_PASSWORD):
+        request.session["ui_auth"] = True
+        # Use 303 to force a GET on redirect after POST
+        return RedirectResponse(url=next_url, status_code=303)
+    # Re-render the same login page with an inline error
+    return _login_html(next_url, error="Invalid password")
+
+
+@app.get("/auth/logout")
+def auth_logout(request: Request):
+    try:
+        request.session.clear()
+    except Exception:
+        pass
+    return RedirectResponse(url="/auth/login")
 
 
 def _data_dir() -> Path:

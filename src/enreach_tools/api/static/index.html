@@ -10,6 +10,7 @@
   <body>
     <header class="topbar">
       <h1 class="brand">Enreach Tools</h1>
+      <a class="btn logout" href="/auth/logout" title="Logout">Logout</a>
       <!-- Top-level pages navigation -->
       <nav class="tabs" id="pages" aria-label="Pages">
         <button class="tab active" data-page="home">Home</button>
@@ -180,6 +181,7 @@
               </svg>
             </button>
             <button id="zbx-ack" class="btn" title="Acknowledge selected problems">Ack</button>
+            <button id="zbx-home" class="btn" title="Search selected on Home">Home Search</button>
             <a class="btn" href="https://zabbix.enreach.tech/zabbix.php" target="_blank" rel="noopener">Open Zabbix</a>
             <div class="spacer"></div>
             <label class="field">
@@ -372,6 +374,6 @@
       <div id="resize-sw" class="resize-handle sw" title="Resize"></div>
     </div>
 
-    <script src="app.js?v=7"></script>
+    <script src="app.js?v=8"></script>
   </body>
   </html>

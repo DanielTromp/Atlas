@@ -535,18 +535,7 @@
     } catch { return {}; }
   }
 
-  // Shareable view via URL (?view=...)
-  function serializeView() {
-    const state = {
-      ds: dataset,
-      columns,
-      visible: Object.fromEntries(columns.map(c => [c, colVisible[c] !== false])),
-      filters: colFilters,
-      sort: sortRules,
-      density: rowHeight === ROW_COMPACT ? 'compact' : 'comfortable',
-    };
-    return encodeURIComponent(JSON.stringify(state));
-  }
+  // URL management: keep it clean (no ?view=... params)
   function applyViewState(state) {
     try {
       if (!state || typeof state !== 'object') return;
@@ -574,7 +563,8 @@
   const updateURLDebounced = debounce(() => {
     try {
       const url = new URL(window.location.href);
-      url.searchParams.set('view', serializeView());
+      // Remove legacy 'view' param if present
+      url.searchParams.delete('view');
       history.replaceState(null, '', url.toString());
     } catch {}
   }, 250);
@@ -626,22 +616,7 @@
 
       // Render skeleton
       updateTemplates();
-      // Apply view from URL once (if provided)
-      if (!window.__appliedViewFromURL) {
-        try {
-          const p = new URL(window.location.href).searchParams.get('view');
-          if (p) {
-            const st = JSON.parse(decodeURIComponent(p));
-            applyViewState(st);
-            // Update active dataset tab UI to reflect dataset from URL
-            if ($dsTabs) {
-              $dsTabs.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.getAttribute('data-ds') === dataset));
-            }
-            if ($density) $density.value = (rowHeight === ROW_COMPACT ? 'compact' : 'comfortable');
-          }
-        } catch {}
-        window.__appliedViewFromURL = true;
-      }
+      // Legacy URL view import removed; prefer localStorage persistence only
       renderHeader();
       renderFilters();
       computeView();
@@ -1428,6 +1403,41 @@
       alert(`Error: ${err?.message || err}`);
     }
   });
+  // Home search for selected Zabbix problem/host
+  document.getElementById('zbx-home')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    try {
+      const feed = document.getElementById('zbx-feed');
+      if (!feed) { alert('No list loaded.'); return; }
+      const boxes = Array.from(feed.querySelectorAll('input.zbx-ev[type="checkbox"]'));
+      const selected = boxes.filter(b => b.checked);
+      if (selected.length === 0) { alert('Select one problem to search.'); return; }
+      if (selected.length > 1) { alert('Select only one problem to search.'); return; }
+      const cb = selected[0];
+      // Get host name text from the same row (Host is the 5th column)
+      let query = '';
+      try {
+        const tr = cb.closest('tr');
+        if (tr && tr.children && tr.children.length >= 6) {
+          const hostCell = tr.children[4];
+          query = (hostCell?.innerText || '').trim();
+          if (!query) {
+            const probCell = tr.children[5];
+            query = (probCell?.innerText || '').trim();
+          }
+        }
+      } catch {}
+      if (!query) { alert('Could not determine host/problem text to search.'); return; }
+      // Navigate to Home and perform search
+      const homeInput = document.getElementById('home-q');
+      if (homeInput) homeInput.value = query;
+      showPage('home');
+      // Delay a tick to allow DOM to show Home before searching
+      setTimeout(() => { try { if (typeof searchHome === 'function') searchHome(); } catch {} }, 0);
+    } catch (err) {
+      alert(`Error: ${err?.message || err}`);
+    }
+  });
   // Persist and react to unack toggle
   const $zbxUnack = document.getElementById('zbx-unack');
   const $zbxSystems = document.getElementById('zbx-systems');
@@ -2060,14 +2070,7 @@
   // Init
   // Ensure fields panel is closed on load
   if ($fieldsPanel) $fieldsPanel.hidden = true;
-  // Read dataset from URL view before first fetch
-  try {
-    const p = new URL(window.location.href).searchParams.get('view');
-    if (p) {
-      const st = JSON.parse(decodeURIComponent(p));
-      if (st && typeof st === 'object' && typeof st.ds === 'string') dataset = st.ds;
-    }
-  } catch {}
+  // Use default dataset (persisted state handles columns/filters/density)
   // Set initial dataset tab active
   $dsTabs?.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.getAttribute('data-ds') === dataset));
   // Initial page from hash
@@ -2075,6 +2078,8 @@
   loadChatPrefs();
   loadChatDefaults();
   const initialPage = parseHashPage();
+  // Clean up any legacy ?view=... from the URL at startup
+  try { updateURLDebounced(); } catch {}
   if (initialPage === 'chat') {
     ensureChatSession();
     refreshChatHistory();
