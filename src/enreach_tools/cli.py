@@ -26,6 +26,13 @@ def _run_script(relpath: str, *args: str) -> int:
     return subprocess.call(cmd, cwd=root, env=os.environ.copy())
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 @app.callback()
 def _common(override_env: bool = typer.Option(False, "--override-env", help="Override existing env vars from .env")):
     env_path = load_env(override=override_env)
@@ -34,8 +41,6 @@ def _common(override_env: bool = typer.Option(False, "--override-env", help="Ove
 
 export = typer.Typer(help="Export helpers", context_settings=HELP_CTX)
 app.add_typer(export, name="export")
-sharepoint = typer.Typer(help="SharePoint helpers", context_settings=HELP_CTX)
-app.add_typer(sharepoint, name="sharepoint")
 api = typer.Typer(help="API server", context_settings=HELP_CTX)
 app.add_typer(api, name="api")
 zabbix = typer.Typer(help="Zabbix helpers", context_settings=HELP_CTX)
@@ -48,10 +53,6 @@ netbox = typer.Typer(help="NetBox helpers", context_settings=HELP_CTX)
 app.add_typer(netbox, name="netbox")
 search = typer.Typer(help="Cross-system search (Home aggregator)", context_settings=HELP_CTX)
 app.add_typer(search, name="search")
-jira = typer.Typer(help="Jira helpers")
-app.add_typer(jira, name="jira")
-confluence = typer.Typer(help="Confluence helpers")
-app.add_typer(confluence, name="confluence")
 
 
 @export.command("devices")
@@ -101,19 +102,28 @@ def netbox_update(
     if code != 0:
         raise SystemExit(code)
 
-    # Auto-publish CMDB to SharePoint when configured
+    # Auto-publish CMDB to Confluence when configured
     try:
-        site_url = os.getenv("SPO_SITE_URL", "").strip()
-        has_user = bool(os.getenv("SPO_USERNAME")) and bool(os.getenv("SPO_PASSWORD"))
-        has_app = all(bool(os.getenv(k)) for k in ["SPO_TENANT_ID", "SPO_CLIENT_ID", "SPO_CLIENT_SECRET"])
-        if site_url and (has_user or has_app):
-            print("[bold]Publishing CMDB to SharePoint...[/bold]")
-            auth_mode = "userpass" if has_user else "app"
-            _ = _run_script("netbox-export/bin/sharepoint_publish_cmdb.py", "--auth", auth_mode, "--replace")
+        base = os.getenv("ATLASSIAN_BASE_URL", "").strip()
+        email = os.getenv("ATLASSIAN_EMAIL", "").strip()
+        token = os.getenv("ATLASSIAN_API_TOKEN", "").strip()
+        page_id = os.getenv("CONFLUENCE_CMDB_PAGE_ID", "").strip() or os.getenv("CONFLUENCE_PAGE_ID", "").strip()
+        devices_page_id = os.getenv("CONFLUENCE_DEVICES_PAGE_ID", "").strip() or page_id
+        vms_page_id = os.getenv("CONFLUENCE_VMS_PAGE_ID", "").strip() or os.getenv("CONFLUENCE_PAGE_ID", "").strip()
+        if base and email and token and page_id:
+            _ = _run_script("netbox-export/bin/confluence_publish_cmdb.py", "--page-id", page_id)
+            table_args: list[str] = []
+            if devices_page_id:
+                table_args += ["--page-id", devices_page_id]
+            _ = _run_script("netbox-export/bin/confluence_publish_devices_table.py", *table_args)
+            vms_args: list[str] = []
+            if vms_page_id:
+                vms_args += ["--page-id", vms_page_id]
+            _ = _run_script("netbox-export/bin/confluence_publish_vms_table.py", *vms_args)
         else:
-            print("[dim]SharePoint not configured; skipping auto publish[/dim]")
+            print("[dim]Confluence not configured; skipping auto publish[/dim]")
     except Exception as e:
-        print(f"[red]SharePoint publish failed:[/red] {e}")
+        print(f"[red]Confluence publish failed:[/red] {e}")
 
 
 @api.command("serve")
@@ -458,38 +468,30 @@ def confluence_search_cli(
     _print(f"[dim]{len(items)} shown (total {res.get('total', len(items))})[/dim]")
 
 
-@sharepoint.command("upload")
-def sharepoint_upload(
+@confluence.command("upload")
+def confluence_upload(
     file: str = typer.Option(
         "netbox-export/data/Systems CMDB.xlsx",
         "--file",
-        help="Local file or http(s) URL to upload",
+        help="Local file to upload",
     ),
-    dest_path: str = typer.Option(
+    page_id: str = typer.Option(
         "",
-        "--dest",
-        help="Drive-relative folder path (e.g. 'Reports/CMDB')",
+        "--page-id",
+        help="Target Confluence page ID (defaults to CONFLUENCE_CMDB_PAGE_ID)",
     ),
-    replace: bool = typer.Option(True, "--replace/--no-replace", help="Replace if exists"),
-    auth: str = typer.Option(
-        "auto",
-        "--auth",
-        help="Auth mode: auto|app|userpass",
-    ),
-    force: bool = typer.Option(True, "--force/--no-force", help="Force overwrite if file is locked (423)"),
+    name: str = typer.Option("", "--name", help="Attachment name (defaults to source filename)"),
+    comment: str = typer.Option("", "--comment", help="Attachment version comment"),
 ):
-    """Upload a file to a SharePoint Site's default drive via Microsoft Graph or CSOM (delegated)."""
-    args = [
-        "--file",
-        file,
-        "--auth",
-        auth,
-    ]
-    if dest_path:
-        args += ["--dest", dest_path]
-    args.append("--replace" if replace else "--no-replace")
-    args.append("--force" if force else "--no-force")
-    code = _run_script("netbox-export/bin/sharepoint_upload.py", *args)
+    """Upload or replace an attachment on a Confluence page."""
+    args = ["--file", file]
+    if page_id:
+        args += ["--page-id", page_id]
+    if name:
+        args += ["--name", name]
+    if comment:
+        args += ["--comment", comment]
+    code = _run_script("netbox-export/bin/confluence_upload_attachment.py", *args)
     raise SystemExit(code)
 
 
@@ -497,18 +499,95 @@ def main():  # entry point for console_scripts
     app()
 
 
-@sharepoint.command("publish-cmdb")
-def sharepoint_publish_cmdb(
-    auth: str = typer.Option("userpass", "--auth", help="Auth mode: userpass|app"),
-    replace: bool = typer.Option(True, "--replace/--no-replace", help="Replace if exists"),
+@confluence.command("publish-cmdb")
+def confluence_publish_cmdb(
+    page_id: str = typer.Option("", "--page-id", help="Override target page ID"),
+    name: str = typer.Option("Systems CMDB.xlsx", "--name", help="Attachment name"),
+    comment: str = typer.Option("", "--comment", help="Attachment version comment"),
 ):
-    """Publish the standard NetBox CMDB Excel to SharePoint."""
-    args = [
-        "--auth",
-        auth,
-    ]
-    args.append("--replace" if replace else "--no-replace")
-    code = _run_script("netbox-export/bin/sharepoint_publish_cmdb.py", *args)
+    """Publish the standard NetBox CMDB Excel to Confluence."""
+    args: list[str] = []
+    if page_id:
+        args += ["--page-id", page_id]
+    if name:
+        args += ["--name", name]
+    if comment:
+        args += ["--comment", comment]
+    code = _run_script("netbox-export/bin/confluence_publish_cmdb.py", *args)
+    raise SystemExit(code)
+
+
+@confluence.command("publish-devices-table")
+def confluence_publish_devices_table(
+    csv: str = typer.Option(
+        "netbox-export/data/netbox_devices_export.csv",
+        "--csv",
+        help="Path to the NetBox devices CSV",
+    ),
+    page_id: str = typer.Option("", "--page-id", help="Target Confluence page ID"),
+    heading: str = typer.Option("NetBox Devices Export", "--heading", help="Heading placed above the table"),
+    limit: int | None = typer.Option(None, "--limit", help="Limit number of rows (defaults to all)"),
+    filter_macro: bool | None = typer.Option(None, "--filter/--no-filter", help="Wrap in Table Filter macro"),
+    sort_macro: bool | None = typer.Option(None, "--sort/--no-sort", help="Wrap in Table Sort macro"),
+    message: str = typer.Option("Updated NetBox devices table", "--message", help="Confluence version comment"),
+    minor: bool = typer.Option(True, "--minor/--major", help="Mark update as minor edit"),
+):
+    """Publish the devices CSV as a Confluence table (with optional filter/sort macros)."""
+    if filter_macro is None:
+        filter_macro = _env_flag("CONFLUENCE_ENABLE_TABLE_FILTER", False)
+    if sort_macro is None:
+        sort_macro = _env_flag("CONFLUENCE_ENABLE_TABLE_SORT", False)
+    args: list[str] = ["--csv", csv]
+    if page_id:
+        args += ["--page-id", page_id]
+    if heading:
+        args += ["--heading", heading]
+    if limit is not None:
+        args += ["--limit", str(limit)]
+    args.append("--filter" if filter_macro else "--no-filter")
+    args.append("--sort" if sort_macro else "--no-sort")
+    if message:
+        args += ["--message", message]
+    if not minor:
+        args.append("--major")
+    code = _run_script("netbox-export/bin/confluence_publish_devices_table.py", *args)
+    raise SystemExit(code)
+
+
+@confluence.command("publish-vms-table")
+def confluence_publish_vms_table(
+    csv: str = typer.Option(
+        "netbox-export/data/netbox_vms_export.csv",
+        "--csv",
+        help="Path to the NetBox VMs CSV",
+    ),
+    page_id: str = typer.Option("", "--page-id", help="Target Confluence page ID"),
+    heading: str = typer.Option("NetBox VMs Export", "--heading", help="Heading placed above the table"),
+    limit: int | None = typer.Option(None, "--limit", help="Limit number of rows (defaults to all)"),
+    filter_macro: bool | None = typer.Option(None, "--filter/--no-filter", help="Wrap in Table Filter macro"),
+    sort_macro: bool | None = typer.Option(None, "--sort/--no-sort", help="Wrap in Table Sort macro"),
+    message: str = typer.Option("Updated NetBox VMs table", "--message", help="Confluence version comment"),
+    minor: bool = typer.Option(True, "--minor/--major", help="Mark update as minor edit"),
+):
+    """Publish the VMs CSV as a Confluence table (with optional filter/sort macros)."""
+    if filter_macro is None:
+        filter_macro = _env_flag("CONFLUENCE_ENABLE_TABLE_FILTER", False)
+    if sort_macro is None:
+        sort_macro = _env_flag("CONFLUENCE_ENABLE_TABLE_SORT", False)
+    args: list[str] = ["--csv", csv]
+    if page_id:
+        args += ["--page-id", page_id]
+    if heading:
+        args += ["--heading", heading]
+    if limit is not None:
+        args += ["--limit", str(limit)]
+    args.append("--filter" if filter_macro else "--no-filter")
+    args.append("--sort" if sort_macro else "--no-sort")
+    if message:
+        args += ["--message", message]
+    if not minor:
+        args.append("--major")
+    code = _run_script("netbox-export/bin/confluence_publish_vms_table.py", *args)
     raise SystemExit(code)
 
 

@@ -13,50 +13,46 @@ Usage
   - `uv run enreach export vms` (add `--force` to re-fetch all)
   - `uv run enreach export merge`
   - `uv run enreach export update` (runs devices → vms → merge; supports `--force` to re-fetch all before merge)
-  - After `update`, if SharePoint is configured via `.env` (`SPO_SITE_URL` + user/pass or app creds), it automatically publishes the CMDB Excel to SharePoint.
+  - After `update`, if Confluence publishing is configured via `.env` (`ATLASSIAN_*` + `CONFLUENCE_CMDB_PAGE_ID`), it automatically uploads the CMDB Excel as an attachment and refreshes the NetBox devices table on Confluence.
   - API server (HTTP): `uv run enreach api serve --host 127.0.0.1 --port 8000`
   - API server (HTTPS): `uv run enreach api serve --host 127.0.0.1 --port 8443 --ssl-certfile certs/localhost.pem --ssl-keyfile certs/localhost-key.pem`
     - Alternatively set env vars `ENREACH_SSL_CERTFILE` and `ENREACH_SSL_KEYFILE` and omit the flags
   - Frontend UI (same server): open http://127.0.0.1:8000/app/ or https://127.0.0.1:8443/app/
 
-SharePoint Upload
+Confluence Upload
 -----------------
 
-- Run: `uv run enreach sharepoint upload --file "netbox-export/data/Systems CMDB.xlsx"`
-- Use `--dest "Important Info/Autosync/Systems CMDB.xlsx"` to override destination path.
-- Disable overwrite with `--no-replace`.
+- Run: `uv run enreach confluence upload --file "netbox-export/data/Systems CMDB.xlsx"`.
+- Provide `--page-id 981533033` to override the target page (defaults to `CONFLUENCE_CMDB_PAGE_ID`).
+- Use `--name` to upload under a different attachment name or `--comment` to add a version note.
 
 Publish CMDB
 ------------
 
-- One-shot publish: `uv run enreach sharepoint publish-cmdb` (defaults to user/pass, forced overwrite, destination `Important Info/Autosync/Systems CMDB.xlsx`).
-- Auto-publish after update: running `uv run enreach export update` will, when SharePoint env is set, automatically call the same publish step.
-- After upload, the tool prints stable open links:
-  - Doc.aspx using the file UniqueId (stable link if the same item is overwritten)
-  - Direct web link (`?web=1`) to the file path
-  - Short viewer link (`/:x:/r/...?...d=w<GUID>&csf=1&web=1&isSPOFile=1`)
+- One-shot publish: `uv run enreach confluence publish-cmdb` (defaults to the Systems CMDB attachment name).
+- Auto-publish after update: `uv run enreach export update` triggers the same upload when Confluence env vars are present.
+- The attachment is uploaded to the configured page (e.g. https://enreach-services.atlassian.net/wiki/x/aQGBOg) and replaces the previous version when the filename matches.
 
-Service Account (User/Pass)
----------------------------
+Publish Devices Table
+---------------------
 
-You can also use a service account with username/password (no MFA) via SharePoint CSOM:
+- Run: `uv run enreach confluence publish-devices-table` to read `netbox_devices_export.csv`, attach the CSV to the page, and render a wide table with columns `Name`, `Status`, `Role`, `IP Address`, `OOB IP` (ordering respects `netbox-export/etc/column_order.xlsx` when present).
+- Enable macros by passing `--filter`/`--sort` or setting env vars `CONFLUENCE_ENABLE_TABLE_FILTER=1` / `CONFLUENCE_ENABLE_TABLE_SORT=1` (requires the Table Filter & Charts app). By default a plain HTML table is published for compatibility.
+- The CLI auto-refreshes the table after `uv run enreach export update` so the Devices page (https://enreach-services.atlassian.net/wiki/x/hAGBOg) always shows the latest CSV.
 
-- In `.env`, set `SPO_SITE_URL`, `SPO_USERNAME`, `SPO_PASSWORD`.
-- Optional: `SPO_DOC_LIB` to force the document library name (otherwise the tool tries "Shared Documents", then "Documents").
-- Run: `uv run enreach sharepoint upload --auth userpass --file "netbox-export/data/Systems CMDB.xlsx"`.
+Publish VMs Table
+-----------------
 
-Notes:
-- The account must be a native user in the target tenant (not a B2B/guest) and must not require MFA or extra prompts.
-- Conditional Access policies may block programmatic cookie-based auth.
-- If you hit an auth cookies error during `userpass`, switch to app-only auth.
-  Set `SPO_TENANT_ID`, `SPO_CLIENT_ID`, `SPO_CLIENT_SECRET` and run with `--auth app` (recommended).
+- Run: `uv run enreach confluence publish-vms-table` to read `netbox_vms_export.csv`, attach the CSV, and render the table with columns `Name`, `Status`, `Cluster`, `IP Address`, `Device` (ordering respects `netbox-export/etc/column_order.xlsx`).
+- Macros en breedte werken gelijk aan de devices-variant.
+- Auto-refresh via `uv run enreach export update` houdt https://enreach-services.atlassian.net/wiki/x/GACFOg up-to-date.
 
 .env behavior
 -------------
 
 - The CLI automatically loads `.env` from the project root (toggle overriding existing env with `--override-env`).
 - Required variables for NetBox: `NETBOX_URL`, `NETBOX_TOKEN`.
-- Optional: `NETBOX_DATA_DIR` to control where CSVs are read/written. Defaults to `netbox-export/data` for backward compatibility.
+- Optional Confluence envs: `CONFLUENCE_CMDB_PAGE_ID`, `CONFLUENCE_DEVICES_PAGE_ID`, `CONFLUENCE_VMS_PAGE_ID` (defaults provided), and `CONFLUENCE_ENABLE_TABLE_FILTER/SORT` to toggle macros.
 
 Structure
 ---------
@@ -238,7 +234,8 @@ flowchart LR
   MERGE --> MXL["Excel <NETBOX_DATA_DIR>/Systems CMDB.xlsx"]
 
   %% Optional publish step (auto when configured)
-  UP["Publish to SharePoint\nnetbox sharepoint publish-cmdb"]
+  UP["Publish to Confluence\nnetbox confluence publish-cmdb"]
+  UP --> TF["Refresh Confluence table\nnetbox confluence publish-devices-table"]
   MXL --> UP
 ```
 
