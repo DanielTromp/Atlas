@@ -53,6 +53,7 @@ Publish VMs Table
 - The CLI automatically loads `.env` from the project root (toggle overriding existing env with `--override-env`).
 - Required variables for NetBox: `NETBOX_URL`, `NETBOX_TOKEN`.
 - Optional Confluence envs: `CONFLUENCE_CMDB_PAGE_ID`, `CONFLUENCE_DEVICES_PAGE_ID`, `CONFLUENCE_VMS_PAGE_ID` (defaults provided), and `CONFLUENCE_ENABLE_TABLE_FILTER/SORT` to toggle macros.
+- Optional: `LOG_LEVEL` to control API logging (`warning` default, case-insensitive).
 
 Structure
 ---------
@@ -70,6 +71,7 @@ API (FastAPI + DuckDB)
 
 - Serve (HTTP): `uv run enreach api serve --host 127.0.0.1 --port 8000`
 - Serve (HTTPS): `uv run enreach api serve --host 127.0.0.1 --port 8443 --ssl-certfile certs/localhost.pem --ssl-keyfile certs/localhost-key.pem`
+- Log level: add `--log-level warning` (or set `LOG_LEVEL` in `.env`) to reduce Uvicorn noise (defaults to `warning`).
  - Endpoints:
   - `GET /health` — reports `NETBOX_DATA_DIR` and CSV presence
   - `GET /devices` — devices from `netbox_devices_export.csv`

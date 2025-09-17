@@ -131,6 +131,7 @@ def api_serve(
     host: str = typer.Option("127.0.0.1", "--host", help="Bind host"),
     port: int = typer.Option(8000, "--port", help="Bind port"),
     reload: bool = typer.Option(True, "--reload/--no-reload", help="Auto-reload on changes"),
+    log_level: str = typer.Option("", "--log-level", help="Uvicorn log level (overrides LOG_LEVEL env)"),
     ssl_certfile: str | None = typer.Option(
         None,
         "--ssl-certfile",
@@ -160,7 +161,9 @@ def api_serve(
     ssl_keyfile = ssl_keyfile or os.getenv("ENREACH_SSL_KEYFILE") or None
     ssl_keyfile_password = ssl_keyfile_password or os.getenv("ENREACH_SSL_KEY_PASSWORD") or None
 
-    kwargs: dict = {"host": host, "port": port, "reload": reload}
+    resolved_log_level = (log_level or os.getenv("LOG_LEVEL") or "warning").lower()
+
+    kwargs: dict = {"host": host, "port": port, "reload": reload, "log_level": resolved_log_level}
     if ssl_certfile and ssl_keyfile:
         kwargs.update(
             {
