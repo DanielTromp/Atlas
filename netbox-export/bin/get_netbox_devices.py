@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pynetbox
 
-from enreach_tools import dropbox_sync
+from enreach_tools import backup_sync
 from enreach_tools.env import apply_extra_headers, load_env, project_root, require_env
 
 # Note: file renamed from get_netbox_data.py to get_netbox_devices.py
@@ -415,7 +415,7 @@ def sync_netbox_to_csv(force: bool = False):
         print("Sync complete.")
 
         try:
-            result = dropbox_sync.sync_paths([csv_file_path], note="netbox_devices")
+            result = backup_sync.sync_paths([csv_file_path], note="netbox_devices")
             if result.get("status") == "ok" and result.get("count"):
                 print(f"Dropbox sync: uploaded {result['count']} file(s).")
         except Exception as sync_error:  # pragma: no cover - defensive logging

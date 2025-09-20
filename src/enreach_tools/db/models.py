@@ -74,3 +74,38 @@ class GlobalAPIKey(Base):
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
     )
 
+
+
+
+class ChatSession(Base):
+    __tablename__ = "chat_sessions"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    session_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
+    title: Mapped[str] = mapped_column(String(200), default="New chat", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+    user: Mapped[User | None] = relationship()
+    messages: Mapped[list[ChatMessage]] = relationship(
+        back_populates="session", cascade="all, delete-orphan", order_by="ChatMessage.created_at"
+    )
+
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    session_id: Mapped[str] = mapped_column(String(36), ForeignKey("chat_sessions.id"), nullable=False)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)  # user, assistant, system
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+    session: Mapped[ChatSession] = relationship(back_populates="messages")

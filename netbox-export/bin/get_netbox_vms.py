@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pynetbox
 
-from enreach_tools import dropbox_sync
+from enreach_tools import backup_sync
 from enreach_tools.env import apply_extra_headers, load_env, project_root, require_env
 
 # Load environment variables from central loader (.env at project root)
@@ -393,7 +393,7 @@ def write_csv_data(vm_details, existing_data, deleted_vm_ids):
 
         # CSV file written; summary printed by caller
         try:
-            result = dropbox_sync.sync_paths([Path(CSV_FILE)], note="netbox_vms")
+            result = backup_sync.sync_paths([Path(CSV_FILE)], note="netbox_vms")
             if result.get("status") == "ok" and result.get("count"):
                 print(f"Dropbox sync: uploaded {result['count']} file(s).")
         except Exception as sync_error:  # pragma: no cover - defensive logging

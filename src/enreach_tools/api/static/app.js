@@ -230,7 +230,19 @@
   };
   const adminTabs = document.querySelectorAll('#admin-tabs .admin-tab');
   const $adminStatus = document.getElementById("admin-status");
-  const $adminSync = document.getElementById("admin-sync");
+  const $adminBackupRun = document.getElementById("admin-backup-run");
+  const $adminBackupType = document.getElementById("admin-backup-type");
+  const $adminBackupLocalPath = document.getElementById("admin-backup-local-path");
+  const $adminBackupHost = document.getElementById("admin-backup-host");
+  const $adminBackupPort = document.getElementById("admin-backup-port");
+  const $adminBackupUsername = document.getElementById("admin-backup-username");
+  const $adminBackupPassword = document.getElementById("admin-backup-password");
+  const $adminBackupKeyPath = document.getElementById("admin-backup-key-path");
+  const $adminBackupRemotePath = document.getElementById("admin-backup-remote-path");
+  const $adminBackupTimestamped = document.getElementById("admin-backup-timestamped");
+  const $adminBackupStatus = document.getElementById("admin-backup-status");
+  const $adminBackupLocalConfig = document.getElementById("admin-backup-local-config");
+  const $adminBackupRemoteConfig = document.getElementById("admin-backup-remote-config");
   // User management elements
   const $adminUserList = document.getElementById("admin-user-list");
   const $adminUserDetail = document.getElementById("admin-user-detail");
@@ -658,7 +670,7 @@
   };
   const adminState = {
     settings: [],
-    dropbox: {},
+    backup: {},
     loading: false,
     activeTab: 'zabbix',
     users: [],
@@ -1680,9 +1692,8 @@
     if (p === 'export') {
       fetchData();
     } else if (p === 'chat') {
-      ensureChatSession();
+      fetchChatSessions();
       loadChatDefaults();
-      refreshChatHistory();
       setupAutoResize();
       setupSuggestionButtons();
     } else if (p === 'zabbix') {
@@ -2482,9 +2493,13 @@
     e.preventDefault();
     deleteSuggestion();
   });
-  $adminSync?.addEventListener('click', (e) => {
+  $adminBackupRun?.addEventListener('click', (e) => {
     e.preventDefault();
-    runManualDropboxSync($adminSync);
+    runManualBackup($adminBackupRun);
+  });
+
+  $adminBackupType?.addEventListener('change', () => {
+    updateBackupConfigVisibility();
   });
 
   adminTabs.forEach((btn) => {
@@ -2596,7 +2611,7 @@
     renderAdminGroup(adminContainers['chat'], groups['chat'] || [], { emptyMessage: 'Add API keys and defaults to enable chat providers.' });
     renderAdminGroup(adminContainers['export'], groups['export'] || [], { emptyMessage: 'No export settings available.' });
     renderAdminGroup(adminContainers['api'], groups['api'] || [], { emptyMessage: 'No API/UI settings available.' });
-    renderAdminGroup(adminContainers['backup'], groups['backup'] || [], { emptyMessage: 'Configure Dropbox backup options.' });
+    renderAdminGroup(adminContainers['backup'], groups['backup'] || [], { emptyMessage: 'Configure backup options.' });
   }
 
   async function loadAdminSettings(force = false) {
@@ -2612,20 +2627,23 @@
       }
       const data = await res.json();
       adminState.settings = Array.isArray(data?.settings) ? data.settings : [];
-      adminState.dropbox = data?.dropbox || {};
+      adminState.backup = data?.backup || {};
       renderAdminSettings();
       if ($adminStatus) {
-        const dropbox = adminState.dropbox || {};
-        if (!dropbox.enabled) {
-          $adminStatus.textContent = 'Dropbox sync disabled';
-        } else if (dropbox.enabled && !dropbox.configured) {
-          $adminStatus.textContent = 'Dropbox sync enabled but not configured';
-        } else if (dropbox.target) {
-          $adminStatus.textContent = `Dropbox sync → ${dropbox.target}`;
+        const backup = adminState.backup || {};
+        if (!backup.enabled) {
+          $adminStatus.textContent = 'Backup disabled';
+        } else if (backup.enabled && !backup.configured) {
+          $adminStatus.textContent = 'Backup enabled but not configured';
+        } else if (backup.type && backup.target) {
+          $adminStatus.textContent = `Backup (${backup.type}) → ${backup.target}`;
+        } else if (backup.type) {
+          $adminStatus.textContent = `Backup enabled (${backup.type})`;
         } else {
-          $adminStatus.textContent = 'Dropbox sync enabled';
+          $adminStatus.textContent = 'Backup enabled';
         }
       }
+      updateBackupConfigFromState();
     } catch (err) {
       console.error('Failed to load admin settings', err);
       if ($adminStatus) $adminStatus.textContent = 'Failed to load settings';
@@ -2660,7 +2678,7 @@
       }
       const data = await res.json();
       adminState.settings = Array.isArray(data?.settings) ? data.settings : [];
-      adminState.dropbox = data?.dropbox || {};
+      adminState.backup = data?.backup || {};
       renderAdminSettings();
       setAdminTab(adminState.activeTab || 'zabbix');
       if ((item.category || '').toLowerCase() === 'chat') {
@@ -2691,7 +2709,7 @@
       }
       const data = await res.json();
       adminState.settings = Array.isArray(data?.settings) ? data.settings : [];
-      adminState.dropbox = data?.dropbox || {};
+      adminState.backup = data?.backup || {};
       renderAdminSettings();
       setAdminTab(adminState.activeTab || 'zabbix');
       if ((item.category || '').toLowerCase() === 'chat') {
@@ -2707,29 +2725,57 @@
     }
   }
 
-  async function runManualDropboxSync(button) {
-    if (!window.confirm('Run Dropbox sync now?')) return;
+  async function runManualBackup(button) {
+    if (!window.confirm('Run backup now?')) return;
     button.disabled = true;
-    if ($adminStatus) $adminStatus.textContent = 'Running Dropbox sync…';
+    if ($adminStatus) $adminStatus.textContent = 'Running backup…';
     try {
-      const res = await fetch(`${API_BASE}/admin/dropbox-sync`, { method: 'POST' });
+      const res = await fetch(`${API_BASE}/admin/backup-sync`, { method: 'POST' });
       if (!res.ok) {
         const data = await res.json().catch(() => null);
         throw new Error(data?.detail || res.statusText);
       }
       const data = await res.json();
       if (data?.status === 'ok') {
-        alert(`Dropbox sync finished with ${data?.count || 0} file(s).`);
+        const method = data?.method || 'backup';
+        const count = data?.count || data?.uploaded?.length || data?.copied?.length || 0;
+        alert(`${method.toUpperCase()} backup finished with ${count} file(s).`);
       } else {
-        alert(`Dropbox sync response: ${data?.reason || data?.status || 'unknown'}`);
+        alert(`Backup response: ${data?.reason || data?.status || 'unknown'}`);
       }
-      if ($adminStatus) $adminStatus.textContent = 'Dropbox sync completed';
+      if ($adminStatus) $adminStatus.textContent = 'Backup completed';
     } catch (err) {
-      console.error('Dropbox sync failed', err);
-      if ($adminStatus) $adminStatus.textContent = 'Dropbox sync failed';
-      alert(`Dropbox sync failed: ${err?.message || err}`);
+      console.error('Backup failed', err);
+      if ($adminStatus) $adminStatus.textContent = 'Backup failed';
+      alert(`Backup failed: ${err?.message || err}`);
     } finally {
       button.disabled = false;
+    }
+  }
+
+  function updateBackupConfigVisibility() {
+    const type = $adminBackupType?.value || 'local';
+    if ($adminBackupLocalConfig) {
+      $adminBackupLocalConfig.hidden = type !== 'local';
+    }
+    if ($adminBackupRemoteConfig) {
+      $adminBackupRemoteConfig.hidden = !['sftp', 'scp'].includes(type);
+    }
+  }
+
+  function updateBackupConfigFromState() {
+    const backup = adminState.backup || {};
+    if ($adminBackupStatus) {
+      if (backup.enabled && backup.configured) {
+        $adminBackupStatus.textContent = `Backup configured: ${backup.type || 'unknown'} → ${backup.target || 'unknown'}`;
+        $adminBackupStatus.className = 'admin-backup-status success';
+      } else if (backup.enabled) {
+        $adminBackupStatus.textContent = 'Backup enabled but not properly configured';
+        $adminBackupStatus.className = 'admin-backup-status warning';
+      } else {
+        $adminBackupStatus.textContent = 'Backup disabled';
+        $adminBackupStatus.className = 'admin-backup-status disabled';
+      }
     }
   }
 
@@ -2753,6 +2799,12 @@
       loadAdminUsers($adminUserIncludeInactive?.checked).catch(() => {});
       loadAdminGlobalApiKeys().catch(() => {});
       showAdminUserEmpty();
+    }
+    
+    // Initialize backup config when switching to backup tab
+    if (tab === 'backup') {
+      updateBackupConfigVisibility();
+      updateBackupConfigFromState();
     }
   }
 
@@ -3445,6 +3497,9 @@
     const frag = document.createDocumentFragment();
     sessions.forEach((session) => {
       if (!session || !session.session_id) return;
+      const wrapper = document.createElement('div');
+      wrapper.className = 'chat-session-wrapper';
+      
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'chat-session';
@@ -3455,9 +3510,64 @@
       btn.addEventListener('click', () => {
         setActiveChatSession(session.session_id);
       });
-      frag.appendChild(btn);
+      
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className = 'chat-session-delete';
+      deleteBtn.innerHTML = '×';
+      deleteBtn.title = 'Delete chat session';
+      deleteBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        await deleteChatSession(session.session_id);
+      });
+      
+      wrapper.appendChild(btn);
+      wrapper.appendChild(deleteBtn);
+      frag.appendChild(wrapper);
     });
     $chatSessions.replaceChildren(frag);
+  }
+
+  async function deleteChatSession(sessionId) {
+    if (!sessionId) return;
+    
+    const session = chatSessionsState.items.find(s => s.session_id === sessionId);
+    const title = session?.title || 'this chat';
+    
+    if (!confirm(`Are you sure you want to delete "${title}"? This cannot be undone.`)) {
+      return;
+    }
+    
+    try {
+      const res = await fetch(`${API_BASE}/chat/session/${encodeURIComponent(sessionId)}`, {
+        method: 'DELETE',
+      });
+      
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.detail || res.statusText);
+      }
+      
+      // Remove from local state
+      chatSessionsState.items = chatSessionsState.items.filter(s => s.session_id !== sessionId);
+      
+      // If this was the active session, switch to another or create new
+      if (chatSessionsState.active === sessionId) {
+        if (chatSessionsState.items.length > 0) {
+          await setActiveChatSession(chatSessionsState.items[0].session_id);
+        } else {
+          chatSessionId = null;
+          chatSessionsState.active = null;
+          await createChatSession();
+        }
+      }
+      
+      renderChatSessions();
+    } catch (err) {
+      console.error('Failed to delete chat session', err);
+      alert(`Failed to delete chat session: ${err?.message || err}`);
+    }
   }
 
   async function setActiveChatSession(sessionId, options = {}) {
@@ -4564,8 +4674,7 @@
   // Clean up any legacy ?view=... from the URL at startup
   try { updateURLDebounced(); } catch {}
   if (initialPage === 'chat') {
-    ensureChatSession();
-    refreshChatHistory();
+    fetchChatSessions();
     setupAutoResize();
     setupSuggestionButtons();
   }

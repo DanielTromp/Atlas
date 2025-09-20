@@ -10,7 +10,7 @@ import shutil
 import sys
 import uuid
 from collections.abc import Generator
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
 from typing import Annotated, Any, Literal
@@ -37,9 +37,9 @@ from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from enreach_tools import dropbox_sync
+from enreach_tools import backup_sync
 from enreach_tools.db import get_sessionmaker, init_database
-from enreach_tools.db.models import GlobalAPIKey, User, UserAPIKey
+from enreach_tools.db.models import ChatMessage, ChatSession, GlobalAPIKey, User, UserAPIKey
 from enreach_tools.env import load_env, project_root
 
 try:
@@ -810,11 +810,17 @@ ENV_SETTING_FIELDS: list[dict[str, Any]] = [
     {"key": "ENREACH_SSL_KEY_PASSWORD", "label": "SSL Key Password", "secret": True, "placeholder": "optional", "category": "api"},
     {"key": "UI_THEME_DEFAULT", "label": "Default Theme", "secret": False, "placeholder": "nebula", "category": "api"},
 
-    # Backup (Dropbox)
-    {"key": "DROPBOX_ENABLE_SYNC", "label": "Dropbox Sync Enabled", "secret": False, "placeholder": "1", "category": "backup"},
-    {"key": "DROPBOX_ACCESS_TOKEN", "label": "Dropbox Access Token", "secret": True, "placeholder": "paste-token-here", "category": "backup"},
-    {"key": "DROPBOX_TARGET_FOLDER", "label": "Dropbox Target Folder", "secret": False, "placeholder": "/Apps/enreach-tools", "category": "backup"},
-    {"key": "DROPBOX_SHARED_LINK", "label": "Dropbox Shared Link", "secret": False, "placeholder": "https://www.dropbox.com/s/...", "category": "backup"},
+    # Backup
+    {"key": "BACKUP_ENABLE", "label": "Backup Enabled", "secret": False, "placeholder": "1", "category": "backup"},
+    {"key": "BACKUP_TYPE", "label": "Backup Type", "secret": False, "placeholder": "local", "category": "backup"},
+    {"key": "BACKUP_HOST", "label": "Backup Host", "secret": False, "placeholder": "backup.example.com", "category": "backup"},
+    {"key": "BACKUP_PORT", "label": "Backup Port", "secret": False, "placeholder": "22", "category": "backup"},
+    {"key": "BACKUP_USERNAME", "label": "Backup Username", "secret": False, "placeholder": "backup_user", "category": "backup"},
+    {"key": "BACKUP_PASSWORD", "label": "Backup Password", "secret": True, "placeholder": "password", "category": "backup"},
+    {"key": "BACKUP_PRIVATE_KEY_PATH", "label": "Private Key Path", "secret": False, "placeholder": "~/.ssh/id_rsa", "category": "backup"},
+    {"key": "BACKUP_REMOTE_PATH", "label": "Remote Path", "secret": False, "placeholder": "/backups/enreach-tools", "category": "backup"},
+    {"key": "BACKUP_LOCAL_PATH", "label": "Local Backup Path", "secret": False, "placeholder": "backups", "category": "backup"},
+    {"key": "BACKUP_CREATE_TIMESTAMPED_DIRS", "label": "Create Timestamped Directories", "secret": False, "placeholder": "false", "category": "backup"},
 ]
 
 
@@ -1284,15 +1290,34 @@ def _build_admin_settings() -> list[dict[str, Any]]:
 @app.get("/admin/env")
 def admin_env_settings():
     settings = _build_admin_settings()
-    dropbox_enabled = os.getenv("DROPBOX_ENABLE_SYNC", "1").strip().lower() not in {"0", "false", "no", "off"}
-    dropbox_token = bool(os.getenv("DROPBOX_ACCESS_TOKEN"))
-    dropbox_target = os.getenv("DROPBOX_TARGET_FOLDER") or os.getenv("DROPBOX_SHARED_LINK") or ""
+    backup_enabled = os.getenv("BACKUP_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off"}
+    backup_type = os.getenv("BACKUP_TYPE", "local").strip().lower()
+    
+    # Determine if backup is properly configured based on type
+    backup_configured = False
+    backup_target = ""
+    
+    if backup_type == "local":
+        backup_path = os.getenv("BACKUP_LOCAL_PATH", "backups").strip()
+        backup_configured = bool(backup_path)
+        backup_target = backup_path
+    elif backup_type in {"sftp", "scp"}:
+        host = os.getenv("BACKUP_HOST", "").strip()
+        username = os.getenv("BACKUP_USERNAME", "").strip()
+        password = os.getenv("BACKUP_PASSWORD", "").strip()
+        private_key = os.getenv("BACKUP_PRIVATE_KEY_PATH", "").strip()
+        remote_path = os.getenv("BACKUP_REMOTE_PATH", "").strip()
+        
+        backup_configured = bool(host and username and (password or private_key))
+        backup_target = f"{username}@{host}:{remote_path}" if host and username and remote_path else f"{username}@{host}" if host and username else ""
+    
     return {
         "settings": settings,
-        "dropbox": {
-            "enabled": dropbox_enabled,
-            "configured": dropbox_token,
-            "target": dropbox_target,
+        "backup": {
+            "enabled": backup_enabled,
+            "configured": backup_configured,
+            "type": backup_type,
+            "target": backup_target,
         },
     }
 
@@ -1323,10 +1348,10 @@ def admin_env_reset(req: EnvResetRequest):
     return admin_env_settings()
 
 
-@app.post("/admin/dropbox-sync")
-def admin_dropbox_sync():
+@app.post("/admin/backup-sync")
+def admin_backup_sync():
     try:
-        result = dropbox_sync.sync_data_dir(note="manual-ui")
+        result = backup_sync.sync_data_dir(note="manual-ui")
         return result
     except Exception as exc:  # pragma: no cover
         raise HTTPException(status_code=500, detail=str(exc))
@@ -1382,9 +1407,7 @@ def _list_records(
 # Chat integration (simple)
 # ---------------------------
 
-# Ephemeral in-memory sessions; keyed by client-provided session_id
-CHAT_SESSIONS: dict[str, list[dict[str, Any]]] = {}
-CHAT_SESSION_METADATA: dict[str, dict[str, Any]] = {}
+# Chat sessions are now stored in the database
 CHAT_QUERY_STOP_WORDS: set[str] = {
     "show",
     "list",
@@ -1498,63 +1521,72 @@ def _format_responses_messages(messages: list[dict[str, str]]) -> list[dict[str,
     return formatted
 
 
-def _touch_chat_session(session_id: str, role: str | None = None, content: str | None = None) -> None:
+def _get_chat_session(db: Session, session_id: str) -> ChatSession | None:
+    """Get chat session by session_id."""
+    from sqlalchemy import select
+    stmt = select(ChatSession).where(ChatSession.session_id == session_id)
+    return db.execute(stmt).scalar_one_or_none()
+
+
+def _create_chat_session(db: Session, session_id: str | None = None, title: str | None = None, user_id: str | None = None) -> ChatSession:
+    """Create a new chat session."""
     if not session_id:
-        return
-    now = datetime.utcnow().isoformat() + "Z"
-    meta = CHAT_SESSION_METADATA.setdefault(
-        session_id,
-        {
-            "session_id": session_id,
-            "title": "New chat",
-            "created_at": now,
-            "updated_at": now,
-            "last_message": "",
-            "last_role": None,
-        },
+        session_id = "c_" + secrets.token_hex(8)
+    
+    session = ChatSession(
+        session_id=session_id,
+        title=title or "New chat",
+        user_id=user_id,
     )
-    if not meta.get("created_at"):
-        meta["created_at"] = now
-    meta["updated_at"] = now
-    if content is not None:
-        preview = str(content).strip()
-        meta["last_message"] = preview[:200]
-        meta["last_role"] = role
-        if role == "user" and preview:
-            if meta.get("title") in (None, "", "New chat"):
-                meta["title"] = preview[:60]
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    return session
 
 
-def _ensure_chat_session(session_id: str) -> None:
-    CHAT_SESSIONS.setdefault(session_id, [])
-    _touch_chat_session(session_id)
+def _update_session_title_from_message(db: Session, session: ChatSession, message: str) -> None:
+    """Update session title based on first user message if title is still default."""
+    if session.title in ("New chat", "", None) and message.strip():
+        session.title = message.strip()[:60]
+        db.add(session)
+        db.commit()
 
 
-def _format_session_list(limit: int | None = None) -> list[dict[str, Any]]:
-    items = list(CHAT_SESSION_METADATA.values())
-    items.sort(key=lambda m: m.get("updated_at") or "", reverse=True)
-    if limit is not None:
-        items = items[:limit]
-    return [
-        {
-            "session_id": m.get("session_id"),
-            "title": m.get("title") or "New chat",
-            "updated_at": m.get("updated_at"),
-            "created_at": m.get("created_at"),
-            "last_message": m.get("last_message", ""),
-            "last_role": m.get("last_role"),
-        }
-        for m in items
-    ]
+def _add_chat_message(db: Session, session: ChatSession, role: str, content: str) -> ChatMessage:
+    """Add a message to a chat session."""
+    message = ChatMessage(
+        session_id=session.id,
+        role=role,
+        content=content,
+    )
+    db.add(message)
+    
+    # Update session timestamp
+    session.updated_at = datetime.now(UTC)
+    db.add(session)
+    
+    db.commit()
+    db.refresh(message)
+    return message
 
 
-def _create_chat_session(name: str | None = None) -> dict[str, Any]:
-    session_id = "c_" + secrets.token_hex(8)
-    CHAT_SESSIONS[session_id] = []
-    _touch_chat_session(session_id)
-    if name and name.strip():
-        CHAT_SESSION_METADATA[session_id]["title"] = name.strip()[:60]
-    return CHAT_SESSION_METADATA[session_id]
+def _serialize_chat_session(session: ChatSession) -> dict[str, Any]:
+    """Serialize chat session for API response."""
+    return {
+        "session_id": session.session_id,
+        "title": session.title,
+        "created_at": session.created_at.isoformat() + "Z",
+        "updated_at": session.updated_at.isoformat() + "Z",
+    }
+
+
+def _serialize_chat_message(message: ChatMessage) -> dict[str, Any]:
+    """Serialize chat message for API response."""
+    return {
+        "role": message.role,
+        "content": message.content,
+        "created_at": message.created_at.isoformat() + "Z",
+    }
 
 
 class ChatRequest(BaseModel):
@@ -1974,31 +2006,55 @@ def chat_providers(user: CurrentUserDep, db: DbSessionDep):
 
 
 @app.get("/chat/history")
-def chat_history(session_id: str = Query(...)):
-    _ensure_chat_session(session_id)
+def chat_history(db: DbSessionDep, session_id: str = Query(...)):
+    session = _get_chat_session(db, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    
+    messages = [_serialize_chat_message(msg) for msg in session.messages]
     return {
         "session_id": session_id,
-        "messages": CHAT_SESSIONS.get(session_id, []),
+        "messages": messages,
     }
 
 
 @app.get("/chat/sessions")
-def chat_sessions(limit: int | None = Query(None, ge=1, le=200)):
-    return {"sessions": _format_session_list(limit)}
+def chat_sessions(db: DbSessionDep, user: OptionalUserDep, limit: int | None = Query(None, ge=1, le=200)):
+    from sqlalchemy import select
+    
+    stmt = select(ChatSession).order_by(ChatSession.updated_at.desc())
+    if user:
+        stmt = stmt.where(ChatSession.user_id == user.id)
+    if limit:
+        stmt = stmt.limit(limit)
+    
+    sessions = db.execute(stmt).scalars().all()
+    return {"sessions": [_serialize_chat_session(session) for session in sessions]}
 
 
 @app.post("/chat/session")
-def chat_session_create(req: ChatSessionCreate | None = None):
-    name = (req.name if req else "") or ""
-    session_meta = _create_chat_session(name)
-    return {
-        "session_id": session_meta.get("session_id"),
-        "title": session_meta.get("title"),
-        "created_at": session_meta.get("created_at"),
-        "updated_at": session_meta.get("updated_at"),
-        "last_message": session_meta.get("last_message", ""),
-        "last_role": session_meta.get("last_role"),
-    }
+def chat_session_create(db: DbSessionDep, user: OptionalUserDep, req: ChatSessionCreate = Body(default=None)):
+    title = (req.name if req else "") or "New chat"
+    session = _create_chat_session(db, title=title, user_id=user.id if user else None)
+    return _serialize_chat_session(session)
+
+
+@app.delete("/chat/session/{session_id}")
+def chat_session_delete(session_id: str, db: DbSessionDep, user: OptionalUserDep):
+    """Delete a chat session and all its messages."""
+    session = _get_chat_session(db, session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    
+    # Optional: Only allow users to delete their own sessions
+    if user and session.user_id and session.user_id != user.id:
+        raise HTTPException(status_code=403, detail="You can only delete your own chat sessions")
+    
+    # Delete the session (messages will be deleted automatically due to cascade)
+    db.delete(session)
+    db.commit()
+    
+    return {"status": "deleted", "session_id": session_id}
 
 
 @app.post("/chat/complete")
@@ -2018,16 +2074,22 @@ def chat_complete(
     if not model:
         raise HTTPException(status_code=400, detail=f"No model specified for provider '{pid}'")
 
-    # Accumulate messages in session, respecting max turns
-    _ensure_chat_session(req.session_id)
-    history = CHAT_SESSIONS.setdefault(req.session_id, [])
-    # Optional: include a system instruction to avoid automatic actions
+    # Get or create chat session
+    session = _get_chat_session(db, req.session_id)
+    if not session:
+        session = _create_chat_session(db, req.session_id, user_id=user.id if user else None)
+
+    # Build message history from database
+    history = [_serialize_chat_message(msg) for msg in session.messages]
+    
+    # Optional: include a system instruction
     system_prompt = (req.system or os.getenv("CHAT_SYSTEM_PROMPT", "")).strip()
     if system_prompt:
         if history and history[0].get("role") == "system":
             history[0]["content"] = system_prompt[:4000]
         else:
             history.insert(0, {"role": "system", "content": system_prompt[:4000]})
+    
     # Optionally include data context
     if req.include_context:
         ctx_text = _build_data_context(req.dataset or "all", req.message)
@@ -2036,9 +2098,16 @@ def chat_complete(
                 "role": "system",
                 "content": f"Data context from {req.dataset or 'all'}: \n" + ctx_text,
             })
-    user_msg = {"role": "user", "content": str(req.message)[:8000]}
-    history.append(user_msg)
-    _touch_chat_session(req.session_id, "user", req.message)
+    
+    # Add user message to database
+    user_message = str(req.message)[:8000]
+    _add_chat_message(db, session, "user", user_message)
+    
+    # Update session title if it's the first user message
+    _update_session_title_from_message(db, session, user_message)
+    
+    # Add user message to history for API call
+    history.append({"role": "user", "content": user_message})
     clipped = _messages_for_provider(history)
 
     temperature = req.temperature if req.temperature is not None else _chat_default_temperature()
@@ -2055,21 +2124,18 @@ def chat_complete(
         else:
             raise ValueError(f"Unsupported provider: {pid}")
     except requests.HTTPError as ex:
-        # Keep the user message in history; add an assistant error message
+        # Add error message to database
         err = f"Provider error: {ex.response.status_code if ex.response else ''} {ex!s}"
-        history.append({"role": "assistant", "content": err})
-        _touch_chat_session(req.session_id, "assistant", err)
-        return {"session_id": req.session_id, "provider": pid, "model": model, "reply": err, "messages": history}
+        _add_chat_message(db, session, "assistant", err)
+        return {"session_id": req.session_id, "provider": pid, "model": model, "reply": err}
     except Exception as ex:
         err = f"Error: {ex}"
-        history.append({"role": "assistant", "content": err})
-        _touch_chat_session(req.session_id, "assistant", err)
-        return {"session_id": req.session_id, "provider": pid, "model": model, "reply": err, "messages": history}
+        _add_chat_message(db, session, "assistant", err)
+        return {"session_id": req.session_id, "provider": pid, "model": model, "reply": err}
 
-    # Append assistant reply and return
-    history.append({"role": "assistant", "content": text})
-    _touch_chat_session(req.session_id, "assistant", text)
-    return {"session_id": req.session_id, "provider": pid, "model": model, "reply": text, "messages": history}
+    # Add assistant reply to database
+    _add_chat_message(db, session, "assistant", text)
+    return {"session_id": req.session_id, "provider": pid, "model": model, "reply": text}
 
 
 def _stream_openai_text(model: str, messages: list[dict[str, str]], api_key: str, temperature: float = 0.2):
@@ -2253,22 +2319,37 @@ def chat_stream(
     if not model:
         raise HTTPException(status_code=400, detail=f"No model specified for provider '{pid}'")
 
-    _ensure_chat_session(req.session_id)
-    history = CHAT_SESSIONS.setdefault(req.session_id, [])
+    # Get or create chat session
+    session = _get_chat_session(db, req.session_id)
+    if not session:
+        session = _create_chat_session(db, req.session_id, user_id=user.id if user else None)
+
+    # Build message history from database
+    history = [_serialize_chat_message(msg) for msg in session.messages]
+    
+    # Optional: include a system instruction
     system_prompt = (req.system or os.getenv("CHAT_SYSTEM_PROMPT", "")).strip()
     if system_prompt:
         if history and history[0].get("role") == "system":
             history[0]["content"] = system_prompt[:4000]
         else:
             history.insert(0, {"role": "system", "content": system_prompt[:4000]})
+    
+    # Optionally include data context
     if req.include_context:
         ctx_text = _build_data_context(req.dataset or "all", req.message)
         if ctx_text:
             history.append({"role": "system", "content": f"Data context from {req.dataset or 'all'}:\n" + ctx_text})
-    user_msg = {"role": "user", "content": str(req.message)[:8000]}
-    history.append(user_msg)
-    _touch_chat_session(req.session_id, "user", req.message)
-
+    
+    # Add user message to database
+    user_message = str(req.message)[:8000]
+    _add_chat_message(db, session, "user", user_message)
+    
+    # Update session title if it's the first user message
+    _update_session_title_from_message(db, session, user_message)
+    
+    # Add user message to history for API call
+    history.append({"role": "user", "content": user_message})
     clipped = _messages_for_provider(history)
     temperature = req.temperature if req.temperature is not None else _chat_default_temperature()
 
@@ -2314,9 +2395,9 @@ def chat_stream(
                     full_text.append(part)
                     yield part
         finally:
+            # Add assistant response to database
             out = "".join(full_text).strip()
-            history.append({"role": "assistant", "content": out})
-            _touch_chat_session(req.session_id, "assistant", out)
+            _add_chat_message(db, session, "assistant", out)
 
     return StreamingResponse(generator(), media_type="text/plain; charset=utf-8")
 

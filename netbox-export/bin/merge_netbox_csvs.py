@@ -20,7 +20,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from enreach_tools import dropbox_sync
+from enreach_tools import backup_sync
 from enreach_tools.env import load_env, project_root
 
 # Try to import Excel-related libraries
@@ -191,7 +191,7 @@ def merge_netbox_csvs():
             print(f"Output file size: {file_size:,} bytes ({file_size / 1024 / 1024:.2f} MB)")
 
         try:
-            result = dropbox_sync.sync_paths([Path(output_file)], note="netbox_merge_csv")
+            result = backup_sync.sync_paths([Path(output_file)], note="netbox_merge_csv")
             if result.get("status") == "ok" and result.get("count"):
                 print(f"Dropbox sync: uploaded {result['count']} file(s) from merge.")
         except Exception as sync_error:  # pragma: no cover - defensive logging
@@ -299,7 +299,7 @@ def create_excel_export(csv_file, excel_file):
             print(f"Excel file created: {file_size:,} bytes ({file_size / 1024 / 1024:.2f} MB)")
 
         try:
-            result = dropbox_sync.sync_paths([Path(excel_file)], note="netbox_merge_excel")
+            result = backup_sync.sync_paths([Path(excel_file)], note="netbox_merge_excel")
             if result.get("status") == "ok" and result.get("count"):
                 print(f"Dropbox sync: uploaded {result['count']} file(s) from Excel export.")
         except Exception as sync_error:  # pragma: no cover - defensive logging

@@ -396,10 +396,64 @@
             </section>
             <section id="admin-panel-backup" class="admin-panel" data-admin-tab="backup">
               <div id="admin-settings-backup" class="admin-settings-group"></div>
+              <div class="admin-backup-config">
+                <h3>Backup Configuration</h3>
+                <div class="admin-backup-status" id="admin-backup-status"></div>
+                <div class="admin-backup-controls">
+                  <label class="field">
+                    <span>Backup Type</span>
+                    <select id="admin-backup-type">
+                      <option value="local">Local Directory</option>
+                      <option value="sftp">SFTP</option>
+                      <option value="scp">SCP</option>
+                    </select>
+                  </label>
+                  <div id="admin-backup-local-config" class="admin-backup-type-config">
+                    <label class="field column">
+                      <span>Local Backup Path</span>
+                      <input id="admin-backup-local-path" type="text" placeholder="backups" />
+                    </label>
+                  </div>
+                  <div id="admin-backup-remote-config" class="admin-backup-type-config" hidden>
+                    <label class="field column">
+                      <span>Host</span>
+                      <input id="admin-backup-host" type="text" placeholder="backup.example.com" />
+                    </label>
+                    <div class="field-row">
+                      <label class="field">
+                        <span>Port</span>
+                        <input id="admin-backup-port" type="number" value="22" min="1" max="65535" />
+                      </label>
+                      <label class="field">
+                        <span>Username</span>
+                        <input id="admin-backup-username" type="text" placeholder="backup_user" />
+                      </label>
+                    </div>
+                    <label class="field column">
+                      <span>Password</span>
+                      <input id="admin-backup-password" type="password" placeholder="Leave empty to use private key" />
+                    </label>
+                    <label class="field column">
+                      <span>Private Key Path (alternative to password)</span>
+                      <input id="admin-backup-key-path" type="text" placeholder="~/.ssh/id_rsa" />
+                    </label>
+                    <label class="field column">
+                      <span>Remote Path</span>
+                      <input id="admin-backup-remote-path" type="text" placeholder="/backups/enreach-tools" />
+                    </label>
+                  </div>
+                  <div class="admin-backup-options">
+                    <label class="field">
+                      <input id="admin-backup-timestamped" type="checkbox" />
+                      <span>Create timestamped directories</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
               <details class="admin-advanced">
-                <summary>Manual Sync</summary>
-                <p class="muted">Run a Dropbox sync to back up the latest exports immediately.</p>
-                <button id="admin-sync" class="btn ghost" type="button">Run Dropbox Sync</button>
+                <summary>Manual Backup</summary>
+                <p class="muted">Run a backup to save the latest exports immediately.</p>
+                <button id="admin-backup-run" class="btn ghost" type="button">Run Backup</button>
               </details>
             </section>
           </div>
