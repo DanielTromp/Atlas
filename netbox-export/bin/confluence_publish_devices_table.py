@@ -174,7 +174,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Publish NetBox devices CSV as Confluence table")
     parser.add_argument(
         "--csv",
-        default="netbox-export/data/netbox_devices_export.csv",
+        default="data/netbox_devices_export.csv",
         help="Path to the devices export CSV",
     )
     parser.add_argument(

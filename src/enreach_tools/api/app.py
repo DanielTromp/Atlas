@@ -2,33 +2,231 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import json
 import os
+import re
+import secrets
 import shutil
 import sys
+import uuid
+from collections.abc import Generator
+from datetime import datetime
 from pathlib import Path
-from typing import Literal, Any
+from threading import Lock
+from typing import Annotated, Any, Literal
 
 import duckdb
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Query, Body, Request
-from pydantic import BaseModel
+import requests
+from dotenv import dotenv_values
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse, StreamingResponse, FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
-from datetime import datetime
+from passlib.context import CryptContext
+from pydantic import BaseModel, ConfigDict
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
-import secrets
 
+from enreach_tools import dropbox_sync
+from enreach_tools.db import get_sessionmaker, init_database
+from enreach_tools.db.models import GlobalAPIKey, User, UserAPIKey
 from enreach_tools.env import load_env, project_root
-import requests
+
 try:
     from openai import OpenAI  # type: ignore
 except Exception:  # optional dependency
     OpenAI = None  # type: ignore
 
 load_env()
+
+# Ensure the application database is migrated to the latest revision so
+# authentication state can be loaded lazily by request handlers.
+try:
+    init_database()
+except Exception as exc:  # pragma: no cover - surfaces during boot
+    print(f"[WARN] Failed to initialise database: {exc}")
+    raise
+
+SessionLocal = get_sessionmaker()
+
+try:  # Work around bcrypt>=4.3 dropping __about__ which passlib expects
+    import bcrypt as _bcrypt
+
+    if not hasattr(_bcrypt, "__about__"):
+        class _BcryptAbout:
+            __version__ = getattr(_bcrypt, "__version__", "")
+
+
+        _bcrypt.__about__ = _BcryptAbout()  # type: ignore[attr-defined]
+except Exception:
+    _bcrypt = None  # type: ignore[assignment]
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+
+def verify_password(password: str, password_hash: str | None) -> bool:
+    if not password_hash:
+        return False
+    try:
+        return pwd_context.verify(password, password_hash)
+    except Exception:
+        return False
+
+
+def get_db() -> Generator[Session, None, None]:
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def ensure_default_admin() -> None:
+    with SessionLocal() as db:
+        existing = db.execute(select(User.id).limit(1)).scalar_one_or_none()
+        if existing:
+            return
+
+        username = os.getenv("ENREACH_DEFAULT_ADMIN_USERNAME", "admin").strip().lower() or "admin"
+        seed_password = os.getenv("ENREACH_DEFAULT_ADMIN_PASSWORD", "").strip() or UI_PASSWORD
+
+        if not seed_password:
+            print(
+                "[WARN] No users exist and ENREACH_DEFAULT_ADMIN_PASSWORD is not set; "
+                "set it (or ENREACH_UI_PASSWORD) to bootstrap the first login."
+            )
+            return
+
+        user = User(
+            username=username,
+            display_name="Administrator",
+            role="admin",
+            password_hash=hash_password(seed_password),
+            is_active=True,
+        )
+        db.add(user)
+        db.commit()
+        print(f"[INFO] Created default admin user '{username}'. Please change the password after login.")
+
+
+ensure_default_admin()
+
+
+def get_user_by_username(db: Session, username: str) -> User | None:
+    uname = (username or "").strip().lower()
+    if not uname:
+        return None
+    stmt = select(User).where(User.username == uname)
+    return db.execute(stmt).scalar_one_or_none()
+
+
+def authenticate_user(db: Session, username: str, password: str) -> User | None:
+    user = get_user_by_username(db, username)
+    if not user or not user.is_active:
+        return None
+    if verify_password(password, user.password_hash):
+        return user
+    return None
+
+
+def current_user(request: Request) -> User:
+    user = getattr(request.state, "user", None)
+    if not user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return user
+
+
+def optional_user(request: Request) -> User | None:
+    user = getattr(request.state, "user", None)
+    return user if isinstance(user, User) else None
+
+
+CurrentUserDep = Annotated[User, Depends(current_user)]
+OptionalUserDep = Annotated[User | None, Depends(optional_user)]
+DbSessionDep = Annotated[Session, Depends(get_db)]
+def admin_user(user: CurrentUserDep) -> User:
+    return _ensure_admin(user)
+
+
+AdminUserDep = Annotated[User, Depends(admin_user)]
+
+
+def _ensure_admin(user: User) -> User:
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
+def _iso(dt: datetime | None) -> str | None:
+    if not dt:
+        return None
+    if isinstance(dt, datetime):
+        return dt.isoformat()
+    try:
+        return str(dt)
+    except Exception:
+        return None
+
+
+def _serialize_user(user: User) -> dict[str, Any]:
+    return {
+        "id": user.id,
+        "username": user.username,
+        "display_name": user.display_name,
+        "email": user.email,
+        "role": user.role,
+        "is_active": user.is_active,
+        "created_at": _iso(user.created_at),
+        "updated_at": _iso(user.updated_at),
+    }
+
+
+def _serialize_user_api_key(record: UserAPIKey) -> dict[str, Any]:
+    return {
+        "id": record.id,
+        "provider": record.provider,
+        "label": record.label,
+        "created_at": _iso(record.created_at),
+        "updated_at": _iso(record.updated_at),
+    }
+
+
+def _serialize_global_api_key(record: GlobalAPIKey) -> dict[str, Any]:
+    return {
+        "id": record.id,
+        "provider": record.provider,
+        "label": record.label,
+        "created_at": _iso(record.created_at),
+        "updated_at": _iso(record.updated_at),
+    }
+
+
+def _get_user_api_key(db: Session, user_id: str, provider: str) -> UserAPIKey | None:
+    stmt = select(UserAPIKey).where(
+        UserAPIKey.user_id == user_id,
+        UserAPIKey.provider == provider,
+    )
+    return db.execute(stmt).scalar_one_or_none()
+
+
+def _get_global_api_key(db: Session, provider: str) -> GlobalAPIKey | None:
+    stmt = select(GlobalAPIKey).where(GlobalAPIKey.provider == provider)
+    return db.execute(stmt).scalar_one_or_none()
+
 
 app = FastAPI(title="Enreach Tools API", version="0.1.0")
 app.add_middleware(
@@ -59,27 +257,40 @@ async def no_cache_static(request, call_next):
 # ---------------------------
 
 API_TOKEN = os.getenv("ENREACH_API_TOKEN", "").strip()
-UI_PASSWORD = os.getenv("ENREACH_UI_PASSWORD", "").strip()
-UI_SECRET = os.getenv("ENREACH_UI_SECRET", "").strip() or secrets.token_hex(16)
+UI_PASSWORD = os.getenv("ENREACH_UI_PASSWORD", "").strip()  # legacy fallback
+UI_SECRET = os.getenv("ENREACH_UI_SECRET", "").strip() or secrets.token_hex(32)
 SESSION_COOKIE_NAME = "enreach_ui"
+SESSION_USER_KEY = "user_id"
 
 class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path or "/"
 
+        request.state.user = None
+        user_id = request.session.get(SESSION_USER_KEY) if hasattr(request, "session") else None
+        if user_id:
+            with SessionLocal() as db:
+                user = db.get(User, user_id)
+                if user and user.is_active:
+                    request.state.user = user
+                else:
+                    request.session.pop(SESSION_USER_KEY, None)
+                    request.state.user = None
+
         # Public endpoints
         if path in ("/favicon.ico", "/health"):
             return await call_next(request)
 
-        # UI protection when a password is configured
         if path == "/":
-            if UI_PASSWORD and not _has_ui_session(request):
+            if not _has_ui_session(request):
                 return RedirectResponse(url="/auth/login")
             return await call_next(request)
         if path.startswith("/app"):
-            if UI_PASSWORD and not _has_ui_session(request):
-                # Redirect to login, preserve next param
-                return RedirectResponse(url=f"/auth/login?next={path}")
+            if not _has_ui_session(request):
+                next_url = path
+                if request.url.query:
+                    next_url += f"?{request.url.query}"
+                return RedirectResponse(url=f"/auth/login?next={next_url}")
             return await call_next(request)
 
         # Auth endpoints are always allowed
@@ -108,7 +319,7 @@ def _has_bearer_token(request: Request) -> bool:
 
 def _has_ui_session(request: Request) -> bool:
     try:
-        return bool(request.session.get("ui_auth") is True)
+        return bool(request.session.get(SESSION_USER_KEY))
     except Exception:
         return False
 
@@ -136,6 +347,17 @@ app.add_middleware(
 
 def _login_html(next_url: str, error: str | None = None) -> HTMLResponse:
     err_html = f"<div class=\"error\">{error}</div>" if error else ""
+    logo_svg = ""
+    try:
+        raw_logo = (Path(__file__).parent / "static" / "enreach.svg").read_text(encoding="utf-8")
+        start = raw_logo.find("<svg")
+        if start != -1:
+            logo_svg = raw_logo[start:]
+        else:
+            logo_svg = raw_logo
+    except OSError:
+        logo_svg = ""
+    logo_html = logo_svg or "<span class=\"brand-logo__fallback\">Enreach</span>"
     return HTMLResponse(
         f"""
         <!doctype html>
@@ -145,21 +367,45 @@ def _login_html(next_url: str, error: str | None = None) -> HTMLResponse:
         <style>
         * {{ box-sizing: border-box; }}
         body {{ font-family: -apple-system, system-ui, Segoe UI, Roboto, Ubuntu, Cantarell, 'Helvetica Neue', Arial, 'Noto Sans', 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol';
-               background: #0b1120; color: #e5e7eb; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }}
-        .box {{ background: #111827; padding: 24px 28px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.4); width: 360px; }}
-        h1 {{ font-size: 18px; margin: 0 0 12px; }}
-        input[type=password] {{ width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #374151; background: #0f172a; color: #e5e7eb; }}
-        button {{ display: block; width: 100%; padding: 10px 12px; border-radius: 8px; border: 0; background: #2563eb; color: #fff; margin-top: 12px; cursor: pointer; }}
-        .hint {{ color: #9ca3af; font-size: 12px; margin-top: 10px; }}
-        .error {{ background: #7f1d1d; color: #fecaca; padding: 8px 10px; border-radius: 8px; margin-bottom: 10px; border: 1px solid #b91c1c; }}
+               background: radial-gradient(120% 160% at 50% 0%, rgba(156, 75, 255, 0.28) 0%, rgba(53, 20, 112, 0.68) 40%, #0b0424 75%, #050012 100%);
+               color: #f5f3ff; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 24px; }}
+        .box {{ background: rgba(26, 9, 55, 0.86); padding: 32px 30px; border-radius: 16px; width: min(400px, 100%);
+                border: 1px solid rgba(155, 100, 255, 0.38); box-shadow: 0 28px 58px rgba(15, 5, 38, 0.55);
+                backdrop-filter: blur(12px); display: flex; flex-direction: column; gap: 18px; }}
+        .brand {{ display: flex; align-items: center; gap: 12px; }}
+        .brand-logo {{ display: flex; align-items: center; justify-content: center; width: 42px; height: 42px; }}
+        .brand-logo svg {{ width: 100%; height: auto; filter: brightness(0) invert(1); opacity: 0.92; display: block; }}
+        .brand-logo__fallback {{ color: #f5f3ff; font-weight: 700; }}
+        .brand h1 {{ font-size: 20px; margin: 0; letter-spacing: 0.28px; font-weight: 680; }}
+        label {{ display: block; }}
+        input[type=text], input[type=password] {{ width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid rgba(170, 111, 255, 0.55);
+                               background: rgba(31, 15, 66, 0.94); color: #f5f3ff; font-size: 14px; transition: border-color 160ms ease, box-shadow 160ms ease; }}
+        input[type=text]::placeholder, input[type=password]::placeholder {{ color: rgba(212, 198, 255, 0.65); }}
+        input[type=text]:focus, input[type=password]:focus {{ outline: none; border-color: #c084fc; box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.45); }}
+        button {{ display: block; width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid rgba(138, 78, 255, 0.9);
+                  background: linear-gradient(180deg, rgba(138, 78, 255, 0.96), rgba(98, 49, 209, 0.92)); color: #f8f5ff;
+                  margin-top: 4px; cursor: pointer; font-weight: 600; transition: transform 120ms ease, box-shadow 160ms ease; }}
+        button:hover {{ transform: translateY(-1px); box-shadow: 0 18px 46px rgba(98, 58, 178, 0.5); }}
+        button:active {{ transform: translateY(0); }}
+        .tagline {{ margin: 0; color: #d5ccff; font-size: 13px; }}
+        .hint {{ color: #b2a8d9; font-size: 12px; text-align: center; margin-top: 8px; }}
+        .error {{ background: rgba(127, 29, 29, 0.85); color: #fecaca; padding: 10px 12px; border-radius: 10px;
+                  border: 1px solid rgba(248, 113, 113, 0.65); margin: 4px 0; }}
         </style>
         </head><body>
-        <form class=\"box\" method=\"post\" action=\"/auth/login\"> 
-          <h1>Enreach Tools — Login</h1>
+        <form class=\"box\" method=\"post\" action=\"/auth/login\">
+          <div class=\"brand\">
+            <div class=\"brand-logo\">{logo_html}</div>
+            <h1>Enreach Tools</h1>
+          </div>
+          <p class=\"tagline\">Sign in to manage NetBox exports and tools.</p>
           {err_html}
           <input type=\"hidden\" name=\"next\" value=\"{next_url}\" />
           <label>
-            <input type=\"password\" name=\"password\" placeholder=\"Password\" autofocus required />
+            <input type=\"text\" name=\"username\" placeholder=\"Username\" autofocus required />
+          </label>
+          <label>
+            <input type=\"password\" name=\"password\" placeholder=\"Password\" required />
           </label>
           <button type=\"submit\">Sign in</button>
           <div class=\"hint\">UI access enables API calls from this browser.</div>
@@ -171,10 +417,7 @@ def _login_html(next_url: str, error: str | None = None) -> HTMLResponse:
 
 @app.get("/auth/login")
 def auth_login_form(request: Request, next: str | None = None):
-    # If no password configured, allow pass-through
     n = next or "/app/"
-    if not UI_PASSWORD:
-        return RedirectResponse(url=n)
     # If already logged in, hop to target
     if _has_ui_session(request):
         return RedirectResponse(url=n)
@@ -183,20 +426,33 @@ def auth_login_form(request: Request, next: str | None = None):
 
 @app.post("/auth/login")
 async def auth_login(request: Request):
-    if not UI_PASSWORD:
-        return RedirectResponse(url="/app/", status_code=302)
-    form = await request.form()
-    password = str(form.get("password") or "")
-    next_url = str(form.get("next") or "/app/")
-    # Sanitize next_url to avoid open redirects
+    content_type = request.headers.get("content-type", "").lower()
+    is_json = "application/json" in content_type
+
+    if is_json:
+        payload = await request.json()
+    else:
+        payload = await request.form()
+
+    username = str(payload.get("username") or "").strip()
+    password = str(payload.get("password") or "")
+    next_url = str(payload.get("next") or "/app/")
     if not next_url.startswith("/"):
         next_url = "/app/"
-    if secrets.compare_digest(password, UI_PASSWORD):
-        request.session["ui_auth"] = True
-        # Use 303 to force a GET on redirect after POST
-        return RedirectResponse(url=next_url, status_code=303)
-    # Re-render the same login page with an inline error
-    return _login_html(next_url, error="Invalid password")
+
+    with SessionLocal() as db:
+        user = authenticate_user(db, username, password)
+        if user:
+            request.session.clear()
+            request.session[SESSION_USER_KEY] = user.id
+            request.session["username"] = user.username
+            if is_json:
+                return {"status": "ok", "next": next_url}
+            return RedirectResponse(url=next_url, status_code=303)
+
+    if is_json:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    return _login_html(next_url, error="Invalid username or password")
 
 
 @app.get("/auth/logout")
@@ -208,10 +464,272 @@ def auth_logout(request: Request):
     return RedirectResponse(url="/auth/login")
 
 
+class ProfileUpdate(BaseModel):
+    display_name: str | None = None
+    email: str | None = None
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+
+class PasswordChange(BaseModel):
+    current_password: str | None = None
+    new_password: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class APIKeyPayload(BaseModel):
+    secret: str
+    label: str | None = None
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+
+class AdminCreateUser(BaseModel):
+    username: str
+    password: str
+    display_name: str | None = None
+    email: str | None = None
+    role: Literal["admin", "member"] = "member"
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+
+class AdminUpdateUser(BaseModel):
+    display_name: str | None = None
+    email: str | None = None
+    role: Literal["admin", "member"] | None = None
+    is_active: bool | None = None
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+
+class AdminSetPassword(BaseModel):
+    new_password: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+for _model in (ProfileUpdate, PasswordChange, APIKeyPayload, AdminCreateUser, AdminUpdateUser, AdminSetPassword):
+    _model.model_rebuild()
+
+
+@app.get("/auth/me")
+def auth_me(user: CurrentUserDep):
+    return _serialize_user(user)
+
+
+@app.patch("/profile")
+def profile_update(user: CurrentUserDep, db: DbSessionDep, payload: ProfileUpdate = Body(...)):
+    changed = False
+    if payload.display_name is not None:
+        user.display_name = payload.display_name or None
+        changed = True
+    if payload.email is not None:
+        email = payload.email or None
+        if email and "@" not in email:
+            raise HTTPException(status_code=400, detail="Invalid email address")
+        user.email = email
+        changed = True
+    if changed:
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+    return _serialize_user(user)
+
+
+@app.post("/profile/password")
+def profile_change_password(user: CurrentUserDep, db: DbSessionDep, payload: PasswordChange = Body(...)):
+    new_pw = (payload.new_password or "").strip()
+    if len(new_pw) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    current_pw = (payload.current_password or "").strip() if payload.current_password is not None else ""
+    if user.password_hash:
+        if not current_pw or not verify_password(current_pw, user.password_hash):
+            raise HTTPException(status_code=400, detail="Current password is incorrect")
+
+    user.password_hash = hash_password(new_pw)
+    db.add(user)
+    db.commit()
+    return {"status": "ok"}
+
+
+@app.get("/profile/api-keys")
+def profile_list_api_keys(user: CurrentUserDep, db: DbSessionDep):
+    stmt = select(UserAPIKey).where(UserAPIKey.user_id == user.id).order_by(UserAPIKey.provider.asc())
+    records = db.execute(stmt).scalars().all()
+    return [_serialize_user_api_key(rec) for rec in records]
+
+
+@app.put("/profile/api-keys/{provider}")
+def profile_upsert_api_key(provider: str, user: CurrentUserDep, db: DbSessionDep, payload: APIKeyPayload = Body(...)):
+    provider_norm = (provider or "").strip().lower()
+    if not provider_norm:
+        raise HTTPException(status_code=400, detail="Provider is required")
+    secret = payload.secret.strip()
+    if not secret:
+        raise HTTPException(status_code=400, detail="Secret is required")
+
+    record = _get_user_api_key(db, user.id, provider_norm)
+    label = payload.label or None
+    if record is None:
+        record = UserAPIKey(user_id=user.id, provider=provider_norm, secret=secret, label=label)
+        db.add(record)
+    else:
+        record.secret = secret
+        record.label = label
+    db.commit()
+    db.refresh(record)
+    return _serialize_user_api_key(record)
+
+
+@app.delete("/profile/api-keys/{provider}")
+def profile_delete_api_key(provider: str, user: CurrentUserDep, db: DbSessionDep):
+    provider_norm = (provider or "").strip().lower()
+    record = _get_user_api_key(db, user.id, provider_norm)
+    if record is None:
+        raise HTTPException(status_code=404, detail="API key not found")
+    db.delete(record)
+    db.commit()
+    return {"status": "deleted"}
+
+
+@app.get("/admin/users")
+def admin_list_users(
+    user: AdminUserDep,
+    db: DbSessionDep,
+    include_inactive: bool = False,
+):
+    stmt = select(User)
+    if not include_inactive:
+        stmt = stmt.where(User.is_active.is_(True))
+    stmt = stmt.order_by(User.username.asc())
+    users = db.execute(stmt).scalars().all()
+    return [_serialize_user(u) for u in users]
+
+
+@app.post("/admin/users")
+def admin_create_user(user: AdminUserDep, db: DbSessionDep, payload: AdminCreateUser = Body(...)):
+    username = payload.username.strip().lower()
+    if not username:
+        raise HTTPException(status_code=400, detail="Username is required")
+    if len(payload.password.strip()) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    if get_user_by_username(db, username):
+        raise HTTPException(status_code=400, detail="Username already exists")
+
+    user = User(
+        username=username,
+        display_name=payload.display_name or None,
+        email=payload.email or None,
+        role=payload.role,
+        is_active=True,
+        password_hash=hash_password(payload.password.strip()),
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return _serialize_user(user)
+
+
+@app.patch("/admin/users/{user_id}")
+def admin_update_user(user_id: str, admin: AdminUserDep, db: DbSessionDep, payload: AdminUpdateUser = Body(...)):
+    target = db.get(User, user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if target.id == admin.id and payload.role and payload.role != admin.role:
+        raise HTTPException(status_code=400, detail="You cannot change your own role")
+    if payload.display_name is not None:
+        target.display_name = payload.display_name or None
+    if payload.email is not None:
+        email = payload.email or None
+        if email and "@" not in email:
+            raise HTTPException(status_code=400, detail="Invalid email address")
+        target.email = email
+    if payload.role is not None:
+        target.role = payload.role
+    if payload.is_active is not None:
+        if target.id == admin.id and not payload.is_active:
+            raise HTTPException(status_code=400, detail="You cannot deactivate yourself")
+        target.is_active = payload.is_active
+    db.add(target)
+    db.commit()
+    db.refresh(target)
+    return _serialize_user(target)
+
+
+@app.post("/admin/users/{user_id}/password")
+def admin_set_user_password(user_id: str, admin: AdminUserDep, db: DbSessionDep, payload: AdminSetPassword = Body(...)):
+    target = db.get(User, user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    new_pw = payload.new_password.strip()
+    if len(new_pw) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    target.password_hash = hash_password(new_pw)
+    db.add(target)
+    db.commit()
+    return {"status": "ok"}
+
+
+@app.delete("/admin/users/{user_id}")
+def admin_delete_user(user_id: str, admin: AdminUserDep, db: DbSessionDep):
+    target = db.get(User, user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if target.id == admin.id:
+        raise HTTPException(status_code=400, detail="You cannot delete yourself")
+    db.delete(target)
+    db.commit()
+    return {"status": "deleted"}
+
+
+@app.get("/admin/global-api-keys")
+def admin_list_global_api_keys(user: AdminUserDep, db: DbSessionDep):
+    stmt = select(GlobalAPIKey).order_by(GlobalAPIKey.provider.asc())
+    records = db.execute(stmt).scalars().all()
+    return [_serialize_global_api_key(rec) for rec in records]
+
+
+@app.put("/admin/global-api-keys/{provider}")
+def admin_upsert_global_api_key(provider: str, user: AdminUserDep, db: DbSessionDep, payload: APIKeyPayload = Body(...)):
+    provider_norm = (provider or "").strip().lower()
+    if not provider_norm:
+        raise HTTPException(status_code=400, detail="Provider is required")
+    secret = payload.secret.strip()
+    if not secret:
+        raise HTTPException(status_code=400, detail="Secret is required")
+
+    record = _get_global_api_key(db, provider_norm)
+    label = payload.label or None
+    if record is None:
+        record = GlobalAPIKey(provider=provider_norm, secret=secret, label=label)
+        db.add(record)
+    else:
+        record.secret = secret
+        record.label = label
+    db.commit()
+    db.refresh(record)
+    return _serialize_global_api_key(record)
+
+
+@app.delete("/admin/global-api-keys/{provider}")
+def admin_delete_global_api_key(provider: str, user: AdminUserDep, db: DbSessionDep):
+    record = _get_global_api_key(db, (provider or "").strip().lower())
+    if record is None:
+        raise HTTPException(status_code=404, detail="API key not found")
+    db.delete(record)
+    db.commit()
+    return {"status": "deleted"}
+
+
 def _data_dir() -> Path:
     root = project_root()
-    raw = os.getenv("NETBOX_DATA_DIR", "netbox-export/data")
-    return Path(raw) if os.path.isabs(raw) else (root / raw)
+    raw = os.getenv("NETBOX_DATA_DIR", "data")
+    path = Path(raw) if os.path.isabs(raw) else (root / raw)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def _csv_path(name: str) -> Path:
@@ -219,6 +737,85 @@ def _csv_path(name: str) -> Path:
 
 # Simple export log file (appends)
 LOG_PATH = project_root() / "export.log"
+
+SUGGESTIONS_FILE = "suggestions.csv"
+SUGGESTION_FIELDS = [
+    "id",
+    "title",
+    "summary",
+    "classification",
+    "status",
+    "likes",
+    "created_at",
+    "updated_at",
+    "comments",
+]
+SUGGESTION_CLASSIFICATIONS = {
+    "Must have": {"color": "#7c3aed", "letter": "M"},
+    "Should have": {"color": "#2563eb", "letter": "S"},
+    "Could have": {"color": "#fbbf24", "letter": "C"},
+    "Nice to have": {"color": "#22c55e", "letter": "N"},
+    "Should not have": {"color": "#ef4444", "letter": "X"},
+}
+SUGGESTION_STATUSES = ["new", "accepted", "in progress", "done", "denied"]
+_suggestions_lock = Lock()
+
+ENV_SETTING_FIELDS: list[dict[str, Any]] = [
+    # Zabbix
+    {"key": "ZABBIX_API_URL", "label": "Zabbix API URL", "secret": False, "placeholder": "https://zabbix.example.com/api_jsonrpc.php", "category": "zabbix"},
+    {"key": "ZABBIX_HOST", "label": "Zabbix Host", "secret": False, "placeholder": "https://zabbix.example.com", "category": "zabbix"},
+    {"key": "ZABBIX_WEB_URL", "label": "Zabbix Web URL", "secret": False, "placeholder": "https://zabbix.example.com", "category": "zabbix"},
+    {"key": "ZABBIX_API_TOKEN", "label": "Zabbix API Token", "secret": True, "placeholder": "paste-token-here", "category": "zabbix"},
+    {"key": "ZABBIX_SEVERITIES", "label": "Zabbix Severities", "secret": False, "placeholder": "2,3,4", "category": "zabbix"},
+    {"key": "ZABBIX_GROUP_ID", "label": "Zabbix Group ID", "secret": False, "placeholder": "optional", "category": "zabbix"},
+
+    # NetBox & Atlassian
+    {"key": "NETBOX_URL", "label": "NetBox URL", "secret": False, "placeholder": "https://netbox.example.com", "category": "net-atlassian"},
+    {"key": "NETBOX_TOKEN", "label": "NetBox API Token", "secret": True, "placeholder": "paste-token-here", "category": "net-atlassian"},
+    {"key": "NETBOX_DEBUG", "label": "NetBox Debug Logging", "secret": False, "placeholder": "0", "category": "net-atlassian"},
+    {"key": "NETBOX_EXTRA_HEADERS", "label": "NetBox Extra Headers", "secret": False, "placeholder": "Key=Value;Other=Value", "category": "net-atlassian"},
+    {"key": "NETBOX_DATA_DIR", "label": "NetBox Data Directory", "secret": False, "placeholder": "data", "category": "net-atlassian"},
+    {"key": "ATLASSIAN_BASE_URL", "label": "Atlassian Base URL", "secret": False, "placeholder": "https://your-domain.atlassian.net", "category": "net-atlassian"},
+    {"key": "ATLASSIAN_EMAIL", "label": "Atlassian Email", "secret": False, "placeholder": "user@example.com", "category": "net-atlassian"},
+    {"key": "ATLASSIAN_API_TOKEN", "label": "Atlassian API Token", "secret": True, "placeholder": "paste-token-here", "category": "net-atlassian"},
+    {"key": "CONFLUENCE_CMDB_PAGE_ID", "label": "Confluence CMDB Page ID", "secret": False, "placeholder": "981533033", "category": "net-atlassian"},
+    {"key": "CONFLUENCE_DEVICES_PAGE_ID", "label": "Confluence Devices Page ID", "secret": False, "placeholder": "optional", "category": "net-atlassian"},
+    {"key": "CONFLUENCE_VMS_PAGE_ID", "label": "Confluence VMs Page ID", "secret": False, "placeholder": "optional", "category": "net-atlassian"},
+    {"key": "CONFLUENCE_ENABLE_TABLE_FILTER", "label": "Enable Table Filter Macro", "secret": False, "placeholder": "0 or 1", "category": "net-atlassian"},
+    {"key": "CONFLUENCE_ENABLE_TABLE_SORT", "label": "Enable Table Sort Macro", "secret": False, "placeholder": "0 or 1", "category": "net-atlassian"},
+
+    # Chat providers
+    {"key": "OPENAI_API_KEY", "label": "OpenAI API Key", "secret": True, "placeholder": "sk-...", "category": "chat"},
+    {"key": "CHAT_DEFAULT_MODEL_OPENAI", "label": "OpenAI Default Model", "secret": False, "placeholder": "gpt-4o-mini", "category": "chat"},
+    {"key": "OPENROUTER_API_KEY", "label": "OpenRouter API Key", "secret": True, "placeholder": "or-...", "category": "chat"},
+    {"key": "CHAT_DEFAULT_MODEL_OPENROUTER", "label": "OpenRouter Default Model", "secret": False, "placeholder": "openrouter/auto", "category": "chat"},
+    {"key": "ANTHROPIC_API_KEY", "label": "Anthropic API Key", "secret": True, "placeholder": "api-key", "category": "chat"},
+    {"key": "CHAT_DEFAULT_MODEL_CLAUDE", "label": "Anthropic Default Model", "secret": False, "placeholder": "claude-3-5-sonnet", "category": "chat"},
+    {"key": "GOOGLE_API_KEY", "label": "Google (Gemini) API Key", "secret": True, "placeholder": "AIza...", "category": "chat"},
+    {"key": "CHAT_DEFAULT_MODEL_GEMINI", "label": "Gemini Default Model", "secret": False, "placeholder": "gemini-1.5-flash", "category": "chat"},
+    {"key": "CHAT_DEFAULT_PROVIDER", "label": "Default Chat Provider", "secret": False, "placeholder": "openai", "category": "chat"},
+    {"key": "CHAT_DEFAULT_TEMPERATURE", "label": "Default Temperature", "secret": False, "placeholder": "0.2", "category": "chat"},
+    {"key": "CHAT_SYSTEM_PROMPT", "label": "System Instructions", "secret": False, "placeholder": "Optional system prompt", "category": "chat"},
+
+    # Export & reporting
+    {"key": "NETBOX_XLSX_ORDER_FILE", "label": "Column Order Template", "secret": False, "placeholder": "path/to/column_order.xlsx", "category": "export"},
+
+    # API & Web UI
+    {"key": "LOG_LEVEL", "label": "Log Level", "secret": False, "placeholder": "INFO", "category": "api"},
+    {"key": "ENREACH_API_TOKEN", "label": "Enreach API Token", "secret": True, "placeholder": "optional", "category": "api"},
+    {"key": "ENREACH_UI_PASSWORD", "label": "UI Password", "secret": True, "placeholder": "optional", "category": "api"},
+    {"key": "ENREACH_UI_SECRET", "label": "UI Session Secret", "secret": True, "placeholder": "auto-generated if empty", "category": "api"},
+    {"key": "ENREACH_SSL_CERTFILE", "label": "SSL Certificate File", "secret": False, "placeholder": "certs/localhost.pem", "category": "api"},
+    {"key": "ENREACH_SSL_KEYFILE", "label": "SSL Key File", "secret": False, "placeholder": "certs/localhost-key.pem", "category": "api"},
+    {"key": "ENREACH_SSL_KEY_PASSWORD", "label": "SSL Key Password", "secret": True, "placeholder": "optional", "category": "api"},
+    {"key": "UI_THEME_DEFAULT", "label": "Default Theme", "secret": False, "placeholder": "nebula", "category": "api"},
+
+    # Backup (Dropbox)
+    {"key": "DROPBOX_ENABLE_SYNC", "label": "Dropbox Sync Enabled", "secret": False, "placeholder": "1", "category": "backup"},
+    {"key": "DROPBOX_ACCESS_TOKEN", "label": "Dropbox Access Token", "secret": True, "placeholder": "paste-token-here", "category": "backup"},
+    {"key": "DROPBOX_TARGET_FOLDER", "label": "Dropbox Target Folder", "secret": False, "placeholder": "/Apps/enreach-tools", "category": "backup"},
+    {"key": "DROPBOX_SHARED_LINK", "label": "Dropbox Shared Link", "secret": False, "placeholder": "https://www.dropbox.com/s/...", "category": "backup"},
+]
 
 
 def _write_log(msg: str) -> None:
@@ -229,6 +826,524 @@ def _write_log(msg: str) -> None:
     except Exception:
         # Logging failures should never crash the API
         pass
+
+
+def _suggestions_path() -> Path:
+    path = _csv_path(SUGGESTIONS_FILE)
+    if not path.parent.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        with path.open("w", newline="", encoding="utf-8") as fh:
+            writer = csv.DictWriter(fh, fieldnames=SUGGESTION_FIELDS)
+            writer.writeheader()
+    return path
+
+
+def _safe_classification(value: str | None) -> str:
+    if not value:
+        return "Could have"
+    raw = str(value).strip().lower()
+    for name in SUGGESTION_CLASSIFICATIONS:
+        if raw == name.lower():
+            return name
+    return "Could have"
+
+
+def _safe_status(value: str | None) -> str:
+    if not value:
+        return "new"
+    raw = str(value).strip().lower()
+    return raw if raw in SUGGESTION_STATUSES else "new"
+
+
+def _require_classification(value: str | None) -> str:
+    if value is None or str(value).strip() == "":
+        return "Could have"
+    raw = str(value).strip().lower()
+    for name in SUGGESTION_CLASSIFICATIONS:
+        if raw == name.lower():
+            return name
+    raise HTTPException(status_code=400, detail=f"Invalid classification: {value}")
+
+
+def _require_status(value: str | None) -> str:
+    if value is None or str(value).strip() == "":
+        return "new"
+    raw = str(value).strip().lower()
+    if raw not in SUGGESTION_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Invalid status: {value}")
+    return raw
+
+
+def _now_iso() -> str:
+    return datetime.utcnow().replace(microsecond=0).isoformat()
+
+
+def _decorate_suggestion(item: dict[str, Any]) -> dict[str, Any]:
+    data = {**item}
+    data["classification"] = _safe_classification(data.get("classification"))
+    data["status"] = _safe_status(data.get("status"))
+    data.setdefault("summary", "")
+    try:
+        data["likes"] = int(data.get("likes") or 0)
+    except Exception:
+        data["likes"] = 0
+    comments_raw = data.get("comments") or []
+    if isinstance(comments_raw, str):
+        try:
+            parsed = json.loads(comments_raw)
+            comments = [c for c in parsed if isinstance(c, dict)] if isinstance(parsed, list) else []
+        except json.JSONDecodeError:
+            comments = []
+    elif isinstance(comments_raw, list):
+        comments = [c for c in comments_raw if isinstance(c, dict)]
+    else:
+        comments = []
+    data["comments"] = comments
+    meta = SUGGESTION_CLASSIFICATIONS.get(data["classification"], {})
+    data["classification_color"] = meta.get("color")
+    data["classification_letter"] = meta.get("letter")
+    data["status_label"] = data["status"].title()
+    return data
+
+
+def _load_suggestions() -> list[dict[str, Any]]:
+    path = _suggestions_path()
+    try:
+        sql = f"SELECT * FROM read_csv_auto('{path.as_posix()}', header=True)"
+        df = duckdb.query(sql).df()
+    except Exception:
+        df = pd.DataFrame(columns=SUGGESTION_FIELDS)
+    if df.empty:
+        return []
+    for col in SUGGESTION_FIELDS:
+        if col not in df.columns:
+            df[col] = None
+    df = df.replace([np.inf, -np.inf], np.nan)
+    df = df.astype(object).where(pd.notnull(df), None)
+    out: list[dict[str, Any]] = []
+    for _, row in df.iterrows():
+        item = {k: row.get(k) for k in SUGGESTION_FIELDS}
+        out.append(_decorate_suggestion(item))
+    # Newest first
+    def _sort_key(it: dict[str, Any]):
+        try:
+            raw = str(it.get("created_at") or "")
+            if raw.endswith("Z"):
+                raw = raw[:-1]
+            return datetime.fromisoformat(raw)
+        except Exception:
+            return datetime.min
+
+    out.sort(key=_sort_key, reverse=True)
+    return out
+
+
+def _write_suggestions(rows: list[dict[str, Any]]) -> None:
+    path = _suggestions_path()
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=SUGGESTION_FIELDS, extrasaction="ignore")
+        writer.writeheader()
+        for row in rows:
+            payload = row.copy()
+            payload["likes"] = int(payload.get("likes") or 0)
+            payload["classification"] = _safe_classification(payload.get("classification"))
+            payload["status"] = _safe_status(payload.get("status"))
+            comments = payload.get("comments") or []
+            if not isinstance(comments, list):
+                comments = []
+            payload["comments"] = json.dumps(comments, ensure_ascii=False)
+            writer.writerow(payload)
+
+
+def _env_file_path() -> Path:
+    env_path = load_env()
+    if not env_path.exists():
+        env_path.touch()
+    return env_path
+
+
+def _read_env_values() -> dict[str, str]:
+    env_path = _env_file_path()
+    values = dotenv_values(env_path)
+    # dotenv_values returns OrderedDict[str, Optional[str]]
+    clean: dict[str, str] = {}
+    for key, value in values.items():
+        if value is None:
+            continue
+        clean[str(key)] = str(value)
+    return clean
+
+
+def _read_env_defaults() -> dict[str, str]:
+    example_path = project_root() / ".env.example"
+    if not example_path.exists():
+        return {}
+    values = dotenv_values(example_path)
+    return {str(k): str(v) for k, v in values.items() if v is not None}
+
+
+def _write_env_value(key: str, value: str | None) -> None:
+    key = key.strip()
+    env_path = _env_file_path()
+    lines = env_path.read_text().splitlines() if env_path.exists() else []
+    written = False
+    new_lines: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in line:
+            new_lines.append(line)
+            continue
+        current_key, _, _ = line.partition("=")
+        if current_key.strip() == key:
+            if value is None:
+                written = True
+                continue  # remove line
+            new_lines.append(f"{key}={value}")
+            written = True
+        else:
+            new_lines.append(line)
+    if not written and value is not None:
+        if new_lines and new_lines[-1] != "":
+            new_lines.append("")
+        new_lines.append(f"{key}={value}")
+    env_path.write_text("\n".join(new_lines).rstrip() + "\n")
+    load_env(override=True)
+
+
+def _chat_default_temperature() -> float:
+    raw = os.getenv("CHAT_DEFAULT_TEMPERATURE", "0.2").strip()
+    try:
+        return float(raw)
+    except Exception:
+        return 0.2
+
+
+class SuggestionCreate(BaseModel):
+    title: str
+    summary: str | None = ""
+    classification: str | None = None
+
+
+class SuggestionUpdate(BaseModel):
+    title: str | None = None
+    summary: str | None = None
+    classification: str | None = None
+    status: str | None = None
+
+
+class SuggestionLikeRequest(BaseModel):
+    delta: int = 1
+
+
+class SuggestionCommentCreate(BaseModel):
+    text: str
+
+
+class EnvUpdateRequest(BaseModel):
+    key: str
+    value: str | None = None
+
+
+class EnvResetRequest(BaseModel):
+    key: str
+
+
+def _suggestion_meta() -> dict[str, Any]:
+    classifications = [
+        {
+            "name": name,
+            "color": meta.get("color"),
+            "letter": meta.get("letter"),
+        }
+        for name, meta in SUGGESTION_CLASSIFICATIONS.items()
+    ]
+    statuses = [
+        {
+            "value": value,
+            "label": value.title(),
+        }
+        for value in SUGGESTION_STATUSES
+    ]
+    return {"classifications": classifications, "statuses": statuses}
+
+
+@app.get("/suggestions")
+def suggestions_list() -> dict:
+    with _suggestions_lock:
+        items = _load_suggestions()
+    return {"items": items, **_suggestion_meta()}
+
+
+@app.get("/suggestions/{suggestion_id}")
+def suggestions_detail(suggestion_id: str) -> dict:
+    with _suggestions_lock:
+        items = _load_suggestions()
+    for item in items:
+        if str(item.get("id")) == suggestion_id:
+            return {"item": item, **_suggestion_meta()}
+    raise HTTPException(status_code=404, detail="Suggestion not found")
+
+
+@app.post("/suggestions")
+def suggestions_create(req: SuggestionCreate) -> dict:
+    title = (req.title or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Title is required")
+    summary = (req.summary or "").strip()
+    classification = _require_classification(req.classification)
+    now = _now_iso()
+    item = {
+        "id": uuid.uuid4().hex,
+        "title": title,
+        "summary": summary,
+        "classification": classification,
+        "status": "new",
+        "likes": 0,
+        "created_at": now,
+        "updated_at": now,
+        "comments": [],
+    }
+    with _suggestions_lock:
+        rows = _load_suggestions()
+        rows.append(item)
+        _write_suggestions(rows)
+    return {"item": _decorate_suggestion(item)}
+
+
+@app.put("/suggestions/{suggestion_id}")
+def suggestions_update(suggestion_id: str, req: SuggestionUpdate) -> dict:
+    with _suggestions_lock:
+        rows = _load_suggestions()
+        target = None
+        target_index = -1
+        for idx, existing in enumerate(rows):
+            if str(existing.get("id")) == suggestion_id:
+                target = existing
+                target_index = idx
+                break
+        if target is None:
+            raise HTTPException(status_code=404, detail="Suggestion not found")
+
+        if req.title is not None:
+            new_title = req.title.strip()
+            if not new_title:
+                raise HTTPException(status_code=400, detail="Title cannot be empty")
+            target["title"] = new_title
+        if req.summary is not None:
+            target["summary"] = req.summary.strip() if req.summary else ""
+        if req.classification is not None:
+            target["classification"] = _require_classification(req.classification)
+        if req.status is not None:
+            target["status"] = _require_status(req.status)
+
+        target["updated_at"] = _now_iso()
+        rows[target_index] = target
+        _write_suggestions(rows)
+        saved = _decorate_suggestion(target)
+
+    return {"item": saved}
+
+
+@app.post("/suggestions/{suggestion_id}/like")
+def suggestions_like(suggestion_id: str, req: SuggestionLikeRequest) -> dict:
+    delta = req.delta or 1
+    with _suggestions_lock:
+        rows = _load_suggestions()
+        target = None
+        target_index = -1
+        for idx, existing in enumerate(rows):
+            if str(existing.get("id")) == suggestion_id:
+                target = existing
+                target_index = idx
+                break
+        if target is None:
+            raise HTTPException(status_code=404, detail="Suggestion not found")
+
+        try:
+            likes = int(target.get("likes") or 0)
+        except Exception:
+            likes = 0
+        likes = max(0, likes + delta)
+        target["likes"] = likes
+        target["updated_at"] = _now_iso()
+        rows[target_index] = target
+        _write_suggestions(rows)
+        saved = _decorate_suggestion(target)
+
+    return {"item": saved}
+
+
+@app.post("/suggestions/{suggestion_id}/comments")
+def suggestions_add_comment(suggestion_id: str, req: SuggestionCommentCreate) -> dict:
+    text = (req.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Comment text is required")
+    with _suggestions_lock:
+        rows = _load_suggestions()
+        target = None
+        target_index = -1
+        for idx, existing in enumerate(rows):
+            if str(existing.get("id")) == suggestion_id:
+                target = existing
+                target_index = idx
+                break
+        if target is None:
+            raise HTTPException(status_code=404, detail="Suggestion not found")
+
+        comments = target.get("comments") or []
+        if not isinstance(comments, list):
+            comments = []
+        comment = {
+            "id": uuid.uuid4().hex,
+            "text": text,
+            "created_at": _now_iso(),
+        }
+        comments.append(comment)
+        target["comments"] = comments
+        target["updated_at"] = _now_iso()
+        rows[target_index] = target
+        _write_suggestions(rows)
+        saved = _decorate_suggestion(target)
+
+    return {"item": saved, "comment": comment}
+
+
+@app.delete("/suggestions/{suggestion_id}/comments/{comment_id}")
+def suggestions_delete_comment(suggestion_id: str, comment_id: str) -> dict:
+    with _suggestions_lock:
+        rows = _load_suggestions()
+        target = None
+        target_index = -1
+        for idx, existing in enumerate(rows):
+            if str(existing.get("id")) == suggestion_id:
+                target = existing
+                target_index = idx
+                break
+        if target is None:
+            raise HTTPException(status_code=404, detail="Suggestion not found")
+
+        comments = target.get("comments") or []
+        if not isinstance(comments, list):
+            comments = []
+        new_comments = [c for c in comments if str(c.get("id")) != comment_id]
+        if len(new_comments) == len(comments):
+            raise HTTPException(status_code=404, detail="Comment not found")
+        target["comments"] = new_comments
+        target["updated_at"] = _now_iso()
+        rows[target_index] = target
+        _write_suggestions(rows)
+        saved = _decorate_suggestion(target)
+
+    return {"item": saved}
+
+
+@app.delete("/suggestions/{suggestion_id}")
+def suggestions_delete(suggestion_id: str) -> dict:
+    with _suggestions_lock:
+        rows = _load_suggestions()
+        new_rows = [row for row in rows if str(row.get("id")) != suggestion_id]
+        if len(new_rows) == len(rows):
+            raise HTTPException(status_code=404, detail="Suggestion not found")
+        _write_suggestions(new_rows)
+    return {"ok": True}
+
+
+def _build_admin_settings() -> list[dict[str, Any]]:
+    env_values = _read_env_values()
+    defaults = _read_env_defaults()
+    settings: list[dict[str, Any]] = []
+    for field in ENV_SETTING_FIELDS:
+        key = field["key"]
+        secret = bool(field.get("secret"))
+        placeholder = field.get("placeholder") or ""
+        category = field.get("category") or "general"
+        current_value = os.getenv(key, "")
+        has_value = bool(current_value)
+        value = "" if secret else current_value
+        placeholder_effective = placeholder
+        if secret and has_value:
+            placeholder_effective = "•••••• (hidden)"
+        elif not placeholder_effective and not has_value:
+            placeholder_effective = defaults.get(key, "")
+        settings.append({
+            "key": key,
+            "label": field.get("label", key),
+            "secret": secret,
+            "value": value,
+            "has_value": has_value,
+            "placeholder": placeholder,
+            "placeholder_effective": placeholder_effective,
+            "source": "file" if key in env_values else "env",
+            "default": defaults.get(key, ""),
+            "category": category,
+        })
+    return settings
+
+
+@app.get("/admin/env")
+def admin_env_settings():
+    settings = _build_admin_settings()
+    dropbox_enabled = os.getenv("DROPBOX_ENABLE_SYNC", "1").strip().lower() not in {"0", "false", "no", "off"}
+    dropbox_token = bool(os.getenv("DROPBOX_ACCESS_TOKEN"))
+    dropbox_target = os.getenv("DROPBOX_TARGET_FOLDER") or os.getenv("DROPBOX_SHARED_LINK") or ""
+    return {
+        "settings": settings,
+        "dropbox": {
+            "enabled": dropbox_enabled,
+            "configured": dropbox_token,
+            "target": dropbox_target,
+        },
+    }
+
+
+@app.post("/admin/env")
+def admin_env_update(req: EnvUpdateRequest):
+    key = req.key.strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="Key is required")
+    field = next((f for f in ENV_SETTING_FIELDS if f["key"] == key), None)
+    if field is None:
+        raise HTTPException(status_code=404, detail="Unknown setting")
+    if req.value is None:
+        return admin_env_settings()
+    _write_env_value(key, req.value)
+    return admin_env_settings()
+
+
+@app.post("/admin/env/reset")
+def admin_env_reset(req: EnvResetRequest):
+    key = req.key.strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="Key is required")
+    field = next((f for f in ENV_SETTING_FIELDS if f["key"] == key), None)
+    if field is None:
+        raise HTTPException(status_code=404, detail="Unknown setting")
+    _write_env_value(key, None)
+    return admin_env_settings()
+
+
+@app.post("/admin/dropbox-sync")
+def admin_dropbox_sync():
+    try:
+        result = dropbox_sync.sync_data_dir(note="manual-ui")
+        return result
+    except Exception as exc:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/config/ui")
+def ui_config():
+    theme = os.getenv("UI_THEME_DEFAULT", "nebula").strip() or "nebula"
+    return {"theme_default": theme}
+
+
+@app.get("/config/chat")
+def chat_config():
+    return {
+        "system_prompt": os.getenv("CHAT_SYSTEM_PROMPT", ""),
+        "temperature": _chat_default_temperature(),
+    }
 
 
 def _list_records(
@@ -269,28 +1384,177 @@ def _list_records(
 
 # Ephemeral in-memory sessions; keyed by client-provided session_id
 CHAT_SESSIONS: dict[str, list[dict[str, Any]]] = {}
+CHAT_SESSION_METADATA: dict[str, dict[str, Any]] = {}
+CHAT_QUERY_STOP_WORDS: set[str] = {
+    "show",
+    "list",
+    "give",
+    "get",
+    "display",
+    "please",
+    "provide",
+    "tell",
+    "which",
+    "what",
+    "where",
+    "find",
+    "return",
+    "me",
+    "the",
+    "latest",
+    "recent",
+    "top",
+    "all",
+    "any",
+    "about",
+    "for",
+    "with",
+    "those",
+    "these",
+    "new",
+    "first",
+    "last",
+    "server",
+    "servers",
+    "device",
+    "devices",
+    "data",
+    "information",
+}
 
 
-def _chat_env() -> dict[str, Any]:
-    return {
-        "openai": {
-            "api_key": os.getenv("OPENAI_API_KEY", "").strip(),
-            "default_model": os.getenv("CHAT_DEFAULT_MODEL_OPENAI", "gpt-5-mini"),
+def _chat_env(*, db: Session | None = None, user: User | None = None) -> dict[str, Any]:
+    close_db = False
+    if db is None:
+        db = SessionLocal()
+        close_db = True
+
+    try:
+        env = {
+            "openai": {
+                "api_key": os.getenv("OPENAI_API_KEY", "").strip(),
+                "default_model": os.getenv("CHAT_DEFAULT_MODEL_OPENAI", "gpt-5-mini"),
+                "key_source": "env",
+            },
+            "openrouter": {
+                "api_key": os.getenv("OPENROUTER_API_KEY", "").strip(),
+                "default_model": os.getenv("CHAT_DEFAULT_MODEL_OPENROUTER", "openrouter/auto"),
+                "key_source": "env",
+            },
+            "claude": {
+                "api_key": os.getenv("ANTHROPIC_API_KEY", "").strip(),
+                "default_model": os.getenv("CHAT_DEFAULT_MODEL_CLAUDE", "claude-3-5-sonnet-20240620"),
+                "key_source": "env",
+            },
+            "gemini": {
+                "api_key": os.getenv("GOOGLE_API_KEY", "").strip(),
+                "default_model": os.getenv("CHAT_DEFAULT_MODEL_GEMINI", "gemini-1.5-flash"),
+                "key_source": "env",
+            },
+            "default_provider": os.getenv("CHAT_DEFAULT_PROVIDER", "openai"),
+        }
+
+        for provider_id in ("openai", "openrouter", "claude", "gemini"):
+            override_label: str | None = None
+            override_secret: str | None = None
+            if user:
+                user_key = _get_user_api_key(db, user.id, provider_id)
+                if user_key and user_key.secret:
+                    override_secret = user_key.secret
+                    override_label = user_key.label
+                    env[provider_id]["key_source"] = "user"
+            if not override_secret:
+                global_key = _get_global_api_key(db, provider_id)
+                if global_key and global_key.secret:
+                    override_secret = global_key.secret
+                    override_label = global_key.label or override_label
+                    env[provider_id]["key_source"] = "global"
+            if override_secret:
+                env[provider_id]["api_key"] = override_secret
+                if override_label:
+                    env[provider_id]["label"] = override_label
+            elif env[provider_id]["api_key"]:
+                env[provider_id]["key_source"] = "env"
+            else:
+                env[provider_id]["key_source"] = None
+
+        return env
+    finally:
+        if close_db:
+            db.close()
+
+
+def _format_responses_messages(messages: list[dict[str, str]]) -> list[dict[str, Any]]:
+    formatted: list[dict[str, Any]] = []
+    for msg in messages:
+        role = msg.get("role", "user")
+        text = str(msg.get("content", ""))
+        # OpenAI Responses API requires input_text for prompts and output_text for responses
+        content_type = "output_text" if role == "assistant" else "input_text"
+        formatted.append({
+            "role": role,
+            "content": [{"type": content_type, "text": text}],
+        })
+    return formatted
+
+
+def _touch_chat_session(session_id: str, role: str | None = None, content: str | None = None) -> None:
+    if not session_id:
+        return
+    now = datetime.utcnow().isoformat() + "Z"
+    meta = CHAT_SESSION_METADATA.setdefault(
+        session_id,
+        {
+            "session_id": session_id,
+            "title": "New chat",
+            "created_at": now,
+            "updated_at": now,
+            "last_message": "",
+            "last_role": None,
         },
-        "openrouter": {
-            "api_key": os.getenv("OPENROUTER_API_KEY", "").strip(),
-            "default_model": os.getenv("CHAT_DEFAULT_MODEL_OPENROUTER", "openrouter/auto"),
-        },
-        "claude": {
-            "api_key": os.getenv("ANTHROPIC_API_KEY", "").strip(),
-            "default_model": os.getenv("CHAT_DEFAULT_MODEL_CLAUDE", "claude-3-5-sonnet-20240620"),
-        },
-        "gemini": {
-            "api_key": os.getenv("GOOGLE_API_KEY", "").strip(),
-            "default_model": os.getenv("CHAT_DEFAULT_MODEL_GEMINI", "gemini-1.5-flash"),
-        },
-        "default_provider": os.getenv("CHAT_DEFAULT_PROVIDER", "openai"),
-    }
+    )
+    if not meta.get("created_at"):
+        meta["created_at"] = now
+    meta["updated_at"] = now
+    if content is not None:
+        preview = str(content).strip()
+        meta["last_message"] = preview[:200]
+        meta["last_role"] = role
+        if role == "user" and preview:
+            if meta.get("title") in (None, "", "New chat"):
+                meta["title"] = preview[:60]
+
+
+def _ensure_chat_session(session_id: str) -> None:
+    CHAT_SESSIONS.setdefault(session_id, [])
+    _touch_chat_session(session_id)
+
+
+def _format_session_list(limit: int | None = None) -> list[dict[str, Any]]:
+    items = list(CHAT_SESSION_METADATA.values())
+    items.sort(key=lambda m: m.get("updated_at") or "", reverse=True)
+    if limit is not None:
+        items = items[:limit]
+    return [
+        {
+            "session_id": m.get("session_id"),
+            "title": m.get("title") or "New chat",
+            "updated_at": m.get("updated_at"),
+            "created_at": m.get("created_at"),
+            "last_message": m.get("last_message", ""),
+            "last_role": m.get("last_role"),
+        }
+        for m in items
+    ]
+
+
+def _create_chat_session(name: str | None = None) -> dict[str, Any]:
+    session_id = "c_" + secrets.token_hex(8)
+    CHAT_SESSIONS[session_id] = []
+    _touch_chat_session(session_id)
+    if name and name.strip():
+        CHAT_SESSION_METADATA[session_id]["title"] = name.strip()[:60]
+    return CHAT_SESSION_METADATA[session_id]
 
 
 class ChatRequest(BaseModel):
@@ -298,10 +1562,19 @@ class ChatRequest(BaseModel):
     model: str | None = None
     message: str
     session_id: str
-    temperature: float | None = 0.2
+    temperature: float | None = None
     system: str | None = None
     include_context: bool | None = False
-    dataset: Literal["devices", "vms", "all"] | None = "all"
+    dataset: Literal["devices", "vms", "all", "merged"] | None = "merged"
+
+
+class ChatSessionCreate(BaseModel):
+    name: str | None = None
+
+
+
+
+ChatRequestBody = Annotated[ChatRequest, Body(...)]
 
 
 def _messages_for_provider(messages: list[dict[str, str]], max_turns: int = 16) -> list[dict[str, str]]:
@@ -326,7 +1599,7 @@ def _responses_supports_temperature(model: str) -> bool:
 def _is_openai_streaming_unsupported(ex: Exception) -> bool:
     """Heuristics to detect OpenAI responses error that disallows streaming for the model/org."""
     msg = str(ex).lower()
-    if "must be verified to stream" in msg or "stream" in msg and "unsupported" in msg:
+    if "must be verified to stream" in msg or ("stream" in msg and "unsupported" in msg):
         return True
     # Try to inspect HTTPError JSON payload
     try:
@@ -354,20 +1627,11 @@ def _iter_chunks(text: str, size: int = 128):
 
 
 def _call_openai(model: str, messages: list[dict[str, str]], api_key: str, temperature: float = 0.2) -> str:
-    def _to_responses_input(msgs: list[dict[str, str]]):
-        out = []
-        for m in msgs:
-            role = m.get("role", "user")
-            text = m.get("content", "")
-            # Responses API expects content parts with type 'input_text'
-            out.append({"role": role, "content": [{"type": "input_text", "text": str(text)}]})
-        return out
-
     # Prefer the official SDK when available for reliability
     if OpenAI is not None:
         client = OpenAI(api_key=api_key)
         if _use_openai_responses(model):
-            _kwargs: dict[str, Any] = {"model": model, "input": _to_responses_input(messages)}
+            _kwargs: dict[str, Any] = {"model": model, "input": _format_responses_messages(messages)}
             if _responses_supports_temperature(model) and temperature is not None:
                 _kwargs["temperature"] = temperature
             resp = client.responses.create(**_kwargs)
@@ -396,7 +1660,7 @@ def _call_openai(model: str, messages: list[dict[str, str]], api_key: str, tempe
     if _use_openai_responses(model):
         url = "https://api.openai.com/v1/responses"
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        payload = {"model": model, "input": _to_responses_input(messages)}
+        payload = {"model": model, "input": _format_responses_messages(messages)}
         if _responses_supports_temperature(model) and temperature is not None:
             payload["temperature"] = temperature
         r = requests.post(url, headers=headers, json=payload, timeout=90)
@@ -519,11 +1783,13 @@ def _call_gemini(model: str, messages: list[dict[str, str]], api_key: str, tempe
 
 
 def _csv_for_dataset(dataset: str) -> Path | None:
-    if dataset == "devices":
+    target = (dataset or "").strip().lower()
+    if target == "devices":
         p = _csv_path("netbox_devices_export.csv")
-    elif dataset == "vms":
+    elif target == "vms":
         p = _csv_path("netbox_vms_export.csv")
     else:
+        # "all" (legacy) and "merged" both map to the merged export
         p = _csv_path("netbox_merged_export.csv")
     return p if p.exists() else None
 
@@ -544,28 +1810,145 @@ def _build_data_context(dataset: str, query: str, max_rows: int = 6, max_chars: 
             headers = next(rdr, [])
         if not headers:
             return ""
-        # Build LIKE predicate across all columns
-        safe = query.replace("'", "''")
-        ors = [f"lower(CAST(\"{h}\" AS VARCHAR)) LIKE lower('%{safe}%')" for h in headers]
-        sql = (
-            f"SELECT * FROM read_csv_auto('{p.as_posix()}', header=True)"
-            + (f" WHERE { ' OR '.join(ors) }" if query.strip() else "")
-            + f" LIMIT {int(max_rows)}"
-        )
-        df = duckdb.query(sql).df()
+
+        tokens = re.findall(r"[A-Za-z0-9]+", query.lower()) if query else []
+        text_keywords: list[str] = []
+        numeric_keywords: list[str] = []
+        numeric_tokens: list[int] = []
+        seen_text: set[str] = set()
+        seen_numeric: set[str] = set()
+        for token in tokens:
+            if not token:
+                continue
+            if token.isdigit():
+                try:
+                    numeric_tokens.append(int(token))
+                except ValueError:
+                    continue
+                if len(token) >= 2 and token not in seen_numeric:
+                    numeric_keywords.append(token)
+                    seen_numeric.add(token)
+                continue
+            if token in CHAT_QUERY_STOP_WORDS:
+                continue
+            if len(token) < 3:
+                continue
+            if token not in seen_text:
+                text_keywords.append(token)
+                seen_text.add(token)
+
+        keywords = text_keywords if text_keywords else numeric_keywords
+
+        limit = max_rows
+        if numeric_tokens:
+            limit = max(3, min(max(numeric_tokens), 20))
+
+        where_clauses: list[str] = []
+        if keywords:
+            for kw in keywords[:5]:
+                safe_kw = kw.replace("'", "''")
+                ors = [
+                    f"lower(CAST(\"{h}\" AS VARCHAR)) LIKE '%{safe_kw}%'"
+                    for h in headers
+                ]
+                where_clauses.append("(" + " OR ".join(ors) + ")")
+
+        base_sql = f"SELECT * FROM read_csv_auto('{p.as_posix()}', header=True)"
+        limit_sql = f" LIMIT {int(limit)}"
+
+        def _run(sql: str):
+            return duckdb.query(sql + limit_sql).df()
+
+        if where_clauses:
+            df = _run(base_sql + " WHERE " + " OR ".join(where_clauses))
+        elif query.strip():
+            safe = query.replace("'", "''")
+            ors = [f"lower(CAST(\"{h}\" AS VARCHAR)) LIKE lower('%{safe}%')" for h in headers]
+            df = _run(base_sql + " WHERE " + " OR ".join(ors))
+            if df.empty:
+                df = _run(base_sql)
+        else:
+            df = _run(base_sql)
         # Render context text
         parts: list[str] = []
+        parts.append(f"Source file: {p.name}")
         parts.append(f"Columns: {', '.join(map(str, headers))}")
         if not df.empty:
-            parts.append("Relevant rows (JSON):")
-            for _, row in df.iterrows():
-                try:
-                    obj = {str(k): (None if pd.isna(v) else v) for k, v in row.items()}
-                except Exception:
-                    obj = {str(k): str(v) for k, v in row.items()}
-                import json as _json
+            parts.append("Relevant rows:")
+            preferred = [
+                "Name",
+                "Status",
+                "Tenant",
+                "Site",
+                "Location",
+                "Rack",
+                "Rack Position",
+                "Role",
+                "Manufacturer",
+                "Type",
+                "Platform",
+                "IP Address",
+                "IPv4 Address",
+                "IPv6 Address",
+                "ID",
+                "Serial number",
+                "Asset tag",
+                "Region",
+                "Server Group",
+                "Cluster",
+                "DTAP state",
+                "CPU",
+                "VCPUs",
+                "Memory",
+                "Memory (MB)",
+                "Disk",
+                "Harddisk",
+                "Backup",
+            ]
+            preferred_lower = [p.lower() for p in preferred]
 
-                parts.append(_json.dumps(obj, ensure_ascii=False)[:400])
+            def normalise_value(value: Any) -> Any:
+                if value is None:
+                    return None
+                if isinstance(value, pd.Timestamp):
+                    return value.isoformat()
+                if hasattr(value, "isoformat") and not isinstance(value, (str, int, float, bool)):
+                    try:
+                        return value.isoformat()
+                    except Exception:
+                        return str(value)
+                if isinstance(value, float) and np.isnan(value):
+                    return None
+                if isinstance(value, (str, int, float, bool)):
+                    return value
+                return str(value)
+
+            for idx, (_, row) in enumerate(df.iterrows(), start=1):
+                try:
+                    obj = {str(k): normalise_value(v) for k, v in row.items()}
+                except Exception:
+                    obj = {str(k): normalise_value(str(v)) for k, v in row.items()}
+
+                # Filter out empty/null values
+                non_empty = {k: v for k, v in obj.items() if v not in (None, "", "null", "None")}
+                if not non_empty:
+                    continue
+
+                title = non_empty.get("Name") or non_empty.get("Device") or non_empty.get("ID") or f"Row {idx}"
+                parts.append(f"- {title}")
+
+                seen: set[str] = set()
+                for field in preferred:
+                    if field in non_empty:
+                        value = non_empty[field]
+                        parts.append(f"    - **{field}:** {value}")
+                        seen.add(field)
+                for field, value in non_empty.items():
+                    if field in seen:
+                        continue
+                    if field.lower() in preferred_lower:
+                        continue
+                    parts.append(f"    - **{field}:** {value}")
         context = "\n".join(parts)
         if len(context) > max_chars:
             context = context[: max_chars - 20] + "\n…"
@@ -575,8 +1958,8 @@ def _build_data_context(dataset: str, query: str, max_rows: int = 6, max_chars: 
 
 
 @app.get("/chat/providers")
-def chat_providers():
-    env = _chat_env()
+def chat_providers(user: CurrentUserDep, db: DbSessionDep):
+    env = _chat_env(db=db, user=user)
     out = []
     for pid in ["openai", "openrouter", "claude", "gemini"]:
         cfg = env.get(pid, {})
@@ -584,18 +1967,47 @@ def chat_providers():
             "id": pid,
             "configured": bool(cfg.get("api_key")),
             "default_model": cfg.get("default_model"),
+            "key_source": cfg.get("key_source"),
+            "label": cfg.get("label"),
         })
     return {"providers": out, "default_provider": env.get("default_provider", "openai")}
 
 
 @app.get("/chat/history")
 def chat_history(session_id: str = Query(...)):
-    return {"session_id": session_id, "messages": CHAT_SESSIONS.get(session_id, [])}
+    _ensure_chat_session(session_id)
+    return {
+        "session_id": session_id,
+        "messages": CHAT_SESSIONS.get(session_id, []),
+    }
+
+
+@app.get("/chat/sessions")
+def chat_sessions(limit: int | None = Query(None, ge=1, le=200)):
+    return {"sessions": _format_session_list(limit)}
+
+
+@app.post("/chat/session")
+def chat_session_create(req: ChatSessionCreate | None = None):
+    name = (req.name if req else "") or ""
+    session_meta = _create_chat_session(name)
+    return {
+        "session_id": session_meta.get("session_id"),
+        "title": session_meta.get("title"),
+        "created_at": session_meta.get("created_at"),
+        "updated_at": session_meta.get("updated_at"),
+        "last_message": session_meta.get("last_message", ""),
+        "last_role": session_meta.get("last_role"),
+    }
 
 
 @app.post("/chat/complete")
-def chat_complete(req: ChatRequest = Body(...)):
-    env = _chat_env()
+def chat_complete(
+    req: ChatRequestBody,
+    user: OptionalUserDep,
+    db: DbSessionDep,
+):
+    env = _chat_env(db=db, user=user)
     pid = req.provider
     if pid not in env:
         raise HTTPException(status_code=400, detail=f"Unknown provider: {pid}")
@@ -607,11 +2019,15 @@ def chat_complete(req: ChatRequest = Body(...)):
         raise HTTPException(status_code=400, detail=f"No model specified for provider '{pid}'")
 
     # Accumulate messages in session, respecting max turns
+    _ensure_chat_session(req.session_id)
     history = CHAT_SESSIONS.setdefault(req.session_id, [])
     # Optional: include a system instruction to avoid automatic actions
-    if req.system:
-        if not history or history[0].get("role") != "system":
-            history.insert(0, {"role": "system", "content": str(req.system)[:4000]})
+    system_prompt = (req.system or os.getenv("CHAT_SYSTEM_PROMPT", "")).strip()
+    if system_prompt:
+        if history and history[0].get("role") == "system":
+            history[0]["content"] = system_prompt[:4000]
+        else:
+            history.insert(0, {"role": "system", "content": system_prompt[:4000]})
     # Optionally include data context
     if req.include_context:
         ctx_text = _build_data_context(req.dataset or "all", req.message)
@@ -622,31 +2038,37 @@ def chat_complete(req: ChatRequest = Body(...)):
             })
     user_msg = {"role": "user", "content": str(req.message)[:8000]}
     history.append(user_msg)
+    _touch_chat_session(req.session_id, "user", req.message)
     clipped = _messages_for_provider(history)
+
+    temperature = req.temperature if req.temperature is not None else _chat_default_temperature()
 
     try:
         if pid == "openai":
-            text = _call_openai(model, clipped, api_key, temperature=req.temperature or 0.2)
+            text = _call_openai(model, clipped, api_key, temperature=temperature)
         elif pid == "openrouter":
-            text = _call_openrouter(model, clipped, api_key, temperature=req.temperature or 0.2)
+            text = _call_openrouter(model, clipped, api_key, temperature=temperature)
         elif pid == "claude":
-            text = _call_claude(model, clipped, api_key, temperature=req.temperature or 0.2)
+            text = _call_claude(model, clipped, api_key, temperature=temperature)
         elif pid == "gemini":
-            text = _call_gemini(model, clipped, api_key, temperature=req.temperature or 0.2)
+            text = _call_gemini(model, clipped, api_key, temperature=temperature)
         else:
             raise ValueError(f"Unsupported provider: {pid}")
     except requests.HTTPError as ex:
         # Keep the user message in history; add an assistant error message
-        err = f"Provider error: {ex.response.status_code if ex.response else ''} {str(ex)}"
+        err = f"Provider error: {ex.response.status_code if ex.response else ''} {ex!s}"
         history.append({"role": "assistant", "content": err})
+        _touch_chat_session(req.session_id, "assistant", err)
         return {"session_id": req.session_id, "provider": pid, "model": model, "reply": err, "messages": history}
     except Exception as ex:
         err = f"Error: {ex}"
         history.append({"role": "assistant", "content": err})
+        _touch_chat_session(req.session_id, "assistant", err)
         return {"session_id": req.session_id, "provider": pid, "model": model, "reply": err, "messages": history}
 
     # Append assistant reply and return
     history.append({"role": "assistant", "content": text})
+    _touch_chat_session(req.session_id, "assistant", text)
     return {"session_id": req.session_id, "provider": pid, "model": model, "reply": text, "messages": history}
 
 
@@ -658,9 +2080,7 @@ def _stream_openai_text(model: str, messages: list[dict[str, str]], api_key: str
             try:
                 kwargs: dict[str, Any] = {
                     "model": model,
-                    "input": [
-                        {"role": m.get("role", "user"), "content": [{"type": "input_text", "text": m.get("content", "")}]} for m in messages
-                    ],
+                    "input": _format_responses_messages(messages),
                 }
                 if _responses_supports_temperature(model) and temperature is not None:
                     kwargs["temperature"] = temperature
@@ -708,9 +2128,7 @@ def _stream_openai_text(model: str, messages: list[dict[str, str]], api_key: str
         }
         payload = {
             "model": model,
-            "input": [
-                {"role": m.get("role", "user"), "content": [{"type": "input_text", "text": m.get("content", "")}]} for m in messages
-            ],
+            "input": _format_responses_messages(messages),
             "stream": True,
         }
         if _responses_supports_temperature(model) and temperature is not None:
@@ -819,8 +2237,12 @@ def _stream_openrouter_text(model: str, messages: list[dict[str, str]], api_key:
 
 
 @app.post("/chat/stream")
-def chat_stream(req: ChatRequest = Body(...)):
-    env = _chat_env()
+def chat_stream(
+    req: ChatRequestBody,
+    user: OptionalUserDep,
+    db: DbSessionDep,
+):
+    env = _chat_env(db=db, user=user)
     pid = req.provider
     if pid not in env:
         raise HTTPException(status_code=400, detail=f"Unknown provider: {pid}")
@@ -831,38 +2253,37 @@ def chat_stream(req: ChatRequest = Body(...)):
     if not model:
         raise HTTPException(status_code=400, detail=f"No model specified for provider '{pid}'")
 
+    _ensure_chat_session(req.session_id)
     history = CHAT_SESSIONS.setdefault(req.session_id, [])
-    # Ensure system instruction
-    sys_default = (
-        req.system
-        or "Je geeft alleen voorstellen en voorbeeldteksten. Je voert geen acties uit."
-    )
-    if not history or history[0].get("role") != "system":
-        history.insert(0, {"role": "system", "content": sys_default[:4000]})
-    # Include optional data context
+    system_prompt = (req.system or os.getenv("CHAT_SYSTEM_PROMPT", "")).strip()
+    if system_prompt:
+        if history and history[0].get("role") == "system":
+            history[0]["content"] = system_prompt[:4000]
+        else:
+            history.insert(0, {"role": "system", "content": system_prompt[:4000]})
     if req.include_context:
         ctx_text = _build_data_context(req.dataset or "all", req.message)
         if ctx_text:
             history.append({"role": "system", "content": f"Data context from {req.dataset or 'all'}:\n" + ctx_text})
-    # Add user message
     user_msg = {"role": "user", "content": str(req.message)[:8000]}
     history.append(user_msg)
+    _touch_chat_session(req.session_id, "user", req.message)
 
     clipped = _messages_for_provider(history)
+    temperature = req.temperature if req.temperature is not None else _chat_default_temperature()
 
     def generator():
         full_text = []
         try:
             if pid == "openai":
                 try:
-                    for chunk in _stream_openai_text(model, clipped, api_key, temperature=req.temperature or 0.2):
+                    for chunk in _stream_openai_text(model, clipped, api_key, temperature=temperature):
                         full_text.append(chunk)
                         yield chunk
                 except Exception as ex:  # smart fallback when streaming is not allowed
                     if _is_openai_streaming_unsupported(ex):
-                        # Fallback to non-streaming call and emit in chunks
                         try:
-                            text = _call_openai(model, clipped, api_key, temperature=req.temperature or 0.2)
+                            text = _call_openai(model, clipped, api_key, temperature=temperature)
                         except Exception as ex2:
                             text = f"[error] {getattr(getattr(ex2, 'response', None), 'status_code', '')} {ex2}"
                         for part in _iter_chunks(text or ""):
@@ -874,7 +2295,7 @@ def chat_stream(req: ChatRequest = Body(...)):
                         yield msg
             elif pid == "openrouter":
                 try:
-                    for chunk in _stream_openrouter_text(model, clipped, api_key, temperature=req.temperature or 0.2):
+                    for chunk in _stream_openrouter_text(model, clipped, api_key, temperature=temperature):
                         full_text.append(chunk)
                         yield chunk
                 except Exception as ex:
@@ -882,11 +2303,10 @@ def chat_stream(req: ChatRequest = Body(...)):
                     full_text.append(msg)
                     yield msg
             else:
-                # Fallback to non-streaming and chunk locally
                 if pid == "claude":
-                    text = _call_claude(model, clipped, api_key, temperature=req.temperature or 0.2)
+                    text = _call_claude(model, clipped, api_key, temperature=temperature)
                 elif pid == "gemini":
-                    text = _call_gemini(model, clipped, api_key, temperature=req.temperature or 0.2)
+                    text = _call_gemini(model, clipped, api_key, temperature=temperature)
                 else:
                     text = ""
                 for i in range(0, len(text), 64):
@@ -894,9 +2314,9 @@ def chat_stream(req: ChatRequest = Body(...)):
                     full_text.append(part)
                     yield part
         finally:
-            # Save assistant message
             out = "".join(full_text).strip()
             history.append({"role": "assistant", "content": out})
+            _touch_chat_session(req.session_id, "assistant", out)
 
     return StreamingResponse(generator(), media_type="text/plain; charset=utf-8")
 
@@ -954,7 +2374,7 @@ def _zbx_rpc(method: str, params: dict) -> dict:
     r = requests.post(url, headers=headers, json=body, timeout=30)
     r.raise_for_status()
     data = r.json()
-    if "error" in data and data["error"]:
+    if data.get("error"):
         # Map not authorized to 401
         err = data["error"]
         msg = str(err)
@@ -1919,7 +3339,8 @@ def confluence_search(
         # Space provided but not resolved exactly -> return empty set
         return {"total": 0, "cql": f"space unresolved: {space}", "results": []}
     if space_keys:
-        cql = f"space in ({', '.join([f'\"{k}\"' for k in space_keys])}) AND " + cql
+        quoted_keys = ", ".join(f'"{k}"' for k in space_keys)
+        cql = f"space in ({quoted_keys}) AND " + cql
     url = wiki + "/rest/api/search"
     # Ask Confluence to include space + history info so we can display Space and Updated reliably
     params = {"cql": cql, "limit": int(max_results), "expand": "content.space,content.history"}

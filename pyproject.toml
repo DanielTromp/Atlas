@@ -19,6 +19,11 @@ dependencies = [
   "python-multipart>=0.0.9",
   "duckdb>=1.0",
   "openai>=1.42.0",
+  "dropbox>=11.36.0",
+  "sqlalchemy>=2.0",
+  "alembic>=1.13",
+  "passlib[bcrypt]>=1.7",
+  "bcrypt>=4.1",
 ]
 
 [project.scripts]

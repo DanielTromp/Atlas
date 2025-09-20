@@ -25,7 +25,7 @@ def main() -> int:
     root = project_root()
     upload_script = root / "netbox-export/bin/confluence_upload_attachment.py"
 
-    file_path = "netbox-export/data/Systems CMDB.xlsx"
+    file_path = "data/Systems CMDB.xlsx"
 
     cmd = [
         sys.executable,

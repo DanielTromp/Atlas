@@ -4,13 +4,53 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Dataset Viewer</title>
-    <link rel="stylesheet" href="styles.css?v=6" />
+    <link rel="stylesheet" href="styles.css?v=7" />
     <link rel="icon" href="/favicon.ico" type="image/png" />
   </head>
-  <body>
+  <body class="theme-nebula">
     <header class="topbar">
-      <h1 class="brand">Enreach Tools</h1>
-      <a class="btn logout" href="/auth/logout" title="Logout">Logout</a>
+      <div class="topbar-primary">
+        <div class="brand-group">
+          <img class="brand-logo" src="enreach.svg" alt="Enreach logo" />
+          <h1 class="brand">Enreach Tools</h1>
+        </div>
+        <div class="topbar-actions">
+          <button id="open-suggestions" class="btn ghost topbar-suggestions" type="button">Suggestions</button>
+          <div id="theme-toggle-root" class="topbar-theme"></div>
+          <div class="topbar-user">
+            <button id="user-menu-toggle" class="user-menu-toggle" type="button" aria-haspopup="true" aria-expanded="false">
+              <span class="user-menu-text">
+                <span id="user-menu-name" class="user-menu-name">Loading…</span>
+                <span id="user-menu-role" class="user-menu-role-text"></span>
+              </span>
+              <span class="user-menu-caret" aria-hidden="true">▾</span>
+            </button>
+            <div id="user-menu" class="user-menu" hidden>
+              <div class="user-menu-header">
+                <div id="user-menu-name-alt" class="user-menu-name">User</div>
+                <div id="user-menu-role-alt" class="user-menu-role-text"></div>
+              </div>
+              <button class="user-menu-item" type="button" data-user-action="profile">
+                <span class="user-menu-icon">👤</span>
+                <span>Profile</span>
+              </button>
+              <button class="user-menu-item" type="button" data-user-action="preferences">
+                <span class="user-menu-icon">⚙️</span>
+                <span>Preferences</span>
+              </button>
+              <button class="user-menu-item" type="button" data-user-action="tokens">
+                <span class="user-menu-icon">🔑</span>
+                <span>API Tokens</span>
+              </button>
+              <div class="user-menu-separator" role="separator"></div>
+              <a class="user-menu-item logout" href="/auth/logout">
+                <span class="user-menu-icon">↩</span>
+                <span>Log Out</span>
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
       <!-- Top-level pages navigation -->
       <nav class="tabs" id="pages" aria-label="Pages">
         <button class="tab active" data-page="home">Home</button>
@@ -20,51 +60,348 @@
         <button class="tab" data-page="confluence">Confluence</button>
         <button class="tab" data-page="chat">Chat</button>
         <button class="tab" data-page="export">Export</button>
+        <button class="tab" data-page="admin">Admin</button>
       </nav>
     </header>
 
     <main class="main">
       <!-- Export Page -->
       <section class="page" id="page-export">
-        <nav class="tabs" id="ds-tabs" aria-label="Datasets">
-          <button class="tab" data-ds="devices">Devices</button>
-          <button class="tab" data-ds="vms">VMs</button>
-          <button class="tab active" data-ds="all">All</button>
-        </nav>
-        <div class="toolbar">
-          <label class="field grow">
-            <span>Search</span>
-            <input id="q" type="text" placeholder="Search all columns" />
-          </label>
-          <button id="hideBtn" class="btn" title="Hide fields">👁️‍🗨️ Hide fields</button>
-          <button id="resetFilters" class="btn ghost" title="Reset all column filters">Reset filters</button>
-          <button id="updateBtn" class="btn" title="Run export and refresh">Update dataset</button>
-          <button id="viewLogs" class="btn" title="View recent export logs">View logs</button>
-          <button id="downloadCsv" class="btn" title="Download filtered CSV">Download CSV</button>
-          <label class="field">
-            <span>Density</span>
-            <select id="density">
-              <option value="comfortable" selected>Comfortable</option>
-              <option value="compact">Compact</option>
-            </select>
-          </label>
-          <button id="reload" class="btn">Refresh</button>
-          <span id="summary" class="summary"></span>
-        </div>
-        <div class="grid root" id="grid-root">
-          <div class="grid header">
-            <div class="header-scroll" id="header-scroll">
-              <div class="header-rows">
-                <div class="header-row" id="header-row"></div>
-                <div class="filter-row" id="filter-row"></div>
+        <div class="panel panel-export">
+          <nav class="tabs" id="ds-tabs" aria-label="Datasets">
+            <button class="tab" data-ds="devices">Devices</button>
+            <button class="tab" data-ds="vms">VMs</button>
+            <button class="tab active" data-ds="all">All</button>
+          </nav>
+          <div class="toolbar">
+            <label class="field grow">
+              <span>Search</span>
+              <input id="q" type="text" placeholder="Search all columns" />
+            </label>
+            <button id="hideBtn" class="btn" title="Hide fields">👁️‍🗨️ Hide fields</button>
+            <button id="resetFilters" class="btn ghost" title="Reset all column filters">Reset filters</button>
+            <button id="updateBtn" class="btn" title="Run export and refresh">Update dataset</button>
+            <button id="viewLogs" class="btn" title="View recent export logs">View logs</button>
+            <button id="downloadCsv" class="btn" title="Download filtered CSV">Download CSV</button>
+            <label class="field">
+              <span>Density</span>
+              <select id="density">
+                <option value="comfortable" selected>Comfortable</option>
+                <option value="compact">Compact</option>
+              </select>
+            </label>
+            <button id="reload" class="btn">Refresh</button>
+            <span id="summary" class="summary"></span>
+          </div>
+          <div class="grid root" id="grid-root">
+            <div class="grid header">
+              <div class="header-scroll" id="header-scroll">
+                <div class="header-rows">
+                  <div class="header-row" id="header-row"></div>
+                  <div class="filter-row" id="filter-row"></div>
+                </div>
+              </div>
+            </div>
+            <div class="grid body" id="body">
+              <div class="body-scroll" id="body-scroll">
+                <div class="canvas" id="canvas"></div>
+                <div class="rows" id="rows"></div>
               </div>
             </div>
           </div>
-          <div class="grid body" id="body">
-            <div class="body-scroll" id="body-scroll">
-              <div class="canvas" id="canvas"></div>
-              <div class="rows" id="rows"></div>
+        </div>
+      </section>
+
+      <!-- Suggestions List Page -->
+      <section class="page" id="page-suggestions" hidden>
+        <div class="panel panel-suggestions">
+          <div class="suggestions-toolbar">
+            <h2>Suggestions</h2>
+            <div class="spacer"></div>
+            <button id="suggestion-new" class="btn" type="button">New Suggestion</button>
+          </div>
+          <div id="suggestion-list" class="suggestion-list empty"></div>
+        </div>
+      </section>
+
+      <!-- Suggestion Detail Page -->
+      <section class="page" id="page-suggestion-detail" hidden>
+        <div class="panel panel-suggestion-detail">
+          <div class="suggestion-detail-header">
+            <button id="suggestion-back" class="btn ghost" type="button">← Back to Suggestions</button>
+            <div id="suggestion-detail-meta" class="suggestion-detail-meta"></div>
+          </div>
+          <div class="suggestion-form-grid">
+            <div class="suggestion-form-main">
+              <label class="field column">
+                <span>Title</span>
+                <input id="suggestion-title" type="text" placeholder="Title" />
+              </label>
+              <label class="field column">
+                <span>Summary</span>
+                <textarea id="suggestion-summary" rows="4" placeholder="Summary"></textarea>
+              </label>
+              <div class="suggestion-form-row">
+                <label class="field column">
+                  <span>Classification</span>
+                  <select id="suggestion-classification"></select>
+                </label>
+                <label class="field column">
+                  <span>Status</span>
+                  <select id="suggestion-status"></select>
+                </label>
+              </div>
+              <div class="suggestion-actions">
+                <button id="suggestion-delete" class="btn danger" type="button" hidden>Delete</button>
+                <button id="suggestion-save" class="btn" type="button">Save</button>
+              </div>
             </div>
+            <div id="suggestion-comments-wrapper" class="suggestion-comments">
+              <h3>Comments</h3>
+              <div class="suggestion-comment-compose">
+                <textarea id="suggestion-comment-text" rows="3" placeholder="Add a comment..."></textarea>
+                <button id="suggestion-comment-add" class="btn" type="button">Comment</button>
+              </div>
+              <div id="suggestion-comments" class="suggestion-comment-list empty"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Account Page -->
+      <section class="page" id="page-account" hidden>
+        <div class="panel panel-account">
+          <div class="account-header">
+            <div>
+              <h2>My Account</h2>
+              <p id="account-subtitle" class="account-subtitle"></p>
+            </div>
+          </div>
+          <nav class="account-tabs" id="account-tabs">
+            <button class="account-tab active" data-account-tab="profile">Profile</button>
+            <button class="account-tab" data-account-tab="preferences">Preferences</button>
+            <button class="account-tab" data-account-tab="password">Password</button>
+            <button class="account-tab" data-account-tab="tokens">API Tokens</button>
+          </nav>
+          <div class="account-panels">
+            <section class="account-panel active" data-account-panel="profile">
+              <form id="account-profile-form" class="account-form">
+                <div class="field column">
+                  <span>Display name</span>
+                  <input id="account-profile-display" type="text" placeholder="Your name" />
+                </div>
+                <div class="field column">
+                  <span>Email</span>
+                  <input id="account-profile-email" type="email" placeholder="you@example.com" />
+                </div>
+                <div class="account-actions">
+                  <button id="account-profile-save" type="submit" class="btn">Save changes</button>
+                  <span id="account-profile-status" class="form-status" role="status"></span>
+                </div>
+              </form>
+            </section>
+            <section class="account-panel" data-account-panel="preferences">
+              <div class="account-preferences">
+                <div class="account-preference-item">
+                  <h3>Theme</h3>
+                  <p>Use the theme selector in the header to switch between available themes. Your choice is remembered per browser.</p>
+                  <div id="account-theme-mount"></div>
+                </div>
+                <div class="account-preference-item">
+                  <h3>Export page defaults</h3>
+                  <label class="field column">
+                    <span>Default dataset tab</span>
+                    <select id="account-pref-dataset">
+                      <option value="all">All</option>
+                      <option value="devices">Devices</option>
+                      <option value="vms">VMs</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+            </section>
+            <section class="account-panel" data-account-panel="password">
+              <form id="account-password-form" class="account-form">
+                <div class="field column">
+                  <span>Current password</span>
+                  <input id="account-password-current" type="password" autocomplete="current-password" placeholder="Current password" />
+                </div>
+                <div class="field column">
+                  <span>New password</span>
+                  <input id="account-password-new" type="password" autocomplete="new-password" placeholder="New password" required />
+                  <small>Minimum 8 characters.</small>
+                </div>
+                <div class="account-actions">
+                  <button id="account-password-save" type="submit" class="btn">Update password</button>
+                  <span id="account-password-status" class="form-status" role="status"></span>
+                </div>
+              </form>
+            </section>
+            <section class="account-panel" data-account-panel="tokens">
+              <div class="account-token-panel">
+                <div class="account-token-list" id="account-api-list"></div>
+                <form id="account-api-form" class="account-form account-token-form">
+                  <h3>Override provider key</h3>
+                  <div class="account-token-grid">
+                    <label class="field column">
+                      <span>Provider</span>
+                      <select id="account-api-provider"></select>
+                    </label>
+                    <label class="field column">
+                      <span>Label (optional)</span>
+                      <input id="account-api-label" type="text" placeholder="My dedicated key" />
+                    </label>
+                  </div>
+                  <label class="field column">
+                    <span>API key / token</span>
+                    <textarea id="account-api-secret" rows="3" placeholder="Paste secret..."></textarea>
+                  </label>
+                  <div class="account-actions">
+                    <button id="account-api-save" type="submit" class="btn">Save key</button>
+                    <span id="account-api-status" class="form-status" role="status"></span>
+                  </div>
+                </form>
+              </div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <!-- Admin Page -->
+      <section class="page" id="page-admin" hidden>
+        <div class="panel panel-admin">
+          <div class="admin-header">
+            <h2>Admin Settings</h2>
+            <span id="admin-status" class="admin-status"></span>
+          </div>
+          <nav class="admin-tabs" id="admin-tabs">
+            <button class="admin-tab active" data-admin-tab="zabbix">Zabbix</button>
+            <button class="admin-tab" data-admin-tab="net-atlassian">NetBox &amp; Atlassian</button>
+            <button class="admin-tab" data-admin-tab="chat">AI Chat</button>
+            <button class="admin-tab" data-admin-tab="export">Export</button>
+            <button class="admin-tab" data-admin-tab="api">API &amp; UI</button>
+            <button class="admin-tab" data-admin-tab="users">Users</button>
+            <button class="admin-tab" data-admin-tab="backup">Backup</button>
+          </nav>
+          <div id="admin-settings" class="admin-panels">
+            <section id="admin-panel-zabbix" class="admin-panel active" data-admin-tab="zabbix">
+              <div id="admin-settings-zabbix" class="admin-settings-group"></div>
+            </section>
+            <section id="admin-panel-net" class="admin-panel" data-admin-tab="net-atlassian">
+              <div id="admin-settings-net" class="admin-settings-group"></div>
+            </section>
+            <section id="admin-panel-chat" class="admin-panel" data-admin-tab="chat">
+              <div id="admin-settings-chat" class="admin-settings-group"></div>
+            </section>
+            <section id="admin-panel-export" class="admin-panel" data-admin-tab="export">
+              <div id="admin-settings-export" class="admin-settings-group"></div>
+            </section>
+            <section id="admin-panel-api" class="admin-panel" data-admin-tab="api">
+              <div id="admin-settings-api" class="admin-settings-group"></div>
+            </section>
+            <section id="admin-panel-users" class="admin-panel" data-admin-tab="users">
+              <div class="admin-users-header">
+                <div class="admin-users-actions">
+                  <button id="admin-user-refresh" class="btn ghost" type="button">Refresh</button>
+                  <label class="field">
+                    <input id="admin-user-include-inactive" type="checkbox" />
+                    <span>Show inactive</span>
+                  </label>
+                  <span id="admin-user-status" class="form-status"></span>
+                </div>
+                <button id="admin-user-create" class="btn" type="button">New user</button>
+              </div>
+              <div class="admin-users-layout">
+                <div class="admin-user-list" id="admin-user-list"></div>
+                <div class="admin-user-detail" id="admin-user-detail">
+                  <div id="admin-user-empty" class="account-empty">Select a user to view details.</div>
+                  <form id="admin-user-form" class="account-form hidden">
+                    <h3 id="admin-user-form-title">User</h3>
+                    <div class="field column">
+                      <span>Username</span>
+                      <input id="admin-user-username" type="text" readonly />
+                    </div>
+                  <div class="field column">
+                    <span>Display name</span>
+                    <input id="admin-user-display" type="text" placeholder="Name" />
+                  </div>
+                  <div class="field column">
+                    <span>Email</span>
+                    <input id="admin-user-email" type="email" placeholder="user@example.com" />
+                  </div>
+                  <div class="field column create-only" id="admin-user-new-password-row">
+                    <span>Initial password</span>
+                    <input id="admin-user-new-password" type="password" placeholder="Set a password" />
+                  </div>
+                    <label class="field column">
+                      <span>Role</span>
+                      <select id="admin-user-role">
+                        <option value="member">Member</option>
+                        <option value="admin">Admin</option>
+                      </select>
+                    </label>
+                    <label class="field">
+                      <input id="admin-user-active" type="checkbox" />
+                      <span>Active</span>
+                    </label>
+                    <div class="account-actions">
+                      <button id="admin-user-save" type="submit" class="btn">Save user</button>
+                      <span id="admin-user-form-status" class="form-status"></span>
+                    </div>
+                  </form>
+                  <form id="admin-user-password-form" class="account-form hidden">
+                    <h3>Reset password</h3>
+                    <div class="field column">
+                      <span>New password</span>
+                      <input id="admin-user-password" type="password" placeholder="New password" />
+                    </div>
+                    <div class="account-actions">
+                      <button id="admin-user-password-save" type="submit" class="btn ghost">Set password</button>
+                      <span id="admin-user-password-status" class="form-status"></span>
+                    </div>
+                  </form>
+                  <button id="admin-user-delete" class="btn danger hidden" type="button">Delete user</button>
+                </div>
+              </div>
+              <div class="admin-global-keys">
+                <div class="admin-users-header">
+                  <h3>Global API Keys</h3>
+                  <div class="admin-users-actions">
+                    <button id="admin-global-add" class="btn ghost" type="button">Add key</button>
+                    <span id="admin-global-status" class="form-status"></span>
+                  </div>
+                </div>
+                <div id="admin-global-list" class="account-token-list"></div>
+                <form id="admin-global-form" class="account-form hidden">
+                  <div class="account-token-grid">
+                    <label class="field column">
+                      <span>Provider</span>
+                      <select id="admin-global-provider"></select>
+                    </label>
+                    <label class="field column">
+                      <span>Label (optional)</span>
+                      <input id="admin-global-label" type="text" placeholder="Default key" />
+                    </label>
+                  </div>
+                  <label class="field column">
+                    <span>Secret</span>
+                    <textarea id="admin-global-secret" rows="3" placeholder="Paste API key"></textarea>
+                  </label>
+                  <div class="account-actions">
+                    <button id="admin-global-save" type="submit" class="btn">Save global key</button>
+                    <button id="admin-global-cancel" type="button" class="btn ghost">Cancel</button>
+                  </div>
+                </form>
+              </div>
+            </section>
+            <section id="admin-panel-backup" class="admin-panel" data-admin-tab="backup">
+              <div id="admin-settings-backup" class="admin-settings-group"></div>
+              <details class="admin-advanced">
+                <summary>Manual Sync</summary>
+                <p class="muted">Run a Dropbox sync to back up the latest exports immediately.</p>
+                <button id="admin-sync" class="btn ghost" type="button">Run Dropbox Sync</button>
+              </details>
+            </section>
           </div>
         </div>
       </section>
@@ -126,43 +463,99 @@
 
       <!-- Chat Page -->
       <section class="page" id="page-chat" hidden>
-        <div class="panel">
-          <h2>AI Chat (suggestions only, no direct actions)</h2>
-          <p class="muted">Choose a provider and ask questions about the data. Answers may include suggested text for Jira/Confluence. Nothing is written automatically.</p>
-          <div class="toolbar" style="margin: 8px 0 12px">
-            <label class="field">
-              <span>Provider</span>
-              <select id="chat-provider">
-                <option value="openai">OpenAI</option>
-                <option value="openrouter">OpenRouter</option>
-                <option value="claude">Claude</option>
-                <option value="gemini">Gemini</option>
-                <option value="other">Other</option>
-              </select>
-            </label>
-            <label class="field">
-              <span>Model</span>
-              <input id="chat-model" type="text" placeholder="e.g. gpt-4o, claude-3-5, gemini-1.5" />
-            </label>
-            <label class="field">
-              <input id="chat-include-data" type="checkbox" checked />
-              <span>Use data context</span>
-            </label>
-            <label class="field">
-              <input id="chat-stream" type="checkbox" checked />
-              <span>Stream</span>
-            </label>
+        <div class="chat-container">
+          <!-- Sidebar with chat sessions -->
+          <div class="chat-sidebar">
+            <div class="chat-sidebar-header">
+              <button id="chat-new" class="btn btn-new-chat">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="12" y1="5" x2="12" y2="19"></line>
+                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+                New chat
+              </button>
+            </div>
+            <div class="chat-sessions" id="chat-sessions">
+              <div class="chat-sessions-empty">No chats yet</div>
+            </div>
           </div>
-          <div class="chat">
-            <div id="chat-log" class="chat-log"></div>
-            <div class="chat-input">
-              <textarea id="chat-input" rows="3" placeholder="Type your question…"></textarea>
-              <div class="chat-actions">
-                <button id="chat-send" class="btn">Ask</button>
+          
+          <!-- Main chat area -->
+          <div class="chat-main">
+            <div class="chat-header">
+              <h2>AI Chat</h2>
+              <div class="chat-header-controls">
+                <label class="field">
+                  <span>Provider</span>
+                  <select id="chat-provider">
+                    <option value="openai">OpenAI</option>
+                    <option value="openrouter">OpenRouter</option>
+                    <option value="claude">Claude</option>
+                    <option value="gemini">Gemini</option>
+                    <option value="other">Other</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Model</span>
+                  <input id="chat-model" type="text" placeholder="e.g. gpt-4o, claude-3-5, gemini-1.5" />
+                </label>
+                <label class="field">
+                  <span>Data source</span>
+                  <select id="chat-dataset">
+                    <option value="merged" selected>NetBox merged export (CSV)</option>
+                    <option value="devices">Devices export (CSV)</option>
+                    <option value="vms">VMs export (CSV)</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+            
+            <div class="chat-messages" id="chat-messages">
+              <div class="chat-empty-state">
+                <div class="chat-empty-icon">💬</div>
+                <h3>Welcome to AI Chat</h3>
+                <p>Ask me anything about your data. I'll help you analyze and provide insights.</p>
+                <div class="chat-suggestions">
+                  <button class="chat-suggestion-btn" data-suggestion="Show me the latest devices added to NetBox">
+                    Show latest devices
+                  </button>
+                  <button class="chat-suggestion-btn" data-suggestion="What are the current active alerts in Zabbix?">
+                    Current alerts
+                  </button>
+                  <button class="chat-suggestion-btn" data-suggestion="Summarize the recent Jira tickets">
+                    Recent tickets
+                  </button>
+                </div>
+              </div>
+            </div>
+            
+            <div class="chat-input-container">
+              <div class="chat-input-wrapper">
+                <textarea
+                  id="chat-input"
+                  class="chat-input-textarea"
+                  placeholder="Message AI Chat..."
+                  rows="1"
+                ></textarea>
+                <button id="chat-send" class="chat-send-btn">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="22" y1="2" x2="11" y2="13"></line>
+                    <polygon points="22,2 15,22 11,13 2,9"></polygon>
+                  </svg>
+                </button>
+              </div>
+              <div class="chat-input-footer">
+                <label class="chat-checkbox">
+                  <input id="chat-include-data" type="checkbox" checked />
+                  <span>Use data context</span>
+                </label>
+                <label class="chat-checkbox">
+                  <input id="chat-stream" type="checkbox" checked />
+                  <span>Stream responses</span>
+                </label>
               </div>
             </div>
           </div>
-          <p class="muted">Configuration: set API keys in .env; pick a provider. Results may include suggested text for Jira tickets and Confluence pages (no auto‑publish).</p>
         </div>
       </section>
 
@@ -374,6 +767,8 @@
       <div id="resize-sw" class="resize-handle sw" title="Resize"></div>
     </div>
 
-    <script src="app.js?v=8"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="app.js?v=9"></script>
   </body>
   </html>

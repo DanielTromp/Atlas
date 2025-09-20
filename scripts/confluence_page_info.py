@@ -1,8 +1,8 @@
+import base64
+import html
+import json
 import os
 import re
-import json
-import html
-import base64
 import urllib.request
 from urllib.error import HTTPError, URLError
 

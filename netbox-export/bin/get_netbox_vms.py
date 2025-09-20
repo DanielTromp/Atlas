@@ -5,14 +5,15 @@ This script connects to NetBox API and exports virtual machine data to CSV forma
 It supports incremental updates by comparing timestamps to only fetch changed data.
 """
 
+import argparse
 import csv
 import os
 import sys
 from pathlib import Path
-import argparse
 
 import pynetbox
 
+from enreach_tools import dropbox_sync
 from enreach_tools.env import apply_extra_headers, load_env, project_root, require_env
 
 # Load environment variables from central loader (.env at project root)
@@ -25,8 +26,9 @@ NETBOX_TOKEN = os.getenv("NETBOX_TOKEN")
 
 # Resolve data directory relative to project root, defaulting to legacy location under netbox-export/
 _root = project_root()
-_data_dir_env = os.getenv("NETBOX_DATA_DIR", "netbox-export/data")
+_data_dir_env = os.getenv("NETBOX_DATA_DIR", "data")
 _data_dir_path = Path(_data_dir_env) if os.path.isabs(_data_dir_env) else (_root / _data_dir_env)
+_data_dir_path.mkdir(parents=True, exist_ok=True)
 CSV_FILE = str(_data_dir_path / "netbox_vms_export.csv")
 
 # --- Contacts helpers (NetBox 3.x/4.x compatible) ---
@@ -390,6 +392,12 @@ def write_csv_data(vm_details, existing_data, deleted_vm_ids):
                 writer.writerow(vm_data)
 
         # CSV file written; summary printed by caller
+        try:
+            result = dropbox_sync.sync_paths([Path(CSV_FILE)], note="netbox_vms")
+            if result.get("status") == "ok" and result.get("count"):
+                print(f"Dropbox sync: uploaded {result['count']} file(s).")
+        except Exception as sync_error:  # pragma: no cover - defensive logging
+            print(f"Dropbox sync error (vms): {sync_error}")
 
     except Exception as e:
         print(f"Error writing CSV file: {e}")

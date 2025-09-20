@@ -1,11 +1,12 @@
+import argparse
 import csv
 import os
-import argparse
 from datetime import datetime
 from pathlib import Path
 
 import pynetbox
 
+from enreach_tools import dropbox_sync
 from enreach_tools.env import apply_extra_headers, load_env, project_root, require_env
 
 # Note: file renamed from get_netbox_data.py to get_netbox_devices.py
@@ -293,10 +294,11 @@ def sync_netbox_to_csv(force: bool = False):
         netbox_device_info = {str(d.id): d.last_updated for d in nb.dcim.devices.all()}
         print(f"Found {len(netbox_device_info)} devices in NetBox.")
 
-        # Resolve data directory relative to project root, defaulting to legacy location under netbox-export/
+        # Resolve data directory relative to project root
         root = project_root()
-        data_dir_env = os.getenv("NETBOX_DATA_DIR", "netbox-export/data")
+        data_dir_env = os.getenv("NETBOX_DATA_DIR", "data")
         data_dir_path = Path(data_dir_env) if os.path.isabs(data_dir_env) else (root / data_dir_env)
+        data_dir_path.mkdir(parents=True, exist_ok=True)
         csv_file_path = data_dir_path / "netbox_devices_export.csv"
 
         # 2. Read existing data from CSV
@@ -411,6 +413,13 @@ def sync_netbox_to_csv(force: bool = False):
             writer.writerows(existing_devices.values())
 
         print("Sync complete.")
+
+        try:
+            result = dropbox_sync.sync_paths([csv_file_path], note="netbox_devices")
+            if result.get("status") == "ok" and result.get("count"):
+                print(f"Dropbox sync: uploaded {result['count']} file(s).")
+        except Exception as sync_error:  # pragma: no cover - defensive logging
+            print(f"Dropbox sync error (devices): {sync_error}")
 
     except pynetbox.RequestError as e:
         # Enriched diagnostics for 403/other errors

@@ -7,8 +7,8 @@ Supports `--force` to re-fetch all resources.
 
 from __future__ import annotations
 
-import os
 import argparse
+import os
 import subprocess
 import sys
 

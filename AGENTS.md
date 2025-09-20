@@ -4,7 +4,7 @@
 
 - `src/enreach_tools/`: primary package (Typer CLI, env loader, FastAPI app + static UI).
 - `netbox-export/bin/`: task scripts invoked by the CLI (devices/vms export, merge, Confluence publish).
-- `netbox-export/data/`: default output directory for CSV/Excel.
+- `data/`: default output directory for CSV/Excel.
 - `scripts/`: local utilities (e.g., `visit_app.py`).
 - `pyproject.toml`: tooling config (setuptools, ruff, mypy, uv deps).
 

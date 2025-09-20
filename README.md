@@ -22,7 +22,7 @@ Usage
 Confluence Upload
 -----------------
 
-- Run: `uv run enreach confluence upload --file "netbox-export/data/Systems CMDB.xlsx"`.
+- Run: `uv run enreach confluence upload --file "data/Systems CMDB.xlsx"`.
 - Provide `--page-id 981533033` to override the target page (defaults to `CONFLUENCE_CMDB_PAGE_ID`).
 - Use `--name` to upload under a different attachment name or `--comment` to add a version note.
 
@@ -244,7 +244,7 @@ flowchart LR
 Notes
 -----
 
-- The data directory is configurable via `NETBOX_DATA_DIR`. By default, exports live under `netbox-export/data/`.
+- The data directory is configurable via `NETBOX_DATA_DIR`. By default, exports live under `data/`.
 
 Utilities
 ---------

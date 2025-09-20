@@ -20,6 +20,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
+from enreach_tools import dropbox_sync
 from enreach_tools.env import load_env, project_root
 
 # Try to import Excel-related libraries
@@ -64,8 +65,9 @@ def merge_netbox_csvs():
     # File paths
     # Resolve data directory relative to project root, defaulting to legacy location under netbox-export/
     root = project_root()
-    data_dir_env = os.getenv("NETBOX_DATA_DIR", "netbox-export/data")
+    data_dir_env = os.getenv("NETBOX_DATA_DIR", "data")
     data_dir_path = Path(data_dir_env) if os.path.isabs(data_dir_env) else (root / data_dir_env)
+    data_dir_path.mkdir(parents=True, exist_ok=True)
     devices_file = str(data_dir_path / "netbox_devices_export.csv")
     vms_file = str(data_dir_path / "netbox_vms_export.csv")
     output_file = str(data_dir_path / "netbox_merged_export.csv")
@@ -188,6 +190,13 @@ def merge_netbox_csvs():
             file_size = os.path.getsize(output_file)
             print(f"Output file size: {file_size:,} bytes ({file_size / 1024 / 1024:.2f} MB)")
 
+        try:
+            result = dropbox_sync.sync_paths([Path(output_file)], note="netbox_merge_csv")
+            if result.get("status") == "ok" and result.get("count"):
+                print(f"Dropbox sync: uploaded {result['count']} file(s) from merge.")
+        except Exception as sync_error:  # pragma: no cover - defensive logging
+            print(f"Dropbox sync error (merge csv): {sync_error}")
+
         return True
 
     except Exception as e:
@@ -209,7 +218,7 @@ def create_excel_export(csv_file, excel_file):
         # Candidate paths (first found wins):
         # Resolve etc and data paths
         root = project_root()
-        data_dir_env = os.getenv("NETBOX_DATA_DIR", "netbox-export/data")
+        data_dir_env = os.getenv("NETBOX_DATA_DIR", "data")
         data_dir_path = Path(data_dir_env) if os.path.isabs(data_dir_env) else (root / data_dir_env)
         order_candidates = [
             os.getenv("NETBOX_XLSX_ORDER_FILE"),
@@ -289,6 +298,13 @@ def create_excel_export(csv_file, excel_file):
             file_size = os.path.getsize(excel_file)
             print(f"Excel file created: {file_size:,} bytes ({file_size / 1024 / 1024:.2f} MB)")
 
+        try:
+            result = dropbox_sync.sync_paths([Path(excel_file)], note="netbox_merge_excel")
+            if result.get("status") == "ok" and result.get("count"):
+                print(f"Dropbox sync: uploaded {result['count']} file(s) from Excel export.")
+        except Exception as sync_error:  # pragma: no cover - defensive logging
+            print(f"Dropbox sync error (merge excel): {sync_error}")
+
         print("Excel export completed with:")
         print("  - Data sorted by Name")
         print("  - Filters enabled on header row")
@@ -314,7 +330,7 @@ def main():
     excel_success = False
     if csv_success:
         root = project_root()
-        data_dir_env = os.getenv("NETBOX_DATA_DIR", "netbox-export/data")
+        data_dir_env = os.getenv("NETBOX_DATA_DIR", "data")
         data_dir_path = Path(data_dir_env) if os.path.isabs(data_dir_env) else (root / data_dir_env)
         csv_file = str(data_dir_path / "netbox_merged_export.csv")
         excel_file = str(data_dir_path / "Systems CMDB.xlsx")

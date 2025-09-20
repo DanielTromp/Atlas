@@ -112,7 +112,7 @@ def main() -> int:
     load_env()
 
     parser = argparse.ArgumentParser(description="Upload or replace a Confluence attachment")
-    parser.add_argument("--file", default="netbox-export/data/Systems CMDB.xlsx", help="Path to local file")
+    parser.add_argument("--file", default="data/Systems CMDB.xlsx", help="Path to local file")
     parser.add_argument("--page-id", default=os.getenv("CONFLUENCE_CMDB_PAGE_ID") or os.getenv("CONFLUENCE_PAGE_ID"), help="Confluence page ID")
     parser.add_argument("--name", default="", help="Attachment name (defaults to source filename)")
     parser.add_argument("--comment", default="", help="Version comment")

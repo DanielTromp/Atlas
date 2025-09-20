@@ -7,6 +7,7 @@ import sys
 import typer
 from rich import print
 
+from .db.setup import init_database
 from .env import load_env, project_root, require_env
 
 # Enable -h as an alias for --help everywhere
@@ -53,6 +54,8 @@ netbox = typer.Typer(help="NetBox helpers", context_settings=HELP_CTX)
 app.add_typer(netbox, name="netbox")
 search = typer.Typer(help="Cross-system search (Home aggregator)", context_settings=HELP_CTX)
 app.add_typer(search, name="search")
+db = typer.Typer(help="Database utilities", context_settings=HELP_CTX)
+app.add_typer(db, name="db")
 
 
 @export.command("devices")
@@ -178,6 +181,15 @@ def api_serve(
     uvicorn.run("enreach_tools.api.app:app", **kwargs)
 
 
+@db.command("init")
+def db_init(echo: bool = typer.Option(False, "--echo", help="Echo SQL while running migrations")):
+    """Initialise or upgrade the application database using Alembic."""
+    if echo:
+        os.environ["SQLALCHEMY_ECHO"] = "1"
+    init_database()
+    print("[green]Database initialised[/green]")
+
+
 @zabbix.command("problems")
 def zabbix_problems_cli(
     limit: int = typer.Option(20, "--limit", help="Max items"),
@@ -188,6 +200,7 @@ def zabbix_problems_cli(
     """Fetch problems from Zabbix via JSON-RPC and print a summary."""
     import requests as _rq
     from rich import print as _print
+
     from .env import load_env as _load
 
     _load()
@@ -282,9 +295,11 @@ def zabbix_search_cli(
     - event.get by hostids or fallback by name search with wildcards
     """
     import re as _re
+
     import requests as _rq
-    from .env import load_env as _load
     from rich import print as _print
+
+    from .env import load_env as _load
 
     _load()
     base = os.getenv("ZABBIX_API_URL", "").strip() or os.getenv("ZABBIX_HOST", "").strip()
@@ -474,7 +489,7 @@ def confluence_search_cli(
 @confluence.command("upload")
 def confluence_upload(
     file: str = typer.Option(
-        "netbox-export/data/Systems CMDB.xlsx",
+        "data/Systems CMDB.xlsx",
         "--file",
         help="Local file to upload",
     ),
@@ -523,7 +538,7 @@ def confluence_publish_cmdb(
 @confluence.command("publish-devices-table")
 def confluence_publish_devices_table(
     csv: str = typer.Option(
-        "netbox-export/data/netbox_devices_export.csv",
+        "data/netbox_devices_export.csv",
         "--csv",
         help="Path to the NetBox devices CSV",
     ),
@@ -560,7 +575,7 @@ def confluence_publish_devices_table(
 @confluence.command("publish-vms-table")
 def confluence_publish_vms_table(
     csv: str = typer.Option(
-        "netbox-export/data/netbox_vms_export.csv",
+        "data/netbox_vms_export.csv",
         "--csv",
         help="Path to the NetBox VMs CSV",
     ),
@@ -678,7 +693,8 @@ def search_run(
     res = _agg(q=q, zlimit=zlimit, jlimit=jlimit, climit=climit)
     # Save to file when requested (pretty JSON)
     if out:
-        import json as _json, pathlib as _pl
+        import json as _json
+        import pathlib as _pl
         path = _pl.Path(out)
         try:
             path.write_text(_json.dumps(res, ensure_ascii=False, indent=2), encoding="utf-8")

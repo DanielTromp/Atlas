@@ -2,8 +2,126 @@
   // Grid with virtual scrolling, column reorder, filters, and global search
   const API_BASE = ""; // same origin
 
+  // Theming (React-powered dropdown)
+  const THEMES = [
+    { id: 'nebula', label: 'Enreach Purple' },
+    { id: 'default', label: 'Light' },
+  ];
+  const THEME_STORAGE_KEY = 'enreach_theme_v1';
+  const THEME_CLASS_PREFIX = 'theme-';
+  const KNOWN_THEME_CLASSES = THEMES.map((theme) => `${THEME_CLASS_PREFIX}${theme.id}`);
+
+  const normaliseTheme = (value) => {
+    if (!value) return THEMES[0].id;
+    return THEMES.some((theme) => theme.id === value) ? value : THEMES[0].id;
+  };
+
+  const applyThemeClass = (nextTheme, options = {}) => {
+    const safeTheme = normaliseTheme(nextTheme);
+    const body = document.body;
+    if (body) {
+      for (const cls of KNOWN_THEME_CLASSES) body.classList.remove(cls);
+      body.classList.add(`${THEME_CLASS_PREFIX}${safeTheme}`);
+    }
+    if (!options.skipPersist) {
+      try { localStorage.setItem(THEME_STORAGE_KEY, safeTheme); } catch (_) { /* ignore */ }
+    }
+    return safeTheme;
+  };
+
+  const readStoredTheme = () => {
+    try { return normaliseTheme(localStorage.getItem(THEME_STORAGE_KEY)); }
+    catch (_) { return THEMES[0].id; }
+  };
+
+  const initialTheme = (() => {
+    const stored = readStoredTheme();
+    return applyThemeClass(stored, { skipPersist: true });
+  })();
+
+  const mountThemeToggle = (root) => {
+    if (!root) return;
+
+    const fallbackSelectId = 'theme-toggle-select';
+
+    if (window.React && window.ReactDOM && typeof window.ReactDOM.createRoot === 'function') {
+      const { useEffect, useState } = window.React;
+      const e = window.React.createElement;
+
+      const ThemeToggle = () => {
+        const [value, setValue] = useState(initialTheme);
+
+        useEffect(() => {
+          applyThemeClass(value);
+        }, [value]);
+
+        useEffect(() => {
+          const handleStorage = (event) => {
+            if (event.key === THEME_STORAGE_KEY) {
+              setValue(normaliseTheme(event.newValue));
+            }
+          };
+          window.addEventListener('storage', handleStorage);
+          return () => window.removeEventListener('storage', handleStorage);
+        }, []);
+
+        return e('div', { className: 'theme-toggle' },
+          e('div', { className: 'theme-toggle__meta' },
+            e('label', { className: 'theme-toggle__label', htmlFor: fallbackSelectId }, 'Theme'),
+            e('select', {
+              id: fallbackSelectId,
+              className: 'theme-toggle__select',
+              value,
+              onChange: (event) => setValue(normaliseTheme(event.target.value)),
+            }, THEMES.map((theme) => e('option', { key: theme.id, value: theme.id }, theme.label))),
+          ),
+        );
+      };
+
+      window.ReactDOM.createRoot(root).render(e(ThemeToggle));
+      return;
+    }
+
+    const label = document.createElement('label');
+    label.className = 'theme-toggle__label';
+    label.setAttribute('for', fallbackSelectId);
+    label.textContent = 'Theme';
+
+    const select = document.createElement('select');
+    select.id = fallbackSelectId;
+    select.className = 'theme-toggle__select';
+    for (const theme of THEMES) {
+      const option = document.createElement('option');
+      option.value = theme.id;
+      option.textContent = theme.label;
+      select.append(option);
+    }
+    select.value = initialTheme;
+    select.addEventListener('change', (event) => applyThemeClass(event.target.value));
+
+    const handleStorage = (event) => {
+      if (event.key === THEME_STORAGE_KEY) {
+        const next = normaliseTheme(event.newValue);
+        select.value = next;
+        applyThemeClass(next, { skipPersist: true });
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+
+    const meta = document.createElement('div');
+    meta.className = 'theme-toggle__meta';
+    meta.append(label, select);
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'theme-toggle';
+    wrapper.append(meta);
+
+    root.append(wrapper);
+  };
+
   // Elements
   // Page router
+  const $themeRoot = document.getElementById('theme-toggle-root');
   const $pages = document.getElementById("pages");
   const $pageExport = document.getElementById("page-export");
   const $pageNetbox = document.getElementById("page-netbox");
@@ -13,6 +131,9 @@
   const $pageZhost = document.getElementById("page-zhost");
   const $pageJira = document.getElementById("page-jira");
   const $pageConfluence = document.getElementById("page-confluence");
+  const $pageSuggestions = document.getElementById("page-suggestions");
+  const $pageSuggestionDetail = document.getElementById("page-suggestion-detail");
+  const $pageAdmin = document.getElementById("page-admin");
   // Confluence elements
   const $confQ = document.getElementById('conf-q');
   const $confSpace = document.getElementById('conf-space');
@@ -74,6 +195,439 @@
   const $bodyScroll = document.getElementById("body-scroll");
   const $canvas = document.getElementById("canvas");
   const $rows = document.getElementById("rows");
+  const $suggestionsButton = document.getElementById("open-suggestions");
+  const $suggestionList = document.getElementById("suggestion-list");
+  const $suggestionNew = document.getElementById("suggestion-new");
+  const $suggestionBack = document.getElementById("suggestion-back");
+  const $suggestionTitle = document.getElementById("suggestion-title");
+  const $suggestionSummary = document.getElementById("suggestion-summary");
+  const $suggestionClassification = document.getElementById("suggestion-classification");
+  const $suggestionStatus = document.getElementById("suggestion-status");
+  const $suggestionSave = document.getElementById("suggestion-save");
+  const $suggestionCommentText = document.getElementById("suggestion-comment-text");
+  const $suggestionCommentAdd = document.getElementById("suggestion-comment-add");
+  const $suggestionComments = document.getElementById("suggestion-comments");
+  const $suggestionDetailMeta = document.getElementById("suggestion-detail-meta");
+  const $suggestionCommentsWrapper = document.getElementById("suggestion-comments-wrapper");
+  const $suggestionDelete = document.getElementById("suggestion-delete");
+  const $adminSettings = document.getElementById("admin-settings");
+  const adminContainers = {
+    'zabbix': document.getElementById('admin-settings-zabbix'),
+    'net-atlassian': document.getElementById('admin-settings-net'),
+    'chat': document.getElementById('admin-settings-chat'),
+    'export': document.getElementById('admin-settings-export'),
+    'api': document.getElementById('admin-settings-api'),
+    'backup': document.getElementById('admin-settings-backup'),
+  };
+  const adminPanels = {
+    'zabbix': document.getElementById('admin-panel-zabbix'),
+    'net-atlassian': document.getElementById('admin-panel-net'),
+    'chat': document.getElementById('admin-panel-chat'),
+    'export': document.getElementById('admin-panel-export'),
+    'api': document.getElementById('admin-panel-api'),
+    'users': document.getElementById('admin-panel-users'),
+    'backup': document.getElementById('admin-panel-backup'),
+  };
+  const adminTabs = document.querySelectorAll('#admin-tabs .admin-tab');
+  const $adminStatus = document.getElementById("admin-status");
+  const $adminSync = document.getElementById("admin-sync");
+  // User management elements
+  const $adminUserList = document.getElementById("admin-user-list");
+  const $adminUserDetail = document.getElementById("admin-user-detail");
+  const $adminUserEmpty = document.getElementById("admin-user-empty");
+  const $adminUserForm = document.getElementById("admin-user-form");
+  const $adminUserFormTitle = document.getElementById("admin-user-form-title");
+  const $adminUserUsername = document.getElementById("admin-user-username");
+  const $adminUserDisplay = document.getElementById("admin-user-display");
+  const $adminUserEmail = document.getElementById("admin-user-email");
+  const $adminUserNewPassword = document.getElementById("admin-user-new-password");
+  const $adminUserNewPasswordRow = document.getElementById("admin-user-new-password-row");
+  const $adminUserRole = document.getElementById("admin-user-role");
+  const $adminUserActive = document.getElementById("admin-user-active");
+  const $adminUserSave = document.getElementById("admin-user-save");
+  const $adminUserFormStatus = document.getElementById("admin-user-form-status");
+  const $adminUserPasswordForm = document.getElementById("admin-user-password-form");
+  const $adminUserPassword = document.getElementById("admin-user-password");
+  const $adminUserPasswordSave = document.getElementById("admin-user-password-save");
+  const $adminUserPasswordStatus = document.getElementById("admin-user-password-status");
+  const $adminUserDelete = document.getElementById("admin-user-delete");
+  const $adminUserCreate = document.getElementById("admin-user-create");
+  const $adminUserRefresh = document.getElementById("admin-user-refresh");
+  const $adminUserIncludeInactive = document.getElementById("admin-user-include-inactive");
+  const $adminUserStatus = document.getElementById("admin-user-status");
+  const $adminGlobalList = document.getElementById("admin-global-list");
+  const $adminGlobalForm = document.getElementById("admin-global-form");
+  const $adminGlobalProvider = document.getElementById("admin-global-provider");
+  const $adminGlobalLabel = document.getElementById("admin-global-label");
+  const $adminGlobalSecret = document.getElementById("admin-global-secret");
+  const $adminGlobalSave = document.getElementById("admin-global-save");
+  const $adminGlobalCancel = document.getElementById("admin-global-cancel");
+  const $adminGlobalAdd = document.getElementById("admin-global-add");
+  const $adminGlobalStatus = document.getElementById("admin-global-status");
+  const $userMenuToggle = document.getElementById('user-menu-toggle');
+  const $userMenu = document.getElementById('user-menu');
+  const $userMenuName = document.getElementById('user-menu-name');
+  const $userMenuRole = document.getElementById('user-menu-role');
+  const $userMenuNameAlt = document.getElementById('user-menu-name-alt');
+  const $userMenuRoleAlt = document.getElementById('user-menu-role-alt');
+  const $pageAccount = document.getElementById('page-account');
+  const $accountSubtitle = document.getElementById('account-subtitle');
+  const accountTabs = Array.from(document.querySelectorAll('#account-tabs .account-tab'));
+  const accountPanels = Array.from(document.querySelectorAll('.account-panel'));
+  const $accountProfileForm = document.getElementById('account-profile-form');
+  const $accountProfileDisplay = document.getElementById('account-profile-display');
+  const $accountProfileEmail = document.getElementById('account-profile-email');
+  const $accountProfileStatus = document.getElementById('account-profile-status');
+  const $accountPasswordForm = document.getElementById('account-password-form');
+  const $accountPasswordCurrent = document.getElementById('account-password-current');
+  const $accountPasswordNew = document.getElementById('account-password-new');
+  const $accountPasswordStatus = document.getElementById('account-password-status');
+  const $accountPrefDataset = document.getElementById('account-pref-dataset');
+  const $accountThemeMount = document.getElementById('account-theme-mount');
+  const $accountApiList = document.getElementById('account-api-list');
+  const $accountApiForm = document.getElementById('account-api-form');
+  const $accountApiProvider = document.getElementById('account-api-provider');
+  const $accountApiLabel = document.getElementById('account-api-label');
+  const $accountApiSecret = document.getElementById('account-api-secret');
+  const $accountApiStatus = document.getElementById('account-api-status');
+  const userMenuItems = document.querySelectorAll('[data-user-action]');
+
+  const defaultChatProviders = ['openai', 'openrouter', 'claude', 'gemini'];
+  const ACCOUNT_DATASET_PREF_KEY = 'account_pref_dataset';
+
+  const chatProvidersState = {
+    items: [],
+  };
+  const accountState = {
+    user: null,
+    tab: 'profile',
+    apiKeys: [],
+    providers: [],
+    menuOpen: false,
+    prefDataset: null,
+  };
+  let currentUser = null;
+
+  const themeWasStored = (() => {
+    try { return !!localStorage.getItem(THEME_STORAGE_KEY); }
+    catch (_) { return false; }
+  })();
+
+  mountThemeToggle($themeRoot);
+
+  if (!themeWasStored) {
+    try {
+      fetch(`${API_BASE}/config/ui`).then((res) => {
+        if (!res.ok) return null;
+        return res.json();
+      }).then((data) => {
+        if (!data || !data.theme_default) return;
+        applyThemeClass(data.theme_default);
+      }).catch(() => {});
+    } catch (_) { /* ignore */ }
+  }
+
+  async function loadChatConfig() {
+    try {
+      const res = await fetch(`${API_BASE}/config/chat`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data && typeof data.system_prompt === 'string') {
+        chatConfig.systemPrompt = data.system_prompt;
+      }
+      if (data && typeof data.temperature === 'number' && Number.isFinite(data.temperature)) {
+        chatConfig.temperature = data.temperature;
+      }
+    } catch (_) { /* ignore */ }
+  }
+
+  function humanizeRole(role) {
+    if (!role) return '';
+    return role.charAt(0).toUpperCase() + role.slice(1);
+  }
+
+  function normalizeStatusMessage(input) {
+    if (input == null) return '';
+    if (typeof input === 'string') return input;
+    if (Array.isArray(input)) {
+      const parts = input.map(normalizeStatusMessage).filter(Boolean);
+      return parts.join('; ');
+    }
+    if (typeof input === 'object') {
+      if (typeof input.detail !== 'undefined') return normalizeStatusMessage(input.detail);
+      if (typeof input.msg === 'string') return input.msg;
+      try { return JSON.stringify(input); } catch { return String(input); }
+    }
+    return String(input);
+  }
+
+  function flashStatus(el, message, timeout = 3200) {
+    if (!el) return;
+    const text = normalizeStatusMessage(message);
+    el.textContent = text;
+    if (message) {
+      setTimeout(() => {
+        if (el.textContent === text) el.textContent = '';
+      }, timeout);
+    }
+  }
+
+  function providerLabel(id) {
+    const map = {
+      openai: 'OpenAI',
+      openrouter: 'OpenRouter',
+      claude: 'Claude',
+      gemini: 'Gemini',
+    };
+    return map[id] || id?.toUpperCase() || 'Provider';
+  }
+
+  function setUserMenu(open) {
+    accountState.menuOpen = !!open;
+    if ($userMenu) {
+      if (open) {
+        $userMenu.hidden = false;
+        $userMenu.classList.add('open');
+      } else {
+        $userMenu.classList.remove('open');
+        $userMenu.hidden = true;
+      }
+    }
+    if ($userMenuToggle) $userMenuToggle.setAttribute('aria-expanded', String(open));
+  }
+
+  function updateTopbarUser() {
+    const user = accountState.user || currentUser;
+    if (!user) return;
+    const primary = user.display_name || user.username || 'Account';
+    const subtitleId = user.username || user.email || primary;
+    const secondary = humanizeRole(user.role);
+    const fallback = user.username || user.display_name || primary;
+    if ($userMenuName) $userMenuName.textContent = primary;
+    if ($userMenuRole) $userMenuRole.textContent = secondary;
+    if ($userMenuNameAlt) $userMenuNameAlt.textContent = fallback;
+    if ($userMenuRoleAlt) $userMenuRoleAlt.textContent = secondary;
+    if ($accountSubtitle) {
+      const meta = [subtitleId];
+      if (secondary) meta.push(secondary);
+      $accountSubtitle.textContent = meta.join(' • ');
+    }
+  }
+
+  function populateAccountForms() {
+    const user = accountState.user;
+    if (user) {
+      if ($accountProfileDisplay) $accountProfileDisplay.value = user.display_name || '';
+      if ($accountProfileEmail) $accountProfileEmail.value = user.email || '';
+    }
+    if ($accountPrefDataset) {
+      const val = accountState.prefDataset || 'all';
+      if (['all', 'devices', 'vms'].includes(val)) {
+        $accountPrefDataset.value = val;
+      }
+    }
+  }
+
+  function updateAccountHash() {
+    if (page !== 'account') return;
+    try {
+      const url = new URL(window.location.href);
+      url.hash = `#account/${accountState.tab || 'profile'}`;
+      history.replaceState(null, '', url.toString());
+    } catch (_) { /* ignore */ }
+  }
+
+  function showAccountTab(tab) {
+    const validTabs = ['profile', 'preferences', 'password', 'tokens'];
+    if (!validTabs.includes(tab)) tab = 'profile';
+    accountState.tab = tab;
+    accountTabs.forEach((btn) => {
+      btn.classList.toggle('active', (btn.getAttribute('data-account-tab') || 'profile') === tab);
+    });
+    accountPanels.forEach((panel) => {
+      panel.classList.toggle('active', (panel.getAttribute('data-account-panel') || 'profile') === tab);
+    });
+    if (tab === 'profile') {
+      populateAccountForms();
+    }
+    if (tab === 'tokens') {
+      refreshAccountApiKeys().catch(() => {});
+    }
+    if (tab === 'preferences') {
+      if ($accountPrefDataset && accountState.prefDataset) {
+        $accountPrefDataset.value = accountState.prefDataset;
+      }
+    }
+    updateAccountHash();
+  }
+
+  function openAccount(tab = 'profile') {
+    const wanted = (tab || 'profile').toLowerCase();
+    showAccountTab(wanted);
+    if (page !== 'account') {
+      showPage('account');
+    } else {
+      updateAccountHash();
+    }
+  }
+
+  async function loadCurrentUser() {
+    try {
+      const res = await fetch(`${API_BASE}/auth/me`);
+      if (!res.ok) return;
+      const data = await res.json();
+      currentUser = data;
+      accountState.user = data;
+      updateTopbarUser();
+      populateAccountForms();
+      refreshAccountApiKeys().catch(() => {});
+    } catch (_) { /* ignore */ }
+  }
+
+  async function refreshChatProviders() {
+    try {
+      const res = await fetch(`${API_BASE}/chat/providers`);
+      if (!res.ok) return null;
+      const data = await res.json();
+      chatProvidersState.items = Array.isArray(data?.providers) ? data.providers : [];
+      accountState.providers = chatProvidersState.items;
+      renderAccountApiKeys();
+      return data;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  async function refreshAccountApiKeys() {
+    try {
+      const res = await fetch(`${API_BASE}/profile/api-keys`);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        accountState.apiKeys = data;
+        renderAccountApiKeys();
+      }
+    } catch (_) { /* ignore */ }
+  }
+
+  function renderAccountApiKeys() {
+    if (!$accountApiList) return;
+    const providers = accountState.providers.length
+      ? accountState.providers
+      : defaultChatProviders.map((id) => ({ id }));
+
+    const userKeys = Array.isArray(accountState.apiKeys) ? accountState.apiKeys : [];
+    $accountApiList.innerHTML = '';
+
+    if ($accountApiProvider) {
+      const current = $accountApiProvider.value;
+      $accountApiProvider.innerHTML = '';
+      providers.forEach((info) => {
+        if (!info || !info.id) return;
+        const opt = document.createElement('option');
+        opt.value = info.id;
+        opt.textContent = providerLabel(info.id);
+        $accountApiProvider.appendChild(opt);
+      });
+      if (current && Array.from($accountApiProvider.options).some((o) => o.value === current)) {
+        $accountApiProvider.value = current;
+      }
+    }
+
+    if (!providers.length) {
+      const empty = document.createElement('div');
+      empty.className = 'account-token-empty';
+      empty.textContent = 'No providers available.';
+      $accountApiList.appendChild(empty);
+      return;
+    }
+
+    providers.forEach((info) => {
+      if (!info || !info.id) return;
+      const pid = info.id;
+      const friendly = providerLabel(pid);
+      const userKey = userKeys.find((k) => k.provider === pid) || null;
+      const source = userKey ? 'user' : (info.key_source || null);
+      const badgeClass = source === 'user' ? 'badge-user' : source === 'global' ? 'badge-global' : source === 'env' ? 'badge-env' : '';
+      const badgeLabel = source === 'user' ? 'Your override' : source === 'global' ? 'Global default' : source === 'env' ? 'Environment' : 'None';
+
+      const card = document.createElement('div');
+      card.className = 'account-token-card';
+      card.dataset.provider = pid;
+
+      const header = document.createElement('div');
+      header.className = 'account-token-card-header';
+      const meta = document.createElement('div');
+      meta.className = 'account-token-card-meta';
+      const title = document.createElement('strong');
+      title.textContent = friendly;
+      const metaRow = document.createElement('span');
+      metaRow.innerHTML = `Effective key: <span class="badge ${badgeClass}">${badgeLabel}</span>`;
+      meta.appendChild(title);
+      meta.appendChild(metaRow);
+      if (userKey?.label) {
+        const labelRow = document.createElement('span');
+        labelRow.textContent = `Label: ${userKey.label}`;
+        meta.appendChild(labelRow);
+      } else if (info.label) {
+        const labelRow = document.createElement('span');
+        labelRow.textContent = `Label: ${info.label}`;
+        meta.appendChild(labelRow);
+      }
+      header.appendChild(meta);
+
+      const actions = document.createElement('div');
+      actions.className = 'account-token-card-actions';
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'btn ghost';
+      editBtn.textContent = userKey ? 'Update key' : 'Add key';
+      editBtn.addEventListener('click', () => {
+        if ($accountApiProvider) $accountApiProvider.value = pid;
+        if ($accountApiLabel) $accountApiLabel.value = userKey?.label || '';
+        if ($accountApiSecret) $accountApiSecret.value = '';
+        if ($accountApiSecret) $accountApiSecret.focus();
+      });
+      actions.appendChild(editBtn);
+      if (userKey) {
+        const delBtn = document.createElement('button');
+        delBtn.type = 'button';
+        delBtn.className = 'btn ghost';
+        delBtn.textContent = 'Remove override';
+        delBtn.addEventListener('click', () => deleteAccountApiKey(pid));
+        actions.appendChild(delBtn);
+      }
+      header.appendChild(actions);
+
+      card.appendChild(header);
+      if (!userKey && !info.api_key) {
+        const hint = document.createElement('div');
+        hint.className = 'account-token-empty';
+        hint.textContent = 'No key configured yet.';
+        card.appendChild(hint);
+      }
+      $accountApiList.appendChild(card);
+    });
+  }
+
+  async function deleteAccountApiKey(provider) {
+    if (!provider) return;
+    try {
+      const res = await fetch(`${API_BASE}/profile/api-keys/${encodeURIComponent(provider)}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const msg = await res.json().catch(() => ({}));
+        flashStatus($accountApiStatus, msg?.detail || 'Failed to delete key.');
+        return;
+      }
+      await Promise.all([
+        refreshAccountApiKeys(),
+        refreshChatProviders(),
+      ]);
+      flashStatus($accountApiStatus, 'Override removed.');
+    } catch (err) {
+      flashStatus($accountApiStatus, 'Unable to delete key.');
+    }
+  }
 
   // State
   let rows = [];
@@ -85,8 +639,42 @@
   // Sorting (multi-sort)
   // Array of { key: string, dir: 'asc'|'desc' }
   let sortRules = [];
-  let dataset = "all";
+  const savedDatasetPref = (() => {
+    try {
+      const val = localStorage.getItem(ACCOUNT_DATASET_PREF_KEY);
+      if (val && ['all', 'devices', 'vms'].includes(val)) return val;
+    } catch {}
+    return null;
+  })();
+  let dataset = savedDatasetPref || 'all';
+  accountState.prefDataset = dataset;
   let page = 'export';
+  const suggestionState = {
+    items: [],
+    meta: { classifications: [], statuses: [] },
+    current: null,
+    route: { mode: 'list', id: null },
+    loading: false,
+  };
+  const adminState = {
+    settings: [],
+    dropbox: {},
+    loading: false,
+    activeTab: 'zabbix',
+    users: [],
+    selectedUser: null,
+    globalApiKeys: [],
+    editingGlobalKey: false,
+  };
+  const chatConfig = {
+    systemPrompt: '',
+    temperature: 0.2,
+  };
+  const chatSessionsState = {
+    items: [],
+    active: null,
+    loading: false,
+  };
   let dragSrcIndex = -1; // global src index for DnD across headers
   // Density
   const ROW_COMFORT = 36;
@@ -117,6 +705,87 @@
       t = setTimeout(() => fn(...args), ms);
     };
   };
+
+  // Simple markdown parser for chat messages
+  function parseMarkdown(text) {
+    if (!text || typeof text !== 'string') return '';
+    
+    let html = escapeHtml(text);
+    
+    // Code blocks (```code```)
+    html = html.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
+    
+    // Inline code (`code`)
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+    
+    // Bold (**text** or __text__)
+    html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/__(.*?)__/g, '<strong>$1</strong>');
+    
+    // Italic (*text* or _text_)
+    html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+    html = html.replace(/_(.*?)_/g, '<em>$1</em>');
+    
+    // Links [text](url)
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    
+    // Headers (# ## ###)
+    html = html.replace(/^### (.*$)/gm, '<h3>$1</h3>');
+    html = html.replace(/^## (.*$)/gm, '<h2>$1</h2>');
+    html = html.replace(/^# (.*$)/gm, '<h1>$1</h1>');
+    
+    // Lists (- item or * item) - compact handling without extra line breaks
+    const lines = html.split('\n');
+    const processedLines = [];
+    let inList = false;
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const isListItem = /^[\s]*[-*]\s+(.*)$/.test(line);
+      
+      if (isListItem) {
+        const content = line.replace(/^[\s]*[-*]\s+(.*)$/, '$1');
+        if (!inList) {
+          processedLines.push('<ul>');
+          inList = true;
+        }
+        processedLines.push(`<li>${content}</li>`);
+      } else {
+        if (inList) {
+          processedLines.push('</ul>');
+          inList = false;
+        }
+        processedLines.push(line);
+      }
+    }
+    
+    if (inList) {
+      processedLines.push('</ul>');
+    }
+    
+    html = processedLines.join('\n');
+    
+    // Convert double line breaks to paragraphs, single line breaks to <br>
+    html = html.replace(/\n\n+/g, '</p><p>');
+    
+    // Don't add <br> inside lists - remove line breaks between list items
+    html = html.replace(/<\/li>\n<li>/g, '</li><li>');
+    html = html.replace(/<ul>\n/g, '<ul>');
+    html = html.replace(/\n<\/ul>/g, '</ul>');
+    
+    // Convert remaining single line breaks to <br>
+    html = html.replace(/\n/g, '<br>');
+    
+    // Wrap in paragraph if not already wrapped
+    if (!html.startsWith('<') && html.trim()) {
+      html = '<p>' + html + '</p>';
+    }
+    
+    // Clean up empty paragraphs
+    html = html.replace(/<p><\/p>/g, '');
+    
+    return html;
+  }
   const naturalCmp = (a, b) => {
     if (a == null && b == null) return 0;
     if (a == null) return 1;
@@ -539,7 +1208,11 @@
   function applyViewState(state) {
     try {
       if (!state || typeof state !== 'object') return;
-      if (state.ds && typeof state.ds === 'string') dataset = state.ds;
+      if (state.ds && typeof state.ds === 'string') {
+        dataset = state.ds;
+        accountState.prefDataset = dataset;
+        try { localStorage.setItem(ACCOUNT_DATASET_PREF_KEY, dataset); } catch {}
+      }
       if (Array.isArray(state.columns)) {
         const set = new Set(columns);
         const ordered = state.columns.filter(c => set.has(c));
@@ -921,35 +1594,88 @@
     return el.contains(e.target);
   }
   document.addEventListener('click', (e) => {
-    if ($fieldsPanel.hidden) return;
-    const withinPanel = eventWithin($fieldsPanel, e);
-    const onToggleBtn = eventWithin($hideBtn, e);
-    if (!withinPanel && !onToggleBtn) $fieldsPanel.hidden = true;
+    if (!$fieldsPanel.hidden) {
+      const withinPanel = eventWithin($fieldsPanel, e);
+      const onToggleBtn = eventWithin($hideBtn, e);
+      if (!withinPanel && !onToggleBtn) $fieldsPanel.hidden = true;
+    }
+    if (accountState.menuOpen) {
+      const withinMenu = eventWithin($userMenu, e) || eventWithin($userMenuToggle, e);
+      if (!withinMenu) setUserMenu(false);
+    }
   });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !$fieldsPanel.hidden) {
-      e.preventDefault();
-      $fieldsPanel.hidden = true;
+    if (e.key === 'Escape') {
+      let handled = false;
+      if (!$fieldsPanel.hidden) {
+        $fieldsPanel.hidden = true;
+        handled = true;
+      }
+      if (accountState.menuOpen) {
+        setUserMenu(false);
+        handled = true;
+      }
+      if (handled) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
     }
   });
 
   // Page routing
   function showPage(p) {
     page = p;
+    setUserMenu(false);
     // Toggle page sections
-    const map = { home: $pageHome, zabbix: $pageZabbix, netbox: $pageNetbox, jira: $pageJira, confluence: $pageConfluence, chat: $pageChat, export: $pageExport, zhost: $pageZhost };
+    const map = {
+      home: $pageHome,
+      zabbix: $pageZabbix,
+      netbox: $pageNetbox,
+      jira: $pageJira,
+      confluence: $pageConfluence,
+      chat: $pageChat,
+      export: $pageExport,
+      zhost: $pageZhost,
+      suggestions: $pageSuggestions,
+      'suggestion-detail': $pageSuggestionDetail,
+      account: $pageAccount,
+      admin: $pageAdmin,
+    };
     for (const k of Object.keys(map)) {
       if (!map[k]) continue;
       if (k === p) map[k].removeAttribute('hidden'); else map[k].setAttribute('hidden', '');
     }
     // Toggle tabs
     $pages?.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.getAttribute('data-page') === p));
+    if (p === 'suggestion-detail') {
+      const suggestionsTab = $pages?.querySelector('button.tab[data-page="suggestions"]');
+      suggestionsTab?.classList.add('active');
+    }
     // Update hash
     try {
       const url = new URL(window.location.href);
-      url.hash = `#${p}`;
+      let nextHash = `#${p}`;
+      if (p === 'suggestions') {
+        nextHash = '#suggestions';
+      } else if (p === 'suggestion-detail') {
+        if (suggestionState.route.mode === 'new') {
+          nextHash = '#suggestions/new';
+        } else if (suggestionState.route.id) {
+          nextHash = `#suggestions/${suggestionState.route.id}`;
+        } else {
+          nextHash = '#suggestions';
+        }
+      }
+      url.hash = nextHash;
       history.replaceState(null, '', url.toString());
     } catch {}
+    if ($suggestionsButton) {
+      if (p === 'suggestions' || p === 'suggestion-detail') {
+        $suggestionsButton.classList.add('active');
+      } else {
+        $suggestionsButton.classList.remove('active');
+      }
+    }
     // When switching into Export, ensure data is loaded/refreshed
     if (p === 'export') {
       fetchData();
@@ -957,6 +1683,8 @@
       ensureChatSession();
       loadChatDefaults();
       refreshChatHistory();
+      setupAutoResize();
+      setupSuggestionButtons();
     } else if (p === 'zabbix') {
       fetchZabbix();
     } else if (p === 'zhost') {
@@ -973,13 +1701,71 @@
       try { const prev = localStorage.getItem('conf_last_query'); if (prev) searchConfluence(false); } catch { /* noop */ }
     } else if (p === 'home') {
       // no-op; wait for user query
+    } else if (p === 'admin') {
+      loadAdminSettings(adminState.settings.length === 0).catch(() => {});
+      setAdminTab(adminState.activeTab || 'zabbix');
+      // Load users when switching to admin page
+      if (adminState.activeTab === 'users' || !adminState.users.length) {
+        loadAdminUsers($adminUserIncludeInactive?.checked).catch(() => {});
+        loadAdminGlobalApiKeys().catch(() => {});
+      }
+    } else if (p === 'account') {
+      if (!currentUser) loadCurrentUser();
+      populateAccountForms();
+      showAccountTab(accountState.tab || 'profile');
+    } else if (p === 'suggestions') {
+      suggestionState.route = { mode: 'list', id: null };
+      loadSuggestions(true).catch(() => {});
+    } else if (p === 'suggestion-detail') {
+      if (suggestionState.route.mode === 'detail' && suggestionState.route.id) {
+        loadSuggestionDetail(suggestionState.route.id).catch(() => {});
+      } else {
+        prepareNewSuggestion().catch(() => {});
+      }
     }
   }
   function parseHashPage() {
     try {
-      const h = (window.location.hash || '').replace(/^#/, '').trim().toLowerCase();
-      if (["home","zabbix","netbox","jira","confluence","chat","export","zhost"].includes(h)) return h;
+      const raw = (window.location.hash || '').replace(/^#/, '').trim();
+      const lower = raw.toLowerCase();
+      if (!raw) {
+        suggestionState.route = { mode: 'list', id: null };
+        accountState.tab = 'profile';
+        return 'home';
+      }
+      if (lower.startsWith('suggestions')) {
+        const parts = raw.split('/');
+        const second = parts[1] || '';
+        if (second.toLowerCase() === 'new') {
+          suggestionState.route = { mode: 'new', id: null };
+          return 'suggestion-detail';
+        }
+        if (second) {
+          suggestionState.route = { mode: 'detail', id: second };
+          return 'suggestion-detail';
+        }
+        suggestionState.route = { mode: 'list', id: null };
+        return 'suggestions';
+      }
+      if (lower.startsWith('account')) {
+        const parts = raw.split('/');
+        const tab = (parts[1] || '').toLowerCase();
+        const valid = ['profile', 'preferences', 'password', 'tokens'];
+        accountState.tab = valid.includes(tab) ? tab : 'profile';
+        return 'account';
+      }
+      if (lower === 'admin') {
+        suggestionState.route = { mode: 'list', id: null };
+        return 'admin';
+      }
+      const known = ["home","zabbix","netbox","jira","confluence","chat","export","zhost","suggestions","account"];
+      if (known.includes(lower)) {
+        suggestionState.route = { mode: 'list', id: null };
+        if (lower === 'account') accountState.tab = 'profile';
+        return lower;
+      }
     } catch {}
+    suggestionState.route = { mode: 'list', id: null };
     return 'home';
   }
   window.addEventListener('hashchange', () => showPage(parseHashPage()));
@@ -1005,33 +1791,1482 @@
         dataset = ds;
         // Toggle active
         $dsTabs.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.getAttribute('data-ds') === ds));
+        accountState.prefDataset = ds;
+        try { localStorage.setItem(ACCOUNT_DATASET_PREF_KEY, ds); } catch {}
+        if ($accountPrefDataset) $accountPrefDataset.value = ds;
         fetchData();
         updateURLDebounced();
       });
     });
   }
 
+  if ($userMenuToggle) {
+    $userMenuToggle.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setUserMenu(!accountState.menuOpen);
+    });
+  }
+  userMenuItems.forEach((item) => {
+    item.addEventListener('click', (e) => {
+      e.preventDefault();
+      const action = (item.getAttribute('data-user-action') || '').toLowerCase();
+      setUserMenu(false);
+      switch (action) {
+        case 'profile':
+        case 'preferences':
+        case 'password':
+        case 'tokens':
+          openAccount(action === 'profile' ? 'profile' : action);
+          break;
+        default:
+          break;
+      }
+    });
+  });
+
+  if ($accountThemeMount) {
+    mountThemeToggle($accountThemeMount);
+  }
+
+  accountTabs.forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const tab = (btn.getAttribute('data-account-tab') || 'profile').toLowerCase();
+      showAccountTab(tab);
+      showPage('account');
+    });
+  });
+
+  if ($accountProfileForm) {
+    $accountProfileForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!$accountProfileDisplay || !$accountProfileEmail) return;
+      const payload = {
+        display_name: $accountProfileDisplay.value.trim() || null,
+        email: $accountProfileEmail.value.trim() || null,
+      };
+    flashStatus($accountProfileStatus, 'Saving…');
+      try {
+        const res = await fetch(`${API_BASE}/profile`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+        flashStatus($accountProfileStatus, data?.detail || 'Unable to save changes.');
+        return;
+      }
+      const data = await res.json();
+      currentUser = data;
+      accountState.user = data;
+      updateTopbarUser();
+      populateAccountForms();
+      flashStatus($accountProfileStatus, 'Profile updated.');
+    } catch (err) {
+      flashStatus($accountProfileStatus, 'Unable to save changes.');
+    }
+  });
+  }
+
+  if ($accountPasswordForm) {
+    $accountPasswordForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!$accountPasswordNew) return;
+      const payload = {
+        current_password: $accountPasswordCurrent?.value || null,
+        new_password: $accountPasswordNew.value || '',
+      };
+      flashStatus($accountPasswordStatus, 'Updating…');
+      try {
+        const res = await fetch(`${API_BASE}/profile/password`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          flashStatus($accountPasswordStatus, data?.detail || 'Unable to update password.');
+          return;
+        }
+        flashStatus($accountPasswordStatus, 'Password updated.');
+        if ($accountPasswordCurrent) $accountPasswordCurrent.value = '';
+        $accountPasswordNew.value = '';
+      } catch (err) {
+        flashStatus($accountPasswordStatus, 'Unable to update password.');
+      }
+    });
+  }
+
+  if ($accountPrefDataset) {
+    $accountPrefDataset.addEventListener('change', (e) => {
+      const val = ($accountPrefDataset.value || 'all').toLowerCase();
+      if (!['all', 'devices', 'vms'].includes(val)) return;
+      accountState.prefDataset = val;
+      try { localStorage.setItem(ACCOUNT_DATASET_PREF_KEY, val); } catch {}
+      if (dataset !== val) {
+        const btn = $dsTabs?.querySelector(`button.tab[data-ds="${val}"]`);
+        if (btn) {
+          btn.click();
+        } else {
+          dataset = val;
+          fetchData();
+        }
+      }
+    });
+  }
+
+  if ($accountApiForm) {
+    $accountApiForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!$accountApiProvider || !$accountApiSecret) return;
+      const provider = ($accountApiProvider.value || '').toLowerCase();
+      const secret = ($accountApiSecret.value || '').trim();
+      const label = ($accountApiLabel?.value || '').trim();
+      if (!provider || !secret) {
+      flashStatus($accountApiStatus, 'Select provider and enter a secret.');
+      return;
+    }
+    flashStatus($accountApiStatus, 'Saving…');
+    try {
+      const res = await fetch(`${API_BASE}/profile/api-keys/${encodeURIComponent(provider)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ secret, label: label || null }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        flashStatus($accountApiStatus, data?.detail || 'Unable to save key.');
+        return;
+      }
+      $accountApiSecret.value = '';
+      flashStatus($accountApiStatus, 'Key saved.');
+      await Promise.all([
+        refreshAccountApiKeys(),
+        refreshChatProviders(),
+      ]);
+    } catch (err) {
+      flashStatus($accountApiStatus, 'Unable to save key.');
+    }
+  });
+  }
+
+  // ---------------------------
+  // Suggestions
+  // ---------------------------
+  function updateSuggestionMeta(meta) {
+    if (!meta) return;
+    if (Array.isArray(meta.classifications)) suggestionState.meta.classifications = meta.classifications.slice();
+    if (Array.isArray(meta.statuses)) suggestionState.meta.statuses = meta.statuses.slice();
+  }
+
+  const suggestionDefaultClassification = () => {
+    const cls = suggestionState.meta.classifications || [];
+    const preferred = cls.find((c) => (c?.name || '').toLowerCase() === 'could have');
+    return preferred?.name || cls[0]?.name || 'Could have';
+  };
+
+  const suggestionDefaultStatus = () => {
+    const sts = suggestionState.meta.statuses || [];
+    const preferred = sts.find((s) => (s?.value || '').toLowerCase() === 'new');
+    return preferred?.value || sts[0]?.value || 'new';
+  };
+
+  const parseSuggestionDate = (value) => {
+    if (!value) return null;
+    const withZone = value.endsWith('Z') ? value : `${value}Z`;
+    const d = new Date(withZone);
+    if (Number.isNaN(d.getTime())) return null;
+    return d;
+  };
+
+  const formatSuggestionDate = (value) => {
+    const d = parseSuggestionDate(value);
+    if (!d) return value || '';
+    try { return d.toLocaleString(); }
+    catch { return d.toISOString(); }
+  };
+
+  function populateSuggestionSelects(selectedClass, selectedStatus) {
+    if ($suggestionClassification) {
+      $suggestionClassification.innerHTML = '';
+      const classes = suggestionState.meta.classifications || [];
+      classes.forEach((c) => {
+        if (!c || !c.name) return;
+        const opt = document.createElement('option');
+        opt.value = c.name;
+        opt.textContent = c.name;
+        if (selectedClass && selectedClass.toLowerCase() === c.name.toLowerCase()) opt.selected = true;
+        $suggestionClassification.appendChild(opt);
+      });
+      if (!$suggestionClassification.value) {
+        $suggestionClassification.value = suggestionDefaultClassification();
+      }
+    }
+    if ($suggestionStatus) {
+      $suggestionStatus.innerHTML = '';
+      const statuses = suggestionState.meta.statuses || [];
+      statuses.forEach((s) => {
+        if (!s || !s.value) return;
+        const opt = document.createElement('option');
+        opt.value = s.value;
+        opt.textContent = s.label || s.value;
+        if (selectedStatus && selectedStatus.toLowerCase() === s.value.toLowerCase()) opt.selected = true;
+        $suggestionStatus.appendChild(opt);
+      });
+      if (!$suggestionStatus.value) {
+        $suggestionStatus.value = suggestionDefaultStatus();
+      }
+    }
+  }
+
+  function updateSuggestionStateItem(item) {
+    if (!item || !item.id) return;
+    const idx = suggestionState.items.findIndex((it) => it && it.id === item.id);
+    if (idx === -1) {
+      suggestionState.items.push(item);
+    } else {
+      suggestionState.items[idx] = item;
+    }
+  }
+
+  function removeSuggestionFromState(id) {
+    if (!id) return;
+    suggestionState.items = suggestionState.items.filter((it) => it && it.id !== id);
+  }
+
+  function setSuggestionCommentsEnabled(enabled) {
+    if ($suggestionCommentsWrapper) {
+      $suggestionCommentsWrapper.classList.toggle('disabled', !enabled);
+    }
+    if ($suggestionCommentText) $suggestionCommentText.disabled = !enabled;
+    if ($suggestionCommentAdd) $suggestionCommentAdd.disabled = !enabled;
+  }
+
+  function renderSuggestionDetailMeta(item, isNew) {
+    if (!$suggestionDetailMeta) return;
+    if (isNew) {
+      $suggestionDetailMeta.textContent = 'Create a new suggestion';
+      return;
+    }
+    if (!item) {
+      $suggestionDetailMeta.textContent = '';
+      return;
+    }
+    const parts = [];
+    if (item.classification) parts.push(item.classification);
+    const created = formatSuggestionDate(item.created_at);
+    if (created) parts.push(`Created ${created}`);
+    if (item.status_label || item.status) parts.push(`Status: ${item.status_label || item.status}`);
+    if (typeof item.likes === 'number') parts.push(`Likes: ${item.likes}`);
+    $suggestionDetailMeta.textContent = parts.join(' · ');
+  }
+
+  function renderSuggestionComments(item, isNew) {
+    if (!$suggestionComments) return;
+    $suggestionComments.innerHTML = '';
+    const comments = Array.isArray(item?.comments) ? item.comments : [];
+    if (isNew) {
+      $suggestionComments.classList.add('empty');
+      const msg = document.createElement('div');
+      msg.className = 'suggestion-comment-empty';
+      msg.textContent = 'Save the suggestion to start a discussion.';
+      $suggestionComments.appendChild(msg);
+      return;
+    }
+    if (!comments.length) {
+      $suggestionComments.classList.add('empty');
+      const msg = document.createElement('div');
+      msg.className = 'suggestion-comment-empty';
+      msg.textContent = 'No comments yet.';
+      $suggestionComments.appendChild(msg);
+      return;
+    }
+    $suggestionComments.classList.remove('empty');
+    const frag = document.createDocumentFragment();
+    comments.forEach((comment) => {
+      if (!comment) return;
+      const wrap = document.createElement('div');
+      wrap.className = 'suggestion-comment-item';
+      const body = document.createElement('div');
+      body.className = 'suggestion-comment-text';
+      body.textContent = comment.text || '';
+      const meta = document.createElement('div');
+      meta.className = 'suggestion-comment-meta';
+      meta.textContent = formatSuggestionDate(comment.created_at);
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'suggestion-comment-remove';
+      remove.title = 'Delete comment';
+      remove.textContent = '×';
+      remove.addEventListener('click', async (e) => {
+        e.preventDefault();
+        remove.disabled = true;
+        try {
+          await deleteSuggestionComment(comment.id);
+        } finally {
+          remove.disabled = false;
+        }
+      });
+      wrap.appendChild(body);
+      wrap.appendChild(meta);
+      wrap.appendChild(remove);
+      frag.appendChild(wrap);
+    });
+    $suggestionComments.appendChild(frag);
+  }
+
+  function renderSuggestionForm(item, isNew) {
+    suggestionState.current = item;
+    populateSuggestionSelects(item?.classification, item?.status);
+    if ($suggestionTitle) $suggestionTitle.value = item?.title || '';
+    if ($suggestionSummary) $suggestionSummary.value = item?.summary || '';
+    if ($suggestionClassification && item?.classification) $suggestionClassification.value = item.classification;
+    if ($suggestionStatus && item?.status) $suggestionStatus.value = item.status;
+    setSuggestionCommentsEnabled(!isNew && !!item?.id);
+    renderSuggestionDetailMeta(item, isNew);
+    renderSuggestionComments(item, isNew || !item?.id);
+    if ($suggestionCommentText && !isNew) $suggestionCommentText.value = '';
+    if ($suggestionDelete) {
+      const canDelete = !isNew && !!(item && item.id);
+      $suggestionDelete.hidden = !canDelete;
+      $suggestionDelete.disabled = !canDelete;
+    }
+  }
+
+  function renderSuggestionsList() {
+    if (!$suggestionList) return;
+    $suggestionList.innerHTML = '';
+    const items = Array.isArray(suggestionState.items) ? suggestionState.items : [];
+    if (!items.length) {
+      $suggestionList.classList.add('empty');
+      const placeholder = document.createElement('div');
+      placeholder.className = 'suggestion-empty';
+      placeholder.textContent = 'No suggestions yet.';
+      $suggestionList.appendChild(placeholder);
+      return;
+    }
+    $suggestionList.classList.remove('empty');
+    const frag = document.createDocumentFragment();
+    items.forEach((item) => {
+      if (!item || !item.id) return;
+      const card = document.createElement('article');
+      card.className = 'suggestion-card';
+      card.setAttribute('role', 'button');
+      card.tabIndex = 0;
+      card.dataset.id = item.id;
+      const badge = document.createElement('div');
+      badge.className = 'suggestion-badge';
+      badge.textContent = item.classification_letter || (item.classification || '?').charAt(0).toUpperCase();
+      if (item.classification_color) badge.style.background = item.classification_color;
+      const info = document.createElement('div');
+      info.className = 'suggestion-info';
+      const title = document.createElement('h3');
+      title.className = 'suggestion-title';
+      title.textContent = item.title || '(Untitled suggestion)';
+      const meta = document.createElement('div');
+      meta.className = 'suggestion-meta';
+      const when = formatSuggestionDate(item.created_at);
+      if (when) {
+        const span = document.createElement('span');
+        span.textContent = `Placed ${when}`;
+        meta.appendChild(span);
+      }
+      if (item.status_label || item.status) {
+        const span = document.createElement('span');
+        span.textContent = item.status_label || item.status;
+        meta.appendChild(span);
+      }
+      info.appendChild(title);
+      info.appendChild(meta);
+      if (item.summary) {
+        const summary = document.createElement('p');
+        summary.className = 'suggestion-summary';
+        summary.textContent = item.summary;
+        info.appendChild(summary);
+      }
+      const likeBtn = document.createElement('button');
+      likeBtn.type = 'button';
+      likeBtn.className = 'suggestion-like';
+      likeBtn.innerHTML = `<span aria-hidden="true">👍</span><span class="suggestion-like-count">${item.likes ?? 0}</span>`;
+      likeBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        likeBtn.disabled = true;
+        try {
+          await likeSuggestion(item.id);
+        } finally {
+          likeBtn.disabled = false;
+        }
+      });
+      card.addEventListener('click', () => {
+        suggestionState.route = { mode: 'detail', id: item.id };
+        window.location.hash = `#suggestions/${item.id}`;
+      });
+      card.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          suggestionState.route = { mode: 'detail', id: item.id };
+          window.location.hash = `#suggestions/${item.id}`;
+        }
+      });
+      card.appendChild(badge);
+      card.appendChild(info);
+      card.appendChild(likeBtn);
+      frag.appendChild(card);
+    });
+    $suggestionList.appendChild(frag);
+  }
+
+  async function loadSuggestions(force = false, options = {}) {
+    const { silent = false, skipRender = false } = options || {};
+    if (suggestionState.loading && !force) return;
+    suggestionState.loading = true;
+    try {
+      const res = await fetch(`${API_BASE}/suggestions`);
+      if (!res.ok) {
+        const problem = await res.json().catch(() => null);
+        throw new Error(problem?.detail || res.statusText);
+      }
+      const data = await res.json();
+      updateSuggestionMeta(data);
+      if (Array.isArray(data?.items)) {
+        suggestionState.items = data.items.slice();
+        if (!skipRender) renderSuggestionsList();
+      } else if (!skipRender) {
+        renderSuggestionsList();
+      }
+    } catch (err) {
+      console.error('Failed to load suggestions', err);
+      if (!silent) alert(`Failed to load suggestions: ${err?.message || err}`);
+    } finally {
+      suggestionState.loading = false;
+    }
+  }
+
+  async function ensureSuggestionMeta() {
+    const hasMeta = (suggestionState.meta.classifications || []).length && (suggestionState.meta.statuses || []).length;
+    if (!hasMeta) await loadSuggestions(true, { silent: true, skipRender: true });
+  }
+
+  async function prepareNewSuggestion() {
+    suggestionState.route = { mode: 'new', id: null };
+    await ensureSuggestionMeta();
+    const item = {
+      id: null,
+      title: '',
+      summary: '',
+      classification: suggestionDefaultClassification(),
+      status: suggestionDefaultStatus(),
+      status_label: 'New',
+      likes: 0,
+      created_at: null,
+      comments: [],
+    };
+    suggestionState.current = item;
+    renderSuggestionForm(item, true);
+  }
+
+  async function loadSuggestionDetail(id) {
+    if (!id) {
+      alert('Suggestion not found.');
+      window.location.hash = '#suggestions';
+      return;
+    }
+    suggestionState.route = { mode: 'detail', id };
+    await ensureSuggestionMeta();
+    try {
+      const res = await fetch(`${API_BASE}/suggestions/${encodeURIComponent(id)}`);
+      if (!res.ok) {
+        const problem = await res.json().catch(() => null);
+        throw new Error(problem?.detail || res.statusText);
+      }
+      const data = await res.json();
+      updateSuggestionMeta(data);
+      if (data?.item) {
+        suggestionState.current = data.item;
+        updateSuggestionStateItem(data.item);
+        renderSuggestionForm(data.item, false);
+        renderSuggestionsList();
+      } else {
+        throw new Error('Missing suggestion data');
+      }
+    } catch (err) {
+      console.error('Failed to load suggestion', err);
+      alert(`Could not load suggestion: ${err?.message || err}`);
+      window.location.hash = '#suggestions';
+    }
+  }
+
+  async function saveSuggestion() {
+    const isNew = suggestionState.route.mode === 'new' || !suggestionState.current?.id;
+    const title = ($suggestionTitle?.value || '').trim();
+    if (!title) {
+      alert('Title is required.');
+      $suggestionTitle?.focus();
+      return;
+    }
+    await ensureSuggestionMeta();
+    const payload = {
+      title,
+      summary: ($suggestionSummary?.value || '').trim(),
+      classification: $suggestionClassification?.value || suggestionDefaultClassification(),
+      status: $suggestionStatus?.value || suggestionDefaultStatus(),
+    };
+    try {
+      let res;
+      if (isNew) {
+        res = await fetch(`${API_BASE}/suggestions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } else {
+        res = await fetch(`${API_BASE}/suggestions/${encodeURIComponent(suggestionState.current.id)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      }
+      if (!res.ok) {
+        const problem = await res.json().catch(() => null);
+        throw new Error(problem?.detail || res.statusText);
+      }
+      const data = await res.json();
+      if (data?.item) {
+        updateSuggestionStateItem(data.item);
+        renderSuggestionsList();
+      }
+      window.location.hash = '#suggestions';
+      await loadSuggestions(true, { silent: true });
+    } catch (err) {
+      console.error('Failed to save suggestion', err);
+      alert(`Save failed: ${err?.message || err}`);
+    }
+  }
+
+  async function likeSuggestion(id) {
+    if (!id) return;
+    try {
+      const res = await fetch(`${API_BASE}/suggestions/${encodeURIComponent(id)}/like`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ delta: 1 }),
+      });
+      if (!res.ok) {
+        const problem = await res.json().catch(() => null);
+        throw new Error(problem?.detail || res.statusText);
+      }
+      const data = await res.json();
+      if (data?.item) {
+        updateSuggestionStateItem(data.item);
+        renderSuggestionsList();
+        if (suggestionState.current?.id === data.item.id) {
+          suggestionState.current = data.item;
+          renderSuggestionForm(data.item, false);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to like suggestion', err);
+      alert(`Unable to like suggestion: ${err?.message || err}`);
+    }
+  }
+
+  async function addSuggestionComment() {
+    const current = suggestionState.current;
+    if (!current?.id) return;
+    const text = ($suggestionCommentText?.value || '').trim();
+    if (!text) {
+      alert('Enter a comment before posting.');
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/suggestions/${encodeURIComponent(current.id)}/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      if (!res.ok) {
+        const problem = await res.json().catch(() => null);
+        throw new Error(problem?.detail || res.statusText);
+      }
+      const data = await res.json();
+      if (data?.item) {
+        suggestionState.current = data.item;
+        updateSuggestionStateItem(data.item);
+        renderSuggestionForm(data.item, false);
+        renderSuggestionsList();
+      }
+      if ($suggestionCommentText) $suggestionCommentText.value = '';
+    } catch (err) {
+      console.error('Failed to add comment', err);
+      alert(`Unable to add comment: ${err?.message || err}`);
+    }
+  }
+
+  async function deleteSuggestionComment(commentId) {
+    const current = suggestionState.current;
+    if (!current?.id || !commentId) return;
+    try {
+      const res = await fetch(`${API_BASE}/suggestions/${encodeURIComponent(current.id)}/comments/${encodeURIComponent(commentId)}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        const problem = await res.json().catch(() => null);
+        throw new Error(problem?.detail || res.statusText);
+      }
+      const data = await res.json();
+      if (data?.item) {
+        suggestionState.current = data.item;
+        updateSuggestionStateItem(data.item);
+        renderSuggestionForm(data.item, false);
+        renderSuggestionsList();
+      }
+    } catch (err) {
+      console.error('Failed to delete comment', err);
+      alert(`Unable to delete comment: ${err?.message || err}`);
+    }
+  }
+
+  async function deleteSuggestion() {
+    const current = suggestionState.current;
+    if (!current?.id) return;
+    const label = current.title ? `"${current.title}"` : 'this suggestion';
+    const confirmed = window.confirm(`Are you sure you want to delete ${label}? This cannot be undone.`);
+    if (!confirmed) return;
+    if ($suggestionDelete) $suggestionDelete.disabled = true;
+    try {
+      const res = await fetch(`${API_BASE}/suggestions/${encodeURIComponent(current.id)}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const problem = await res.json().catch(() => null);
+        throw new Error(problem?.detail || res.statusText);
+      }
+      removeSuggestionFromState(current.id);
+      renderSuggestionsList();
+      suggestionState.current = null;
+      suggestionState.route = { mode: 'list', id: null };
+      window.location.hash = '#suggestions';
+    } catch (err) {
+      console.error('Failed to delete suggestion', err);
+      alert(`Unable to delete suggestion: ${err?.message || err}`);
+    }
+    if ($suggestionDelete) $suggestionDelete.disabled = false;
+  }
+
+  if ($suggestionsButton) {
+    $suggestionsButton.addEventListener('click', (e) => {
+      e.preventDefault();
+      suggestionState.route = { mode: 'list', id: null };
+      window.location.hash = '#suggestions';
+    });
+  }
+  $suggestionNew?.addEventListener('click', (e) => {
+    e.preventDefault();
+    suggestionState.route = { mode: 'new', id: null };
+    window.location.hash = '#suggestions/new';
+  });
+  $suggestionBack?.addEventListener('click', (e) => {
+    e.preventDefault();
+    window.location.hash = '#suggestions';
+  });
+  $suggestionSave?.addEventListener('click', (e) => {
+    e.preventDefault();
+    saveSuggestion();
+  });
+  $suggestionCommentAdd?.addEventListener('click', (e) => {
+    e.preventDefault();
+    addSuggestionComment();
+  });
+  $suggestionDelete?.addEventListener('click', (e) => {
+    e.preventDefault();
+    deleteSuggestion();
+  });
+  $adminSync?.addEventListener('click', (e) => {
+    e.preventDefault();
+    runManualDropboxSync($adminSync);
+  });
+
+  adminTabs.forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      const tab = btn.dataset.adminTab;
+      setAdminTab(tab);
+    });
+  });
+
+  setAdminTab(adminState.activeTab);
+
+  // ---------------------------
+  // Admin settings
+  // ---------------------------
+  function createAdminSettingCard(item) {
+    const card = document.createElement('div');
+    card.className = 'admin-setting';
+
+    const header = document.createElement('div');
+    header.className = 'admin-setting-header';
+    const title = document.createElement('h3');
+    title.className = 'admin-setting-title';
+    title.textContent = item.label || item.key;
+    const keyLabel = document.createElement('span');
+    keyLabel.className = 'admin-setting-key';
+    keyLabel.textContent = item.key;
+    header.appendChild(title);
+    header.appendChild(keyLabel);
+
+    const body = document.createElement('div');
+    body.className = 'admin-setting-body';
+    const input = document.createElement('input');
+    input.type = item.secret ? 'password' : 'text';
+    input.value = item.value || '';
+    if (item.placeholder_effective) input.placeholder = item.placeholder_effective;
+    input.dataset.key = item.key;
+    input.dataset.secret = item.secret ? '1' : '0';
+    input.dataset.hasValue = item.has_value ? '1' : '0';
+    if (item.secret && item.has_value) {
+      input.addEventListener('focus', () => {
+        if (!input.value) input.placeholder = '';
+      });
+      input.addEventListener('blur', () => {
+        if (!input.value && item.placeholder_effective) input.placeholder = item.placeholder_effective;
+      });
+    }
+    body.appendChild(input);
+
+    const actions = document.createElement('div');
+    actions.className = 'admin-setting-actions';
+    const saveBtn = document.createElement('button');
+    saveBtn.type = 'button';
+    saveBtn.className = 'btn';
+    saveBtn.textContent = 'Save';
+    saveBtn.addEventListener('click', async () => {
+      await saveAdminSetting(item, input, saveBtn);
+    });
+    const resetBtn = document.createElement('button');
+    resetBtn.type = 'button';
+    resetBtn.className = 'btn ghost';
+    resetBtn.textContent = 'Reset';
+    resetBtn.addEventListener('click', async () => {
+      if (!window.confirm(`Reset ${item.label || item.key} to default?`)) return;
+      await resetAdminSetting(item, resetBtn);
+    });
+    actions.appendChild(saveBtn);
+    actions.appendChild(resetBtn);
+    body.appendChild(actions);
+
+    card.appendChild(header);
+    card.appendChild(body);
+    return card;
+  }
+
+  function renderAdminGroup(container, items, options = {}) {
+    if (!container) return;
+    const list = Array.isArray(items) ? items : [];
+    if (!list.length) {
+      container.replaceChildren();
+      if (options.emptyMessage) {
+        const empty = document.createElement('p');
+        empty.className = 'muted';
+        empty.textContent = options.emptyMessage;
+        container.appendChild(empty);
+      }
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    list.forEach((item) => {
+      frag.appendChild(createAdminSettingCard(item));
+    });
+    container.replaceChildren(frag);
+  }
+
+  function renderAdminSettings() {
+    if (!$adminSettings) return;
+    const settings = Array.isArray(adminState.settings) ? adminState.settings : [];
+    const groups = settings.reduce((acc, item) => {
+      let cat = (item.category || 'api').toLowerCase();
+      if (cat === 'net_atlassian') cat = 'net-atlassian';
+      if (!acc[cat]) acc[cat] = [];
+      acc[cat].push(item);
+      return acc;
+    }, {});
+
+    renderAdminGroup(adminContainers['zabbix'], groups['zabbix'] || [], { emptyMessage: 'Configure Zabbix connection settings.' });
+    renderAdminGroup(adminContainers['net-atlassian'], groups['net-atlassian'] || [], { emptyMessage: 'Configure NetBox and Atlassian access.' });
+    renderAdminGroup(adminContainers['chat'], groups['chat'] || [], { emptyMessage: 'Add API keys and defaults to enable chat providers.' });
+    renderAdminGroup(adminContainers['export'], groups['export'] || [], { emptyMessage: 'No export settings available.' });
+    renderAdminGroup(adminContainers['api'], groups['api'] || [], { emptyMessage: 'No API/UI settings available.' });
+    renderAdminGroup(adminContainers['backup'], groups['backup'] || [], { emptyMessage: 'Configure Dropbox backup options.' });
+  }
+
+  async function loadAdminSettings(force = false) {
+    if (!$adminSettings) return;
+    if (adminState.loading && !force) return;
+    adminState.loading = true;
+    if ($adminStatus) $adminStatus.textContent = 'Loading settings…';
+    try {
+      const res = await fetch(`${API_BASE}/admin/env`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.detail || res.statusText);
+      }
+      const data = await res.json();
+      adminState.settings = Array.isArray(data?.settings) ? data.settings : [];
+      adminState.dropbox = data?.dropbox || {};
+      renderAdminSettings();
+      if ($adminStatus) {
+        const dropbox = adminState.dropbox || {};
+        if (!dropbox.enabled) {
+          $adminStatus.textContent = 'Dropbox sync disabled';
+        } else if (dropbox.enabled && !dropbox.configured) {
+          $adminStatus.textContent = 'Dropbox sync enabled but not configured';
+        } else if (dropbox.target) {
+          $adminStatus.textContent = `Dropbox sync → ${dropbox.target}`;
+        } else {
+          $adminStatus.textContent = 'Dropbox sync enabled';
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load admin settings', err);
+      if ($adminStatus) $adminStatus.textContent = 'Failed to load settings';
+      alert(`Unable to load admin settings: ${err?.message || err}`);
+    } finally {
+      setAdminTab(adminState.activeTab || 'zabbix');
+      adminState.loading = false;
+      // Load users and global keys when admin settings are loaded
+      if (adminState.activeTab === 'users') {
+        loadAdminUsers($adminUserIncludeInactive?.checked).catch(() => {});
+        loadAdminGlobalApiKeys().catch(() => {});
+      }
+    }
+  }
+
+  async function saveAdminSetting(item, input, button) {
+    const payload = { key: item.key, value: input.value };
+    if (item.secret && !input.value && item.has_value) {
+      payload.value = null;
+    }
+    button.disabled = true;
+    if ($adminStatus) $adminStatus.textContent = `Saving ${item.label || item.key}…`;
+    try {
+      const res = await fetch(`${API_BASE}/admin/env`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.detail || res.statusText);
+      }
+      const data = await res.json();
+      adminState.settings = Array.isArray(data?.settings) ? data.settings : [];
+      adminState.dropbox = data?.dropbox || {};
+      renderAdminSettings();
+      setAdminTab(adminState.activeTab || 'zabbix');
+      if ((item.category || '').toLowerCase() === 'chat') {
+        loadChatConfig();
+      }
+      if ($adminStatus) $adminStatus.textContent = 'Saved';
+    } catch (err) {
+      console.error('Failed to save setting', err);
+      if ($adminStatus) $adminStatus.textContent = 'Save failed';
+      alert(`Unable to save setting: ${err?.message || err}`);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function resetAdminSetting(item, button) {
+    button.disabled = true;
+    if ($adminStatus) $adminStatus.textContent = `Resetting ${item.label || item.key}…`;
+    try {
+      const res = await fetch(`${API_BASE}/admin/env/reset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: item.key }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.detail || res.statusText);
+      }
+      const data = await res.json();
+      adminState.settings = Array.isArray(data?.settings) ? data.settings : [];
+      adminState.dropbox = data?.dropbox || {};
+      renderAdminSettings();
+      setAdminTab(adminState.activeTab || 'zabbix');
+      if ((item.category || '').toLowerCase() === 'chat') {
+        loadChatConfig();
+      }
+      if ($adminStatus) $adminStatus.textContent = 'Reset complete';
+    } catch (err) {
+      console.error('Failed to reset setting', err);
+      if ($adminStatus) $adminStatus.textContent = 'Reset failed';
+      alert(`Unable to reset setting: ${err?.message || err}`);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function runManualDropboxSync(button) {
+    if (!window.confirm('Run Dropbox sync now?')) return;
+    button.disabled = true;
+    if ($adminStatus) $adminStatus.textContent = 'Running Dropbox sync…';
+    try {
+      const res = await fetch(`${API_BASE}/admin/dropbox-sync`, { method: 'POST' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.detail || res.statusText);
+      }
+      const data = await res.json();
+      if (data?.status === 'ok') {
+        alert(`Dropbox sync finished with ${data?.count || 0} file(s).`);
+      } else {
+        alert(`Dropbox sync response: ${data?.reason || data?.status || 'unknown'}`);
+      }
+      if ($adminStatus) $adminStatus.textContent = 'Dropbox sync completed';
+    } catch (err) {
+      console.error('Dropbox sync failed', err);
+      if ($adminStatus) $adminStatus.textContent = 'Dropbox sync failed';
+      alert(`Dropbox sync failed: ${err?.message || err}`);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  function setAdminTab(tab) {
+    const availableTabs = Array.from(adminTabs).map((btn) => btn.dataset.adminTab);
+    if (!availableTabs.includes(tab)) {
+      tab = availableTabs[0] || 'zabbix';
+    }
+    adminState.activeTab = tab;
+    adminTabs.forEach((btn) => {
+      const isActive = btn.dataset.adminTab === tab;
+      btn.classList.toggle('active', isActive);
+    });
+    Object.entries(adminPanels).forEach(([key, panel]) => {
+      if (!panel) return;
+      panel.classList.toggle('active', key === tab);
+    });
+    
+    // Load data when switching to users tab
+    if (tab === 'users') {
+      loadAdminUsers($adminUserIncludeInactive?.checked).catch(() => {});
+      loadAdminGlobalApiKeys().catch(() => {});
+      showAdminUserEmpty();
+    }
+  }
+
+  // ---------------------------
+  // User Management Functions
+  // ---------------------------
+  
+  async function loadAdminUsers(includeInactive = false) {
+    if (!$adminUserList) return;
+    try {
+      const params = new URLSearchParams();
+      if (includeInactive) params.set('include_inactive', 'true');
+      const res = await fetch(`${API_BASE}/admin/users?${params.toString()}`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.detail || res.statusText);
+      }
+      const users = await res.json();
+      adminState.users = Array.isArray(users) ? users : [];
+      renderAdminUserList();
+      flashStatus($adminUserStatus, `Loaded ${adminState.users.length} users`);
+    } catch (err) {
+      console.error('Failed to load users', err);
+      flashStatus($adminUserStatus, `Failed to load users: ${err?.message || err}`);
+    }
+  }
+
+  function renderAdminUserList() {
+    if (!$adminUserList) return;
+    $adminUserList.innerHTML = '';
+    
+    if (!adminState.users.length) {
+      const empty = document.createElement('div');
+      empty.className = 'account-empty';
+      empty.textContent = 'No users found.';
+      $adminUserList.appendChild(empty);
+      return;
+    }
+
+    const frag = document.createDocumentFragment();
+    adminState.users.forEach((user) => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'admin-user-item';
+      if (adminState.selectedUser?.id === user.id) {
+        item.classList.add('active');
+      }
+      
+      const name = document.createElement('div');
+      name.className = 'admin-user-name';
+      name.textContent = user.display_name || user.username;
+      
+      const meta = document.createElement('div');
+      meta.className = 'admin-user-meta';
+      const parts = [];
+      if (user.username !== (user.display_name || user.username)) {
+        parts.push(`@${user.username}`);
+      }
+      parts.push(humanizeRole(user.role));
+      if (!user.is_active) parts.push('Inactive');
+      meta.textContent = parts.join(' • ');
+      
+      item.appendChild(name);
+      item.appendChild(meta);
+      
+      item.addEventListener('click', () => {
+        selectAdminUser(user);
+      });
+      
+      frag.appendChild(item);
+    });
+    
+    $adminUserList.appendChild(frag);
+  }
+
+  function selectAdminUser(user) {
+    adminState.selectedUser = user;
+    renderAdminUserList(); // Re-render to update active state
+    showAdminUserDetail(user);
+  }
+
+  function showAdminUserDetail(user) {
+    if (!user) {
+      showAdminUserEmpty();
+      return;
+    }
+
+    // Hide empty state and show forms
+    if ($adminUserEmpty) $adminUserEmpty.classList.add('hidden');
+    if ($adminUserForm) $adminUserForm.classList.remove('hidden');
+    if ($adminUserPasswordForm) $adminUserPasswordForm.classList.remove('hidden');
+    if ($adminUserDelete) $adminUserDelete.classList.remove('hidden');
+
+    // Populate form
+    if ($adminUserFormTitle) $adminUserFormTitle.textContent = `Edit User: ${user.display_name || user.username}`;
+    if ($adminUserUsername) $adminUserUsername.value = user.username || '';
+    if ($adminUserDisplay) $adminUserDisplay.value = user.display_name || '';
+    if ($adminUserEmail) $adminUserEmail.value = user.email || '';
+    if ($adminUserRole) $adminUserRole.value = user.role || 'member';
+    if ($adminUserActive) $adminUserActive.checked = user.is_active !== false;
+
+    // Hide new password field for existing users
+    if ($adminUserNewPasswordRow) $adminUserNewPasswordRow.style.display = 'none';
+    if ($adminUserForm) $adminUserForm.classList.remove('create-mode');
+
+    // Clear password form
+    if ($adminUserPassword) $adminUserPassword.value = '';
+    
+    // Clear status messages
+    flashStatus($adminUserFormStatus, '');
+    flashStatus($adminUserPasswordStatus, '');
+  }
+
+  function showAdminUserEmpty() {
+    adminState.selectedUser = null;
+    if ($adminUserEmpty) $adminUserEmpty.classList.remove('hidden');
+    if ($adminUserForm) $adminUserForm.classList.add('hidden');
+    if ($adminUserPasswordForm) $adminUserPasswordForm.classList.add('hidden');
+    if ($adminUserDelete) $adminUserDelete.classList.add('hidden');
+  }
+
+  function showAdminUserCreate() {
+    adminState.selectedUser = null;
+    
+    // Show forms in create mode
+    if ($adminUserEmpty) $adminUserEmpty.classList.add('hidden');
+    if ($adminUserForm) {
+      $adminUserForm.classList.remove('hidden');
+      $adminUserForm.classList.add('create-mode');
+    }
+    if ($adminUserPasswordForm) $adminUserPasswordForm.classList.add('hidden');
+    if ($adminUserDelete) $adminUserDelete.classList.add('hidden');
+
+    // Clear and setup form for new user
+    if ($adminUserFormTitle) $adminUserFormTitle.textContent = 'Create New User';
+    if ($adminUserUsername) {
+      $adminUserUsername.value = '';
+      $adminUserUsername.removeAttribute('readonly');
+    }
+    if ($adminUserDisplay) $adminUserDisplay.value = '';
+    if ($adminUserEmail) $adminUserEmail.value = '';
+    if ($adminUserNewPassword) $adminUserNewPassword.value = '';
+    if ($adminUserRole) $adminUserRole.value = 'member';
+    if ($adminUserActive) $adminUserActive.checked = true;
+
+    // Show new password field for new users
+    if ($adminUserNewPasswordRow) $adminUserNewPasswordRow.style.display = 'flex';
+    
+    // Clear status messages
+    flashStatus($adminUserFormStatus, '');
+    flashStatus($adminUserPasswordStatus, '');
+    
+    // Focus username field
+    setTimeout(() => $adminUserUsername?.focus(), 100);
+  }
+
+  async function saveAdminUser() {
+    const isCreate = !adminState.selectedUser;
+    const username = ($adminUserUsername?.value || '').trim();
+    const displayName = ($adminUserDisplay?.value || '').trim();
+    const email = ($adminUserEmail?.value || '').trim();
+    const role = $adminUserRole?.value || 'member';
+    const isActive = $adminUserActive?.checked !== false;
+
+    if (!username) {
+      flashStatus($adminUserFormStatus, 'Username is required');
+      $adminUserUsername?.focus();
+      return;
+    }
+
+    if (isCreate) {
+      const password = ($adminUserNewPassword?.value || '').trim();
+      if (!password) {
+        flashStatus($adminUserFormStatus, 'Password is required for new users');
+        $adminUserNewPassword?.focus();
+        return;
+      }
+      if (password.length < 8) {
+        flashStatus($adminUserFormStatus, 'Password must be at least 8 characters');
+        $adminUserNewPassword?.focus();
+        return;
+      }
+    }
+
+    if (email && !email.includes('@')) {
+      flashStatus($adminUserFormStatus, 'Invalid email address');
+      $adminUserEmail?.focus();
+      return;
+    }
+
+    flashStatus($adminUserFormStatus, isCreate ? 'Creating user...' : 'Updating user...');
+    
+    try {
+      let res;
+      if (isCreate) {
+        const payload = {
+          username: username.toLowerCase(),
+          password: $adminUserNewPassword.value,
+          display_name: displayName || null,
+          email: email || null,
+          role: role,
+        };
+        res = await fetch(`${API_BASE}/admin/users`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } else {
+        const payload = {
+          display_name: displayName || null,
+          email: email || null,
+          role: role,
+          is_active: isActive,
+        };
+        res = await fetch(`${API_BASE}/admin/users/${encodeURIComponent(adminState.selectedUser.id)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      }
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.detail || res.statusText);
+      }
+
+      const savedUser = await res.json();
+      flashStatus($adminUserFormStatus, isCreate ? 'User created successfully' : 'User updated successfully');
+      
+      // Refresh user list and select the saved user
+      await loadAdminUsers($adminUserIncludeInactive?.checked);
+      if (isCreate) {
+        showAdminUserEmpty();
+      } else {
+        selectAdminUser(savedUser);
+      }
+    } catch (err) {
+      console.error('Failed to save user', err);
+      flashStatus($adminUserFormStatus, `Failed to save user: ${err?.message || err}`);
+    }
+  }
+
+  async function setAdminUserPassword() {
+    if (!adminState.selectedUser) return;
+    
+    const newPassword = ($adminUserPassword?.value || '').trim();
+    if (!newPassword) {
+      flashStatus($adminUserPasswordStatus, 'Password is required');
+      $adminUserPassword?.focus();
+      return;
+    }
+    if (newPassword.length < 8) {
+      flashStatus($adminUserPasswordStatus, 'Password must be at least 8 characters');
+      $adminUserPassword?.focus();
+      return;
+    }
+
+    flashStatus($adminUserPasswordStatus, 'Setting password...');
+    
+    try {
+      const res = await fetch(`${API_BASE}/admin/users/${encodeURIComponent(adminState.selectedUser.id)}/password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ new_password: newPassword }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.detail || res.statusText);
+      }
+
+      flashStatus($adminUserPasswordStatus, 'Password updated successfully');
+      if ($adminUserPassword) $adminUserPassword.value = '';
+    } catch (err) {
+      console.error('Failed to set password', err);
+      flashStatus($adminUserPasswordStatus, `Failed to set password: ${err?.message || err}`);
+    }
+  }
+
+  async function deleteAdminUser() {
+    if (!adminState.selectedUser) return;
+    
+    const user = adminState.selectedUser;
+    const displayName = user.display_name || user.username;
+    
+    if (!confirm(`Are you sure you want to delete user "${displayName}"? This action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      const res = await fetch(`${API_BASE}/admin/users/${encodeURIComponent(user.id)}`, {
+        method: 'DELETE',
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.detail || res.statusText);
+      }
+
+      flashStatus($adminUserStatus, `User "${displayName}" deleted successfully`);
+      
+      // Refresh user list and clear selection
+      await loadAdminUsers($adminUserIncludeInactive?.checked);
+      showAdminUserEmpty();
+    } catch (err) {
+      console.error('Failed to delete user', err);
+      flashStatus($adminUserStatus, `Failed to delete user: ${err?.message || err}`);
+    }
+  }
+
+  async function loadAdminGlobalApiKeys() {
+    if (!$adminGlobalList) return;
+    try {
+      const res = await fetch(`${API_BASE}/admin/global-api-keys`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.detail || res.statusText);
+      }
+      const keys = await res.json();
+      adminState.globalApiKeys = Array.isArray(keys) ? keys : [];
+      renderAdminGlobalApiKeys();
+    } catch (err) {
+      console.error('Failed to load global API keys', err);
+      flashStatus($adminGlobalStatus, `Failed to load global API keys: ${err?.message || err}`);
+    }
+  }
+
+  function renderAdminGlobalApiKeys() {
+    if (!$adminGlobalList) return;
+    $adminGlobalList.innerHTML = '';
+    
+    if (!adminState.globalApiKeys.length) {
+      const empty = document.createElement('div');
+      empty.className = 'account-token-empty';
+      empty.textContent = 'No global API keys configured.';
+      $adminGlobalList.appendChild(empty);
+      return;
+    }
+
+    const frag = document.createDocumentFragment();
+    adminState.globalApiKeys.forEach((key) => {
+      const card = document.createElement('div');
+      card.className = 'admin-global-card';
+      
+      const header = document.createElement('div');
+      header.className = 'admin-global-card-header';
+      
+      const meta = document.createElement('div');
+      const title = document.createElement('strong');
+      title.textContent = providerLabel(key.provider);
+      meta.appendChild(title);
+      if (key.label) {
+        const label = document.createElement('div');
+        label.textContent = key.label;
+        label.style.fontSize = '12px';
+        label.style.color = 'var(--muted)';
+        meta.appendChild(label);
+      }
+      
+      const actions = document.createElement('div');
+      actions.className = 'admin-global-card-actions';
+      
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'btn ghost';
+      editBtn.textContent = 'Edit';
+      editBtn.addEventListener('click', () => editGlobalApiKey(key));
+      
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className = 'btn ghost';
+      deleteBtn.textContent = 'Delete';
+      deleteBtn.addEventListener('click', () => deleteGlobalApiKey(key.provider));
+      
+      actions.appendChild(editBtn);
+      actions.appendChild(deleteBtn);
+      
+      header.appendChild(meta);
+      header.appendChild(actions);
+      card.appendChild(header);
+      
+      frag.appendChild(card);
+    });
+    
+    $adminGlobalList.appendChild(frag);
+  }
+
+  function showGlobalApiKeyForm(key = null) {
+    adminState.editingGlobalKey = true;
+    if ($adminGlobalForm) $adminGlobalForm.classList.remove('hidden');
+    
+    // Populate providers dropdown
+    if ($adminGlobalProvider) {
+      $adminGlobalProvider.innerHTML = '';
+      const providers = accountState.providers.length
+        ? accountState.providers
+        : defaultChatProviders.map((id) => ({ id }));
+      
+      providers.forEach((provider) => {
+        const option = document.createElement('option');
+        option.value = provider.id;
+        option.textContent = providerLabel(provider.id);
+        $adminGlobalProvider.appendChild(option);
+      });
+    }
+    
+    if (key) {
+      // Edit mode
+      if ($adminGlobalProvider) $adminGlobalProvider.value = key.provider;
+      if ($adminGlobalLabel) $adminGlobalLabel.value = key.label || '';
+      if ($adminGlobalSecret) $adminGlobalSecret.value = '';
+    } else {
+      // Create mode
+      if ($adminGlobalProvider) $adminGlobalProvider.value = '';
+      if ($adminGlobalLabel) $adminGlobalLabel.value = '';
+      if ($adminGlobalSecret) $adminGlobalSecret.value = '';
+    }
+    
+    flashStatus($adminGlobalStatus, '');
+    setTimeout(() => $adminGlobalSecret?.focus(), 100);
+  }
+
+  function hideGlobalApiKeyForm() {
+    adminState.editingGlobalKey = false;
+    if ($adminGlobalForm) $adminGlobalForm.classList.add('hidden');
+    flashStatus($adminGlobalStatus, '');
+  }
+
+  function editGlobalApiKey(key) {
+    showGlobalApiKeyForm(key);
+  }
+
+  async function saveGlobalApiKey() {
+    const provider = ($adminGlobalProvider?.value || '').trim();
+    const label = ($adminGlobalLabel?.value || '').trim();
+    const secret = ($adminGlobalSecret?.value || '').trim();
+
+    if (!provider) {
+      flashStatus($adminGlobalStatus, 'Provider is required');
+      $adminGlobalProvider?.focus();
+      return;
+    }
+    if (!secret) {
+      flashStatus($adminGlobalStatus, 'Secret is required');
+      $adminGlobalSecret?.focus();
+      return;
+    }
+
+    flashStatus($adminGlobalStatus, 'Saving...');
+    
+    try {
+      const res = await fetch(`${API_BASE}/admin/global-api-keys/${encodeURIComponent(provider)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ secret, label: label || null }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.detail || res.statusText);
+      }
+
+      flashStatus($adminGlobalStatus, 'Global API key saved successfully');
+      hideGlobalApiKeyForm();
+      await loadAdminGlobalApiKeys();
+      await refreshChatProviders(); // Refresh chat providers to update UI
+    } catch (err) {
+      console.error('Failed to save global API key', err);
+      flashStatus($adminGlobalStatus, `Failed to save: ${err?.message || err}`);
+    }
+  }
+
+  async function deleteGlobalApiKey(provider) {
+    if (!provider) return;
+    
+    if (!confirm(`Are you sure you want to delete the global API key for ${providerLabel(provider)}?`)) {
+      return;
+    }
+
+    try {
+      const res = await fetch(`${API_BASE}/admin/global-api-keys/${encodeURIComponent(provider)}`, {
+        method: 'DELETE',
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.detail || res.statusText);
+      }
+
+      flashStatus($adminGlobalStatus, 'Global API key deleted successfully');
+      await loadAdminGlobalApiKeys();
+      await refreshChatProviders(); // Refresh chat providers to update UI
+    } catch (err) {
+      console.error('Failed to delete global API key', err);
+      flashStatus($adminGlobalStatus, `Failed to delete: ${err?.message || err}`);
+    }
+  }
+
   // Chat placeholder
   const $chatProvider = document.getElementById('chat-provider');
   const $chatModel = document.getElementById('chat-model');
+  const $chatDataset = document.getElementById('chat-dataset');
   const $chatInput = document.getElementById('chat-input');
   const $chatSend = document.getElementById('chat-send');
   const $chatLog = document.getElementById('chat-log');
+  const $chatSessions = document.getElementById('chat-sessions');
+  const $chatNew = document.getElementById('chat-new');
+  const $chatMessages = document.getElementById('chat-messages');
   let chatSessionId = null;
-  function ensureChatSession() {
-    if (chatSessionId) return chatSessionId;
-    try { chatSessionId = localStorage.getItem('chat_session_id'); } catch {}
-    if (!chatSessionId) {
-      // Simple random id
-      chatSessionId = 'c_' + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
-      try { localStorage.setItem('chat_session_id', chatSessionId); } catch {}
-    }
-    return chatSessionId;
-  }
   function saveChatPrefs() {
     try {
       if ($chatProvider) localStorage.setItem('chat_provider', $chatProvider.value || '');
       if ($chatModel) localStorage.setItem('chat_model', $chatModel.value || '');
+      if ($chatDataset) localStorage.setItem('chat_dataset', $chatDataset.value || 'merged');
       const streamEl = document.getElementById('chat-stream');
       if (streamEl) localStorage.setItem('chat_stream', streamEl.checked ? '1' : '0');
       const ctxEl = document.getElementById('chat-include-data');
@@ -1050,13 +3285,29 @@
       const ctxEl = document.getElementById('chat-include-data');
       const savedCtx = localStorage.getItem('chat_include_data');
       if (ctxEl && savedCtx != null) ctxEl.checked = savedCtx === '1';
+      const savedDataset = localStorage.getItem('chat_dataset');
+      if ($chatDataset) {
+        const normalized = savedDataset === 'all' ? 'merged' : savedDataset;
+        if (normalized && Array.from($chatDataset.options || []).some(opt => opt.value === normalized)) {
+          $chatDataset.value = normalized;
+        } else if (!$chatDataset.value) {
+          $chatDataset.value = 'merged';
+        }
+      }
     } catch {}
+  }
+  function setupChatPrefListeners() {
+    $chatProvider?.addEventListener('change', () => saveChatPrefs());
+    $chatModel?.addEventListener('change', () => saveChatPrefs());
+    $chatModel?.addEventListener('blur', () => saveChatPrefs());
+    $chatDataset?.addEventListener('change', () => saveChatPrefs());
+    document.getElementById('chat-stream')?.addEventListener('change', () => saveChatPrefs());
+    document.getElementById('chat-include-data')?.addEventListener('change', () => saveChatPrefs());
   }
   async function loadChatDefaults() {
     try {
-      const res = await fetch(`${API_BASE}/chat/providers`);
-      if (!res.ok) return;
-      const data = await res.json();
+      const data = await refreshChatProviders();
+      if (!data) return;
       // Set default provider if none selected
       const dprov = data?.default_provider || 'openai';
       if ($chatProvider && !$chatProvider.value) $chatProvider.value = dprov;
@@ -1067,26 +3318,230 @@
     } catch {}
   }
   function appendChat(role, text) {
-    if (!$chatLog) return;
-    const who = role === 'user' ? 'Jij' : 'AI';
-    const div = document.createElement('div');
-    div.innerHTML = `<strong>${who}:</strong> ${text}`;
-    $chatLog.appendChild(div);
-    $chatLog.scrollTop = $chatLog.scrollHeight;
+    if (!$chatMessages) return;
+    
+    // Hide empty state if present
+    const emptyState = $chatMessages.querySelector('.chat-empty-state');
+    if (emptyState) {
+      emptyState.style.display = 'none';
+    }
+    
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `chat-message ${role}`;
+    
+    const bubble = document.createElement('div');
+    bubble.className = 'chat-message-bubble';
+    
+    // Use markdown parsing for assistant messages, plain text for user messages
+    if (role === 'assistant') {
+      bubble.innerHTML = parseMarkdown(text);
+    } else {
+      bubble.textContent = text;
+    }
+    
+    const time = document.createElement('div');
+    time.className = 'chat-message-time';
+    time.textContent = new Date().toLocaleTimeString();
+    
+    messageDiv.appendChild(bubble);
+    messageDiv.appendChild(time);
+    
+    $chatMessages.appendChild(messageDiv);
+    $chatMessages.scrollTop = $chatMessages.scrollHeight;
   }
+
   async function refreshChatHistory() {
-    const sid = ensureChatSession();
+    const sid = await ensureChatSession();
+    if (!sid) return;
     try {
       const res = await fetch(`${API_BASE}/chat/history?session_id=${encodeURIComponent(sid)}`);
       if (!res.ok) return;
       const data = await res.json();
       const msgs = Array.isArray(data?.messages) ? data.messages : [];
-      if ($chatLog) $chatLog.innerHTML = '';
+      clearChatLog();
       for (const m of msgs) {
         if (m && typeof m.content === 'string' && typeof m.role === 'string') appendChat(m.role, m.content);
       }
-    } catch {}
+    } catch (err) {
+      console.error('Failed to load chat history', err);
+    }
   }
+
+  function escapeHtml(value) {
+    return String(value || '').replace(/[&<>"]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m] || m));
+  }
+
+  function formatTimestamp(ts) {
+    if (!ts) return '';
+    try {
+      const d = new Date(ts);
+      if (Number.isNaN(d.getTime())) return ts;
+      return d.toLocaleString();
+    } catch {
+      return ts;
+    }
+  }
+
+  function clearChatLog() {
+    if ($chatMessages) {
+      // Show empty state instead of clearing completely
+      $chatMessages.innerHTML = `
+        <div class="chat-empty-state">
+          <div class="chat-empty-icon">💬</div>
+          <h3>Welcome to AI Chat</h3>
+          <p>Ask me anything about your data. I'll help you analyze and provide insights.</p>
+          <div class="chat-suggestions">
+            <button class="chat-suggestion-btn" data-suggestion="Show me the latest devices added to NetBox">
+              Show latest devices
+            </button>
+            <button class="chat-suggestion-btn" data-suggestion="What are the current active alerts in Zabbix?">
+              Current alerts
+            </button>
+            <button class="chat-suggestion-btn" data-suggestion="Summarize the recent Jira tickets">
+              Recent tickets
+            </button>
+          </div>
+        </div>
+      `;
+      setupSuggestionButtons();
+    }
+  }
+
+  function setupSuggestionButtons() {
+    const suggestionButtons = document.querySelectorAll('.chat-suggestion-btn');
+    suggestionButtons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const suggestion = btn.getAttribute('data-suggestion');
+        if ($chatInput) {
+          $chatInput.value = suggestion;
+          $chatInput.focus();
+          // Auto-send the suggestion
+          setTimeout(() => sendChat(), 100);
+        }
+      });
+    });
+  }
+
+  // Auto-resize textarea
+  function setupAutoResize() {
+    if ($chatInput) {
+      $chatInput.addEventListener('input', () => {
+        $chatInput.style.height = 'auto';
+        $chatInput.style.height = Math.min($chatInput.scrollHeight, 120) + 'px';
+      });
+    }
+  }
+
+  function renderChatSessions() {
+    if (!$chatSessions) return;
+    const sessions = Array.isArray(chatSessionsState.items) ? chatSessionsState.items : [];
+    if (!sessions.length) {
+      const empty = document.createElement('div');
+      empty.className = 'chat-sessions-empty';
+      empty.textContent = 'No chats yet';
+      $chatSessions.replaceChildren(empty);
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    sessions.forEach((session) => {
+      if (!session || !session.session_id) return;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'chat-session';
+      if (session.session_id === chatSessionsState.active) btn.classList.add('active');
+      const title = escapeHtml(session.title || 'New chat');
+      const time = formatTimestamp(session.updated_at);
+      btn.innerHTML = `<div class="chat-session-title">${title}</div><div class="chat-session-meta">${escapeHtml(time)}</div>`;
+      btn.addEventListener('click', () => {
+        setActiveChatSession(session.session_id);
+      });
+      frag.appendChild(btn);
+    });
+    $chatSessions.replaceChildren(frag);
+  }
+
+  async function setActiveChatSession(sessionId, options = {}) {
+    if (!sessionId) return;
+    chatSessionId = sessionId;
+    chatSessionsState.active = sessionId;
+    try { localStorage.setItem('chat_session_id', sessionId); } catch {}
+    renderChatSessions();
+    if (options.loadHistory !== false) {
+      await refreshChatHistory();
+    }
+  }
+
+  async function ensureChatSession() {
+    if (chatSessionId) return chatSessionId;
+    try {
+      const stored = localStorage.getItem('chat_session_id');
+      if (stored) chatSessionId = stored;
+    } catch {}
+    if (chatSessionId) return chatSessionId;
+    await createChatSession();
+    return chatSessionId;
+  }
+
+  async function createChatSession(name) {
+    try {
+      const res = await fetch(`${API_BASE}/chat/session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(name ? { name } : {}),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.detail || res.statusText);
+      }
+      const session = await res.json();
+      chatSessionId = session.session_id;
+      chatSessionsState.active = chatSessionId;
+      chatSessionsState.items = [session, ...chatSessionsState.items.filter((s) => s.session_id !== chatSessionId)];
+      try { localStorage.setItem('chat_session_id', chatSessionId); } catch {}
+      renderChatSessions();
+      clearChatLog();
+      return chatSessionId;
+    } catch (err) {
+      console.error('Failed to create chat session', err);
+      alert(`Unable to start a new chat: ${err?.message || err}`);
+      return null;
+    }
+  }
+
+  async function fetchChatSessions() {
+    if (chatSessionsState.loading) return;
+    chatSessionsState.loading = true;
+    try {
+      const res = await fetch(`${API_BASE}/chat/sessions`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const sessions = Array.isArray(data?.sessions) ? data.sessions : [];
+      chatSessionsState.items = sessions;
+      let desired = chatSessionId;
+      if (!desired) {
+        try { desired = localStorage.getItem('chat_session_id'); } catch {}
+      }
+      if (desired && !sessions.some((s) => s?.session_id === desired)) desired = null;
+      if (!desired) {
+        if (sessions.length) {
+          desired = sessions[0].session_id;
+        } else {
+          await createChatSession();
+          return;
+        }
+      }
+      chatSessionId = desired;
+      chatSessionsState.active = desired;
+      try { localStorage.setItem('chat_session_id', desired); } catch {}
+      renderChatSessions();
+      await refreshChatHistory();
+    } catch (err) {
+      console.error('Failed to load chat sessions', err);
+    } finally {
+      chatSessionsState.loading = false;
+    }
+  }
+
   async function sendChat() {
     const q = ($chatInput?.value || '').trim();
     if (!q) return;
@@ -1094,14 +3549,17 @@
     if ($chatInput) $chatInput.value = '';
     const prov = ($chatProvider?.value || 'openai');
     const mdl = ($chatModel?.value || '');
+    const datasetRaw = ($chatDataset?.value || 'merged');
+    const dataset = datasetRaw === 'all' ? 'merged' : datasetRaw;
     saveChatPrefs();
-    const sid = ensureChatSession();
-    const sys = 'You only provide suggestions and example text. You do not perform actions. Where possible, provide ready-to-copy text the user can paste into Jira or Confluence.';
+    const sid = await ensureChatSession();
+    if (!sid) return;
+    const sys = chatConfig.systemPrompt || '';
     // Placeholder tijdens verwerken
     let placeholder = document.createElement('div');
     placeholder.innerHTML = `<em>AI is thinking…</em>`;
-    $chatLog?.appendChild(placeholder);
-    $chatLog?.scrollTo(0, $chatLog.scrollHeight);
+    $chatMessages?.appendChild(placeholder);
+    $chatMessages?.scrollTo(0, $chatMessages.scrollHeight);
     try {
       const includeData = !!document.getElementById('chat-include-data')?.checked;
       const wantStream = !!document.getElementById('chat-stream')?.checked;
@@ -1109,14 +3567,14 @@
       const res = wantStream ? await fetch(`${API_BASE}/chat/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: prov, model: mdl, message: q, session_id: sid, system: sys, temperature: 0.2, include_context: includeData, dataset: 'all' }),
+        body: JSON.stringify({ provider: prov, model: mdl, message: q, session_id: sid, system: sys, temperature: chatConfig.temperature, include_context: includeData, dataset }),
       }) : null;
       if (!wantStream || !res || !res.ok || !res.body) {
         // Fallback to non-streaming
         const res2 = await fetch(`${API_BASE}/chat/complete`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ provider: prov, model: mdl, message: q, session_id: sid, system: sys, temperature: 0.2, include_context: includeData, dataset: 'all' }),
+          body: JSON.stringify({ provider: prov, model: mdl, message: q, session_id: sid, system: sys, temperature: chatConfig.temperature, include_context: includeData, dataset }),
         });
         const data2 = await res2.json().catch(() => ({}));
         placeholder.remove();
@@ -1125,25 +3583,39 @@
         } else {
           appendChat('assistant', data2?.reply || '(empty response)');
         }
+        await fetchChatSessions();
         return;
       }
       // Stream tonen
-      const msgDiv = document.createElement('div');
-      msgDiv.innerHTML = `<strong>AI:</strong> `;
-      placeholder.replaceWith(msgDiv);
+      const messageDiv = document.createElement('div');
+      messageDiv.className = 'chat-message assistant';
+      
+      const bubble = document.createElement('div');
+      bubble.className = 'chat-message-bubble';
+      
+      const time = document.createElement('div');
+      time.className = 'chat-message-time';
+      time.textContent = new Date().toLocaleTimeString();
+      
+      messageDiv.appendChild(bubble);
+      messageDiv.appendChild(time);
+      placeholder.replaceWith(messageDiv);
+      
       const reader = res.body.getReader();
       const td = new TextDecoder();
       let gotAny = false;
+      let fullText = '';
+      
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         const text = td.decode(value, { stream: true });
         if (text) {
           gotAny = true;
-          const span = document.createElement('span');
-          span.textContent = text;
-          msgDiv.appendChild(span);
-          $chatLog?.scrollTo(0, $chatLog.scrollHeight);
+          fullText += text;
+          // Update the bubble with markdown-rendered content
+          bubble.innerHTML = parseMarkdown(fullText);
+          $chatMessages?.scrollTo(0, $chatMessages.scrollHeight);
         }
       }
       // No chunks? Fallback to complete
@@ -1151,15 +3623,16 @@
         const res3 = await fetch(`${API_BASE}/chat/complete`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ provider: prov, model: mdl, message: q, session_id: sid, system: sys, temperature: 0.2, include_context: includeData, dataset: 'all' }),
+          body: JSON.stringify({ provider: prov, model: mdl, message: q, session_id: sid, system: sys, temperature: chatConfig.temperature, include_context: includeData, dataset }),
         });
         const data3 = await res3.json().catch(() => ({}));
         if (!res3.ok) {
-          msgDiv.appendChild(document.createTextNode(data3?.detail || ` Error: ${res3.status} ${res3.statusText}`));
+          bubble.innerHTML = parseMarkdown(data3?.detail || `Error: ${res3.status} ${res3.statusText}`);
         } else {
-          msgDiv.appendChild(document.createTextNode(data3?.reply || ''));
+          bubble.innerHTML = parseMarkdown(data3?.reply || '');
         }
       }
+      await fetchChatSessions();
     } catch (e) {
       placeholder.remove();
       appendChat('assistant', `Error: ${e?.message || e}`);
@@ -1172,6 +3645,12 @@
       e.preventDefault();
       sendChat();
     }
+  });
+  
+  // New chat button event listener
+  $chatNew?.addEventListener('click', async () => {
+    await createChatSession();
+    clearChatLog();
   });
 
   // Zabbix/Jira/Confluence placeholders
@@ -2070,19 +4549,25 @@
   // Init
   // Ensure fields panel is closed on load
   if ($fieldsPanel) $fieldsPanel.hidden = true;
+  populateAccountForms();
+  loadCurrentUser();
   // Use default dataset (persisted state handles columns/filters/density)
   // Set initial dataset tab active
   $dsTabs?.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.getAttribute('data-ds') === dataset));
   // Initial page from hash
   // Prepare chat defaults before showing the page (so UI sensible)
+  setupChatPrefListeners();
   loadChatPrefs();
   loadChatDefaults();
+  loadChatConfig();
   const initialPage = parseHashPage();
   // Clean up any legacy ?view=... from the URL at startup
   try { updateURLDebounced(); } catch {}
   if (initialPage === 'chat') {
     ensureChatSession();
     refreshChatHistory();
+    setupAutoResize();
+    setupSuggestionButtons();
   }
   showPage(initialPage);
   // Ensure Export dataset loads immediately on first load
@@ -2091,6 +4576,55 @@
   }
   // When switching to chat, ensure session and history are loaded
   
+
+  // ---------------------------
+  // User Management Event Listeners
+  // ---------------------------
+  
+  // User list refresh and include inactive toggle
+  $adminUserRefresh?.addEventListener('click', () => {
+    loadAdminUsers($adminUserIncludeInactive?.checked).catch(() => {});
+  });
+  
+  $adminUserIncludeInactive?.addEventListener('change', () => {
+    loadAdminUsers($adminUserIncludeInactive.checked).catch(() => {});
+  });
+  
+  // Create new user button
+  $adminUserCreate?.addEventListener('click', () => {
+    showAdminUserCreate();
+  });
+  
+  // User form submission
+  $adminUserForm?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    saveAdminUser();
+  });
+  
+  // Password form submission
+  $adminUserPasswordForm?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    setAdminUserPassword();
+  });
+  
+  // Delete user button
+  $adminUserDelete?.addEventListener('click', () => {
+    deleteAdminUser();
+  });
+  
+  // Global API key management
+  $adminGlobalAdd?.addEventListener('click', () => {
+    showGlobalApiKeyForm();
+  });
+  
+  $adminGlobalForm?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    saveGlobalApiKey();
+  });
+  
+  $adminGlobalCancel?.addEventListener('click', () => {
+    hideGlobalApiKeyForm();
+  });
 
   // Keyboard hotkeys
   function isTypingTarget(el) {

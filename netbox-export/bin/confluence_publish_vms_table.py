@@ -175,7 +175,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Publish NetBox VMs CSV as Confluence table")
     parser.add_argument(
         "--csv",
-        default="netbox-export/data/netbox_vms_export.csv",
+        default="data/netbox_vms_export.csv",
         help="Path to the VMs export CSV",
     )
     parser.add_argument(
