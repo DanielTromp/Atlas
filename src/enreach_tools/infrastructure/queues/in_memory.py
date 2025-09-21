@@ -4,8 +4,8 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections import defaultdict
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
-from typing import Mapping, Sequence
 
 from enreach_tools.application.orchestration.queue import JobQueue, JobQueueStats
 from enreach_tools.domain.tasks import JobFailure, JobRecord, JobResult, JobSpec, JobStatus, JSONValue
@@ -46,7 +46,7 @@ class InMemoryJobQueue(JobQueue):
     async def reserve(self, *, timeout: float | None = None) -> JobRecord | None:
         try:
             job_id = await asyncio.wait_for(self._queue.get(), timeout=timeout) if timeout else await self._queue.get()
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return None
 
         async with self._lock:

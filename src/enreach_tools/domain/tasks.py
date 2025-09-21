@@ -1,10 +1,11 @@
 """Domain models for asynchronous jobs and orchestration."""
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum, IntEnum
-from typing import Mapping, Sequence, TypeAlias
+from typing import TypeAlias
 
 JSONPrimitive: TypeAlias = str | int | float | bool | None
 JSONValue: TypeAlias = JSONPrimitive | Sequence["JSONValue"] | Mapping[str, "JSONValue"]
@@ -75,11 +76,11 @@ class JobFailure:
 
 
 __all__ = [
+    "JSONValue",
     "JobFailure",
     "JobPriority",
     "JobRecord",
     "JobResult",
     "JobSpec",
     "JobStatus",
-    "JSONValue",
 ]

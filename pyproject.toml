@@ -45,8 +45,14 @@ exclude = ["personal*"]
 [tool.uv]
 dev-dependencies = [
   "pytest>=7",
+  "pytest-benchmark>=4",
   "ruff>=0.5",
   "mypy>=1.8",
+]
+
+[tool.pytest.ini_options]
+markers = [
+  "perf: performance regression benchmarks",
 ]
 
 [tool.ruff]

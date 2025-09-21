@@ -25,6 +25,7 @@ from fastapi.responses import (
     FileResponse,
     HTMLResponse,
     JSONResponse,
+    PlainTextResponse,
     RedirectResponse,
     StreamingResponse,
 )
@@ -59,12 +60,16 @@ from enreach_tools.infrastructure.external import (
     ZabbixConfigError,
     ZabbixError,
 )
+from enreach_tools.infrastructure.logging import get_logger
+from enreach_tools.infrastructure.metrics import get_metrics_snapshot, snapshot_to_prometheus
+from enreach_tools.infrastructure.tracing import init_tracing, tracing_enabled
 from enreach_tools.interfaces.api import bootstrap_api
 from enreach_tools.interfaces.api.dependencies import (
     CurrentUserDep,
     DbSessionDep,
     OptionalUserDep,
 )
+from enreach_tools.interfaces.api.middleware import ObservabilityMiddleware
 
 try:
     from openai import OpenAI  # type: ignore
@@ -73,15 +78,31 @@ except Exception:  # optional dependency
 
 load_env()
 
+logger = get_logger(__name__)
+if tracing_enabled():
+    init_tracing("enreach-api")
+
 # Ensure the application database is migrated to the latest revision so
 # authentication state can be loaded lazily by request handlers.
 try:
     init_database()
 except Exception as exc:  # pragma: no cover - surfaces during boot
-    print(f"[WARN] Failed to initialise database: {exc}")
+    logger.exception("Failed to initialise database during API startup", extra={"error": str(exc)})
     raise
 
 SessionLocal = get_sessionmaker()
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+METRICS_ENABLED = _env_flag("ENREACH_METRICS_ENABLED")
+METRICS_TOKEN = os.getenv("ENREACH_METRICS_TOKEN", "").strip()
+METRICS_MEDIA_TYPE = "text/plain; version=0.0.4; charset=utf-8"
 
 
 def ensure_default_admin() -> None:
@@ -94,9 +115,9 @@ def ensure_default_admin() -> None:
         seed_password = os.getenv("ENREACH_DEFAULT_ADMIN_PASSWORD", "").strip() or UI_PASSWORD
 
         if not seed_password:
-            print(
-                "[WARN] No users exist and ENREACH_DEFAULT_ADMIN_PASSWORD is not set; "
-                "set it (or ENREACH_UI_PASSWORD) to bootstrap the first login."
+            logger.warning(
+                "No users exist and ENREACH_DEFAULT_ADMIN_PASSWORD is not set; set it (or ENREACH_UI_PASSWORD) to bootstrap the first login.",
+                extra={"username": username},
             )
             return
 
@@ -109,7 +130,10 @@ def ensure_default_admin() -> None:
         )
         db.add(user)
         db.commit()
-        print(f"[INFO] Created default admin user '{username}'. Please change the password after login.")
+        logger.info(
+            "Created default admin user",
+            extra={"username": username},
+        )
 
 
 ensure_default_admin()
@@ -197,13 +221,37 @@ def _get_global_api_key(db: Session, provider: str) -> GlobalAPIKey | None:
 
 app = FastAPI(title="Enreach Tools API", version="0.1.0")
 app.add_middleware(
+    ObservabilityMiddleware,
+    metrics_enabled=METRICS_ENABLED,
+)
+app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
+
 app.include_router(bootstrap_api())
+
+
+def _require_metrics_token(request: Request) -> None:
+    if not METRICS_TOKEN:
+        return
+    auth = request.headers.get("Authorization", "")
+    if not auth.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    token = auth[7:].strip()
+    if not secrets.compare_digest(token, METRICS_TOKEN):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+if METRICS_ENABLED:
+    @app.get("/metrics", response_class=PlainTextResponse)
+    def metrics_endpoint(request: Request) -> PlainTextResponse:
+        _require_metrics_token(request)
+        payload = snapshot_to_prometheus(get_metrics_snapshot())
+        return PlainTextResponse(payload, media_type=METRICS_MEDIA_TYPE)
 
 
 # Reduce aggressive caching for the static UI during development to avoid stale assets
@@ -298,6 +346,8 @@ def _is_api_path(path: str) -> bool:
     if path.startswith("/app") or path.startswith("/auth"):
         return False
     if path in ("/", "/favicon.ico"):
+        return False
+    if path == "/metrics":
         return False
     return True
 

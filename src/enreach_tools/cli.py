@@ -7,6 +7,7 @@ import subprocess
 import sys
 from collections.abc import Iterable
 from dataclasses import asdict
+from time import monotonic
 
 import typer
 from rich import print
@@ -19,10 +20,13 @@ from .application.orchestration import AsyncJobRunner
 from .application.services import NetboxExportService, create_admin_service
 from .db import get_sessionmaker
 from .db.setup import init_database
-from .env import load_env, project_root, require_env
 from .domain.tasks import JobStatus
+from .env import load_env, project_root, require_env
 from .infrastructure.caching import get_cache_registry
+from .infrastructure.logging import get_logger, logging_context
+from .infrastructure.metrics import record_netbox_export
 from .infrastructure.queues import InMemoryJobQueue
+from .infrastructure.tracing import init_tracing, span, tracing_enabled
 
 # Enable -h as an alias for --help everywhere
 HELP_CTX = {"help_option_names": ["-h", "--help"]}
@@ -30,6 +34,7 @@ HELP_CTX = {"help_option_names": ["-h", "--help"]}
 app = typer.Typer(help="Enreach Tools CLI", context_settings=HELP_CTX)
 
 console = Console()
+logger = get_logger(__name__)
 
 
 def _run_script(relpath: str, *args: str) -> int:
@@ -223,6 +228,7 @@ def netbox_status():
 def _auto_publish_after_export() -> None:
     """Publish NetBox exports to Confluence when env vars are configured."""
 
+    logger.info("Checking Confluence auto-publish configuration")
     try:
         base = os.getenv("ATLASSIAN_BASE_URL", "").strip()
         email = os.getenv("ATLASSIAN_EMAIL", "").strip()
@@ -231,6 +237,7 @@ def _auto_publish_after_export() -> None:
         devices_page_id = os.getenv("CONFLUENCE_DEVICES_PAGE_ID", "").strip() or page_id
         vms_page_id = os.getenv("CONFLUENCE_VMS_PAGE_ID", "").strip() or os.getenv("CONFLUENCE_PAGE_ID", "").strip()
         if base and email and token and page_id:
+            logger.info("Publishing CMDB export to Confluence", extra={"page_id": page_id})
             _ = _run_script("netbox-export/bin/confluence_publish_cmdb.py", "--page-id", page_id)
             table_args: list[str] = []
             if devices_page_id:
@@ -242,46 +249,84 @@ def _auto_publish_after_export() -> None:
             _ = _run_script("netbox-export/bin/confluence_publish_vms_table.py", *vms_args)
         else:
             print("[dim]Confluence not configured; skipping auto publish[/dim]")
+            logger.debug("Confluence auto-publish skipped", extra={"base": base, "page_id": page_id})
     except Exception as exc:  # pragma: no cover - CLI helper
         print(f"[red]Confluence publish failed:[/red] {exc}")
+        logger.exception("Confluence auto-publish failed")
 
 
 @export.command("update")
 def netbox_update(
     force: bool = typer.Option(False, "--force", help="Re-fetch all devices and VMs before merge"),
     use_queue: bool = typer.Option(False, "--queue/--no-queue", help="Schedule export via the in-memory job queue"),
+    legacy: bool = typer.Option(False, "--legacy/--no-legacy", help="Use legacy exporter scripts"),
+    verbose: bool = typer.Option(False, "--verbose/--no-verbose", help="Log verbose exporter progress"),
 ):
     """Run devices, vms, then merge exports in sequence."""
     require_env(["NETBOX_URL", "NETBOX_TOKEN"])  # token needed for export endpoints
-    if use_queue:
-        service = NetboxExportService.from_env()
-        queue = InMemoryJobQueue()
-        runner = AsyncJobRunner(queue)
-        runner.register_handler(service.JOB_NAME, service.job_handler())
+    mode = "queue" if use_queue else "legacy"
+    if tracing_enabled():
+        init_tracing("enreach-cli")
+    previous_legacy = os.environ.get("ENREACH_LEGACY_EXPORTER")
+    if legacy:
+        os.environ["ENREACH_LEGACY_EXPORTER"] = "1"
+    with logging_context(command="export.update", mode=mode, force=force, verbose=verbose), span(
+        "cli.export.update", mode=mode, force=force, verbose=verbose
+    ):
+        logger.info("NetBox export command invoked")
+        if verbose:
+            logger.info("Verbose exporter output enabled")
+        if use_queue:
+            service = NetboxExportService.from_env()
+            queue = InMemoryJobQueue()
+            runner = AsyncJobRunner(queue)
+            runner.register_handler(service.JOB_NAME, service.job_handler())
 
-        async def _run_job() -> JobStatus:
-            await runner.start()
+            async def _run_job() -> JobStatus:
+                await runner.start()
+                try:
+                    record = await queue.enqueue(service.build_job_spec(force=force, verbose=verbose))
+                    while True:
+                        job = await queue.get_job(record.job_id)
+                        if job and job.status in {JobStatus.COMPLETED, JobStatus.FAILED}:
+                            return job.status
+                        await asyncio.sleep(0.2)
+                finally:
+                    await runner.stop()
+
+            status = asyncio.run(_run_job())
+            logger.info("Queued NetBox export finished", extra={"status": status})
+            if status != JobStatus.COMPLETED:
+                print("[red]Queued NetBox export failed[/red]")
+                raise typer.Exit(code=1)
+        else:
+            start = monotonic()
+            status = "success"
+            args = ["--force"] if force else []
+            if verbose:
+                args.append("--verbose")
             try:
-                record = await queue.enqueue(service.build_job_spec(force=force))
-                while True:
-                    job = await queue.get_job(record.job_id)
-                    if job and job.status in {JobStatus.COMPLETED, JobStatus.FAILED}:
-                        return job.status
-                    await asyncio.sleep(0.2)
-            finally:
-                await runner.stop()
+                code = _run_script("netbox-export/bin/netbox_update.py", *args)
+                if code != 0:
+                    status = "failure"
+                    raise SystemExit(code)
+            except Exception:
+                status = "failure"
+                duration = monotonic() - start
+                record_netbox_export(duration_seconds=duration, mode="legacy", force=force, status=status)
+                logger.exception("Legacy NetBox export failed", extra={"duration_ms": int(duration * 1000)})
+                raise
+            else:
+                duration = monotonic() - start
+                record_netbox_export(duration_seconds=duration, mode="legacy", force=force, status=status)
+                logger.info("Legacy NetBox export completed", extra={"duration_ms": int(duration * 1000)})
 
-        status = asyncio.run(_run_job())
-        if status != JobStatus.COMPLETED:
-            print("[red]Queued NetBox export failed[/red]")
-            raise typer.Exit(code=1)
-    else:
-        args = ["--force"] if force else []
-        code = _run_script("netbox-export/bin/netbox_update.py", *args)
-        if code != 0:
-            raise SystemExit(code)
-
-    _auto_publish_after_export()
+        _auto_publish_after_export()
+    if legacy:
+        if previous_legacy is None:
+            os.environ.pop("ENREACH_LEGACY_EXPORTER", None)
+        else:
+            os.environ["ENREACH_LEGACY_EXPORTER"] = previous_legacy
 
 
 @app.command("cache-stats")

@@ -2,13 +2,13 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Awaitable, Callable, Mapping, MutableMapping, Protocol, Sequence
+from typing import Protocol
 
 from enreach_tools.domain.tasks import (
     JobFailure,
-    JobPriority,
     JobRecord,
     JobResult,
     JobSpec,
@@ -39,7 +39,7 @@ class JobQueue(Protocol):
     async def heartbeat(self, job_id: str) -> None:
         ...
 
-    async def stats(self) -> "JobQueueStats":
+    async def stats(self) -> JobQueueStats:
         ...
 
     async def list_jobs(self, *, limit: int = 100, statuses: Sequence[JobStatus] | None = None) -> Sequence[JobRecord]:
@@ -100,7 +100,7 @@ class AsyncJobRunner:
         while not self._stop_event.is_set():
             try:
                 record = await self._queue.reserve(timeout=self._poll_interval)
-            except Exception as exc:  # pragma: no cover - defensive guard
+            except Exception:  # pragma: no cover - defensive guard
                 await asyncio.sleep(self._poll_interval)
                 continue
 

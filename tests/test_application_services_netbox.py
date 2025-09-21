@@ -1,27 +1,33 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import types
 from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from enreach_tools.application.exporter.netbox import ExportPaths, NativeNetboxExporter
 from enreach_tools.application.orchestration import AsyncJobRunner
-from enreach_tools.application.services.netbox import ExportPaths, NetboxExportService
+from enreach_tools.application.services.netbox import NetboxExportService
 from enreach_tools.domain.integrations import NetboxDeviceRecord, NetboxVMRecord
 from enreach_tools.domain.tasks import JobStatus
+from enreach_tools.infrastructure.metrics import reset_metrics
 from enreach_tools.infrastructure.queues import InMemoryJobQueue
 
 
 class _FakeNetboxClient:
     def __init__(self):
         self.calls: dict[str, int] = {"devices": 0, "vms": 0}
+        self.api = None
 
     def list_devices(self, *, force_refresh: bool = False):
         self.calls["devices"] += 1
         now = datetime.fromisoformat("2024-01-01T00:00:00+00:00")
-        return [
-            NetboxDeviceRecord(
+        return [self._device_record(now)]
+
+    def _device_record(self, now):
+        return NetboxDeviceRecord(
                 id=1,
                 name="device-1",
                 status="active",
@@ -50,13 +56,14 @@ class _FakeNetboxClient:
                 region=None,
                 description=None,
             )
-        ]
 
     def list_vms(self, *, force_refresh: bool = False):
         self.calls["vms"] += 1
         now = datetime.fromisoformat("2024-01-02T00:00:00+00:00")
-        return [
-            NetboxVMRecord(
+        return [self._vm_record(now)]
+
+    def _vm_record(self, now):
+        return NetboxVMRecord(
                 id=2,
                 name="vm-1",
                 status="active",
@@ -79,10 +86,16 @@ class _FakeNetboxClient:
                 platform=None,
                 description=None,
             )
-        ]
+
+    def get_device(self, device_id):
+        return self._device_record(datetime.fromisoformat("2024-01-01T00:00:00+00:00"))
+
+    def get_vm(self, vm_id):
+        return self._vm_record(datetime.fromisoformat("2024-01-02T00:00:00+00:00"))
 
 
 def test_export_service_writes_minimal_csv():
+    reset_metrics()
     with TemporaryDirectory() as tmp:
         paths = ExportPaths(
             data_dir=Path(tmp),
@@ -91,6 +104,7 @@ def test_export_service_writes_minimal_csv():
             merged_csv=Path(tmp) / "merged.csv",
             excel_path=Path(tmp) / "cmdb.xlsx",
             scripts_root=Path(tmp),
+            manifest_path=Path(tmp) / "manifest.json",
         )
         service = NetboxExportService(client=_FakeNetboxClient(), paths=paths)
         service._write_devices_csv(service._client.list_devices())
@@ -103,6 +117,7 @@ def test_export_service_writes_minimal_csv():
 
 
 def test_merge_csv_combines_devices_and_vms():
+    reset_metrics()
     with TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         paths = ExportPaths(
@@ -112,6 +127,7 @@ def test_merge_csv_combines_devices_and_vms():
             merged_csv=tmp_path / "merged.csv",
             excel_path=tmp_path / "cmdb.xlsx",
             scripts_root=tmp_path,
+            manifest_path=tmp_path / "manifest.json",
         )
         service = NetboxExportService(client=_FakeNetboxClient(), paths=paths)
 
@@ -127,6 +143,7 @@ def test_merge_csv_combines_devices_and_vms():
 
 
 def test_netbox_export_job_handler_completes(tmp_path):
+    reset_metrics()
     paths = ExportPaths(
         data_dir=tmp_path,
         devices_csv=tmp_path / "devices.csv",
@@ -134,10 +151,11 @@ def test_netbox_export_job_handler_completes(tmp_path):
         merged_csv=tmp_path / "merged.csv",
         excel_path=tmp_path / "cmdb.xlsx",
         scripts_root=tmp_path,
+        manifest_path=tmp_path / "manifest.json",
     )
     service = NetboxExportService(client=_FakeNetboxClient(), paths=paths)
 
-    async def _fake_export_all_async(self, *, force: bool = False) -> None:
+    async def _fake_export_all_async(self, *, force: bool = False, verbose: bool = False) -> None:
         await asyncio.sleep(0)
 
     service.export_all_async = types.MethodType(_fake_export_all_async, service)  # type: ignore[assignment]
@@ -163,3 +181,25 @@ def test_netbox_export_job_handler_completes(tmp_path):
             await runner.stop()
 
     asyncio.run(_run())
+
+
+def test_native_exporter_persists_manifest(tmp_path, monkeypatch):
+    client = _FakeNetboxClient()
+    paths = ExportPaths(
+        data_dir=tmp_path,
+        devices_csv=tmp_path / "devices.csv",
+        vms_csv=tmp_path / "vms.csv",
+        merged_csv=tmp_path / "merged.csv",
+        excel_path=tmp_path / "cmdb.xlsx",
+        scripts_root=tmp_path,
+        manifest_path=tmp_path / "manifest.json",
+    )
+    monkeypatch.setattr("enreach_tools.backup_sync.sync_paths", lambda *args, **kwargs: None)
+    exporter = NativeNetboxExporter(client, paths)
+
+    exporter.export(force=False, verbose=False)
+
+    assert paths.manifest_path.exists()
+    manifest = json.loads(paths.manifest_path.read_text())
+    assert manifest.get("devices", {}).get("1")
+    assert manifest.get("vms", {}).get("2")

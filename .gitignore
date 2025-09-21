@@ -7,6 +7,8 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .venv/
+.benchmarks
+.python-version
 
 # OS/editor
 .DS_Store
@@ -36,8 +38,7 @@ personal/
 /.server_pid
 /.server.log
 /server.log
-/export.log
-
+export.log
 # appdata
 /app*.png
 /airtable*.png

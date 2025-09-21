@@ -90,6 +90,7 @@ breakdown.
 - Caching utilities now register named TTL caches with a global registry, expose hit/miss metrics, and surface invalidation hooks so adapters can flush state after write operations.
 - The CLI exposes `enreach cache-stats` to inspect cache hit/miss counts, current sizes, and TTLs for each registered cache.
 - External clients emit typed domain integration records (`domain/integrations/`) so application services and scripts operate on stable DTOs instead of ad-hoc dictionaries.
+- Observability instrumentation (structured logging, metrics, tracing) is outlined in `docs/observability_plan.md` and will be rolled out across CLI, API, and background jobs in PR5.
 ## NetBox Exports
 - `NetboxExportService` orchestrates NetBox device/VM exports, merges CSVs, and builds the Excel workbook (when pandas/openpyxl are installed).
 - CLI (`enreach export update`) now calls the service directly; legacy scripts remain only for the in-process export steps.

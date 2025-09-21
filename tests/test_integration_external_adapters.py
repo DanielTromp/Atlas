@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import types
-from datetime import datetime
 
 import pytest
 
 from enreach_tools.infrastructure.caching import get_cache_registry
-from enreach_tools.infrastructure.external.netbox_client import NetboxClient, NetboxClientConfig
 from enreach_tools.infrastructure.external.confluence_client import ConfluenceClient, ConfluenceClientConfig
+from enreach_tools.infrastructure.external.netbox_client import NetboxClient, NetboxClientConfig
 from enreach_tools.infrastructure.external.zabbix_client import ZabbixClient, ZabbixClientConfig
 
 
@@ -70,7 +69,7 @@ class _StubNetboxAPI:
 def stub_netbox(monkeypatch):
     api = _StubNetboxAPI()
 
-    def fake_api(url: str, token: str):  # noqa: ANN001
+    def fake_api(url: str, token: str):
         return api
 
     import enreach_tools.infrastructure.external.netbox_client as netbox_module
@@ -102,12 +101,12 @@ class _StubConfluenceSession:
         self.headers = {}
         self._attachments: dict[str, dict] = {}
 
-    def get(self, url: str, params: dict | None = None, timeout: float | None = None) -> _StubResponse:  # noqa: ARG002, ANN001
+    def get(self, url: str, params: dict | None = None, timeout: float | None = None) -> _StubResponse:
         filename = (params or {}).get("filename")
         results = [att for att in self._attachments.values() if filename is None or att["title"] == filename]
         return _StubResponse(200, {"results": results})
 
-    def post(self, url: str, headers=None, files=None, data=None, timeout=None):  # noqa: ANN001, ARG002
+    def post(self, url: str, headers=None, files=None, data=None, timeout=None):
         title = files["file"][0]
         comment = (data or {}).get("comment")
         parts = url.rstrip("/").split("/")
@@ -152,7 +151,7 @@ class _StubZabbixSession:
     def __init__(self) -> None:
         self.requests: list[dict] = []
 
-    def post(self, url: str, headers=None, json=None, timeout=None):  # noqa: ANN001, ARG002
+    def post(self, url: str, headers=None, json=None, timeout=None):
         method = json.get("method")
         self.requests.append(json)
         if method == "hostgroup.get":

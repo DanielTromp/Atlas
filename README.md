@@ -53,7 +53,7 @@ Publish VMs Table
 - The CLI automatically loads `.env` from the project root (toggle overriding existing env with `--override-env`).
 - Required variables for NetBox: `NETBOX_URL`, `NETBOX_TOKEN`.
 - Optional Confluence envs: `CONFLUENCE_CMDB_PAGE_ID`, `CONFLUENCE_DEVICES_PAGE_ID`, `CONFLUENCE_VMS_PAGE_ID` (defaults provided), and `CONFLUENCE_ENABLE_TABLE_FILTER/SORT` to toggle macros.
-- Optional: `LOG_LEVEL` to control API logging (`warning` default, case-insensitive).
+- Optional logging envs: `LOG_LEVEL` (API logging), `ENREACH_LOG_LEVEL`/`ENREACH_LOG_STRUCTURED` for CLI/background structured output.
 
 Service-driven NetBox exports
 -----------------------------
@@ -72,6 +72,13 @@ Diagnostics
 -----------
 
 - `uv run enreach status` checks `/api/status/` and a token‑protected endpoint for quick 200/403 diagnostics.
+
+Performance Benchmarks
+----------------------
+
+- Synthetic NetBox export benchmarks live under `tests/performance/`. Run them via
+  `uv run pytest --perf --benchmark-only -m perf --benchmark-autosave`. See
+  `docs/performance_benchmarks.md` for baseline comparison and tuning guidance.
 
 API (FastAPI + DuckDB)
 ----------------------

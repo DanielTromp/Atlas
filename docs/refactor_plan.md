@@ -35,10 +35,15 @@
   - [x] Introduce async orchestration and job queue primitives
   - [x] Add caching strategies with invalidation hooks and instrumentation
   - [x] Provide integration tests with mocked providers
-- [ ] PR5: Observability and performance enhancements
-  - [ ] Implement structured logging, metrics, and tracing middleware
-  - [ ] Optimize export/data flows (batching, streaming, concurrency)
-  - [ ] Establish performance regression benchmarks and docs
+- [x] PR5: Observability and performance enhancements
+  - [x] Implement structured logging, metrics, and tracing middleware
+    - [x] Structured logging context helpers and NetBox export instrumentation (CLI + service)
+    - [x] Added in-process metrics registry with NetBox export counters/histograms and CLI legacy path coverage
+    - [x] Integrate tracing hooks (OpenTelemetry) across NetBox export service and CLI (guards via env)
+  - [-] Optimize export/data flows (batching, streaming, concurrency)
+  - [x] Establish performance regression benchmarks and docs
+    - Added synthetic NetBox export benchmark (`tests/performance/test_netbox_export_benchmark.py`) with `pytest-benchmark`
+    - Documented baseline capture & comparison workflow in `docs/performance_benchmarks.md`
 - [ ] PR6: Testing, docs, and hardening
   - [ ] Expand pytest coverage (application/infrastructure/observability)
   - [ ] Finalize ADRs, README updates, architecture diagrams

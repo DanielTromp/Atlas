@@ -1,22 +1,13 @@
-"""CLI entry points bridging Typer commands and application services."""
+from __future__ import annotations
 
-import typer
+from typer import Typer
 
 from enreach_tools.infrastructure.logging import setup_logging
+from enreach_tools.infrastructure.tracing import init_tracing, tracing_enabled
 
-app = typer.Typer()
+setup_logging()
+if tracing_enabled():
+    init_tracing("enreach-cli")
 
-
-def bootstrap_cli() -> typer.Typer:
-    """Return the shared Typer application instance.
-
-    Existing CLI modules can incrementally migrate their command registration to
-    this entry point without changing current behaviour. Logging is initialised
-    lazily to keep side effects predictable.
-    """
-
-    setup_logging()
-    return app
-
-
-__all__ = ["app", "bootstrap_cli"]
+app = Typer()
+__all__ = ["app"]

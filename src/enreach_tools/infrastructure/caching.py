@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, MutableMapping
+from collections.abc import Callable, Iterable, Mapping, MutableMapping
 from dataclasses import dataclass, field
 from threading import Lock
-from typing import Any, Dict, Generic, Iterable, Mapping, TypeVar
+from typing import Any, Generic, TypeVar
 
 K = TypeVar("K")
 V = TypeVar("V")
@@ -28,7 +28,7 @@ class CacheMetrics:
     created_at: float = field(default_factory=time.monotonic)
     last_refresh: float | None = None
 
-    def snapshot(self) -> "CacheMetrics":
+    def snapshot(self) -> CacheMetrics:
         return CacheMetrics(
             hits=self.hits,
             misses=self.misses,
@@ -103,7 +103,7 @@ class CacheRegistry:
     """Registry for cache lookup and coordinated invalidation."""
 
     def __init__(self) -> None:
-        self._caches: Dict[str, TTLCache[Any, Any]] = {}
+        self._caches: dict[str, TTLCache[Any, Any]] = {}
         self._lock = Lock()
 
     def register(self, cache: TTLCache[Any, Any]) -> None:

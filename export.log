@@ -2705,3 +2705,300 @@
 [2025-09-21 12:31:42] Open: https://enreach-services.atlassian.net/wiki/pages/viewpageattachments.action?pageId=981794840&preview=%2F981794840%2F981893145%2Fnetbox_vms_export.csv
 [2025-09-21 12:31:42] Confluence page updated with NetBox VMs table
 [2025-09-21 12:31:42] [exit 0]
+[2025-09-21 14:32:04] $ uv run enreach export update
+[2025-09-21 14:32:07] Using .env: /Users/daniel/Documents/code/enreach-tools/.env
+[2025-09-21 14:32:07] --- Logging error ---
+[2025-09-21 14:32:07] Traceback (most recent call last):
+[2025-09-21 14:32:07]   File "/Users/daniel/.pyenv/versions/3.13.6/lib/python3.13/logging/__init__.py", line 472, in format
+[2025-09-21 14:32:07]     return self._format(record)
+[2025-09-21 14:32:07]            ~~~~~~~~~~~~^^^^^^^^
+[2025-09-21 14:32:07]   File "/Users/daniel/.pyenv/versions/3.13.6/lib/python3.13/logging/__init__.py", line 468, in _format
+[2025-09-21 14:32:07]     return self._fmt % values
+[2025-09-21 14:32:07]            ~~~~~~~~~~^~~~~~~~
+[2025-09-21 14:32:07] KeyError: 'log_context'
+[2025-09-21 14:32:07] 
+[2025-09-21 14:32:07] During handling of the above exception, another exception occurred:
+[2025-09-21 14:32:07] 
+[2025-09-21 14:32:07] Traceback (most recent call last):
+[2025-09-21 14:32:07]   File "/Users/daniel/.pyenv/versions/3.13.6/lib/python3.13/logging/__init__.py", line 1151, in emit
+[2025-09-21 14:32:07]     msg = self.format(record)
+[2025-09-21 14:32:07]   File "/Users/daniel/.pyenv/versions/3.13.6/lib/python3.13/logging/__init__.py", line 999, in format
+[2025-09-21 14:32:07]     return fmt.format(record)
+[2025-09-21 14:32:07]            ~~~~~~~~~~^^^^^^^^
+[2025-09-21 14:32:07]   File "/Users/daniel/.pyenv/versions/3.13.6/lib/python3.13/logging/__init__.py", line 715, in format
+[2025-09-21 14:32:07]     s = self.formatMessage(record)
+[2025-09-21 14:32:07]   File "/Users/daniel/.pyenv/versions/3.13.6/lib/python3.13/logging/__init__.py", line 684, in formatMessage
+[2025-09-21 14:32:07]     return self._style.format(record)
+[2025-09-21 14:32:07]            ~~~~~~~~~~~~~~~~~~^^^^^^^^
+[2025-09-21 14:32:07]   File "/Users/daniel/.pyenv/versions/3.13.6/lib/python3.13/logging/__init__.py", line 474, in format
+[2025-09-21 14:32:07]     raise ValueError('Formatting field not found in record: %s' % e)
+[2025-09-21 14:32:07] ValueError: Formatting field not found in record: 'log_context'
+[2025-09-21 14:32:08] Call stack:
+[2025-09-21 14:32:08]   File "/Users/daniel/Documents/code/enreach-tools/.venv/bin/enreach", line 10, in <module>
+[2025-09-21 14:32:08]     sys.exit(main())
+[2025-09-21 14:32:08]   File "/Users/daniel/Documents/code/enreach-tools/src/enreach_tools/cli.py", line 772, in main
+[2025-09-21 14:32:08]     app()
+[2025-09-21 14:32:08]   File "/Users/daniel/Documents/code/enreach-tools/.venv/lib/python3.13/site-packages/typer/main.py", line 313, in __call__
+[2025-09-21 14:32:08]     return get_command(self)(*args, **kwargs)
+[2025-09-21 14:32:08]   File "/Users/daniel/Documents/code/enreach-tools/.venv/lib/python3.13/site-packages/click/core.py", line 1442, in __call__
+[2025-09-21 14:32:08]     return self.main(*args, **kwargs)
+[2025-09-21 14:32:08]   File "/Users/daniel/Documents/code/enreach-tools/.venv/lib/python3.13/site-packages/typer/core.py", line 765, in main
+[2025-09-21 14:32:08]     return _main(
+[2025-09-21 14:32:08]   File "/Users/daniel/Documents/code/enreach-tools/.venv/lib/python3.13/site-packages/typer/core.py", line 193, in _main
+[2025-09-21 14:32:08]     rv = self.invoke(ctx)
+[2025-09-21 14:32:08]   File "/Users/daniel/Documents/code/enreach-tools/.venv/lib/python3.13/site-packages/click/core.py", line 1830, in invoke
+[2025-09-21 14:32:08]     return _process_result(sub_ctx.command.invoke(sub_ctx))
+[2025-09-21 14:32:08]   File "/Users/daniel/Documents/code/enreach-tools/.venv/lib/python3.13/site-packages/click/core.py", line 1830, in invoke
+[2025-09-21 14:32:08]     return _process_result(sub_ctx.command.invoke(sub_ctx))
+[2025-09-21 14:32:08]   File "/Users/daniel/Documents/code/enreach-tools/.venv/lib/python3.13/site-packages/click/core.py", line 1226, in invoke
+[2025-09-21 14:32:08]     return ctx.invoke(self.callback, **ctx.params)
+[2025-09-21 14:32:08]   File "/Users/daniel/Documents/code/enreach-tools/.venv/lib/python3.13/site-packages/click/core.py", line 794, in invoke
+[2025-09-21 14:32:08]     return callback(*args, **kwargs)
+[2025-09-21 14:32:08]   File "/Users/daniel/Documents/code/enreach-tools/.venv/lib/python3.13/site-packages/typer/main.py", line 690, in wrapper
+[2025-09-21 14:32:08]     return callback(**use_params)
+[2025-09-21 14:32:08]   File "/Users/daniel/Documents/code/enreach-tools/src/enreach_tools/cli.py", line 266, in netbox_update
+[2025-09-21 14:32:08]     logger.info("NetBox export command invoked", extra={"mode": mode, "force": force})
+[2025-09-21 14:32:08] Message: 'NetBox export command invoked'
+[2025-09-21 14:32:08] Arguments: ()
+[2025-09-21 14:32:08] --- Logging error ---
+[2025-09-21 14:32:08] Traceback (most recent call last):
+[2025-09-21 14:32:08]   File "/Users/daniel/.pyenv/versions/3.13.6/lib/python3.13/logging/__init__.py", line 472, in format
+[2025-09-21 14:32:08]     return self._format(record)
+[2025-09-21 14:32:08]            ~~~~~~~~~~~~^^^^^^^^
+[2025-09-21 14:32:08]   File "/Users/daniel/.pyenv/versions/3.13.6/lib/python3.13/logging/__init__.py", line 468, in _format
+[2025-09-21 14:32:08]     return self._fmt % values
+[2025-09-21 14:32:08]            ~~~~~~~~~~^~~~~~~~
+[2025-09-21 14:32:08] KeyError: 'log_context'
+[2025-09-21 14:32:08] 
+[2025-09-21 14:32:08] During handling of the above exception, another exception occurred:
+[2025-09-21 14:32:08] 
+[2025-09-21 14:32:08] Traceback (most recent call last):
+[2025-09-21 14:32:08]   File "/Users/daniel/.pyenv/versions/3.13.6/lib/python3.13/logging/__init__.py", line 1151, in emit
+[2025-09-21 14:32:08]     msg = self.format(record)
+[2025-09-21 14:32:08]   File "/Users/daniel/.pyenv/versions/3.13.6/lib/python3.13/logging/__init__.py", line 999, in format
+[2025-09-21 14:32:08]     return fmt.format(record)
+[2025-09-21 14:32:08]            ~~~~~~~~~~^^^^^^^^
+[2025-09-21 14:32:08]   File "/Users/daniel/.pyenv/versions/3.13.6/lib/python3.13/logging/__init__.py", line 715, in format
+[2025-09-21 14:32:08]     s = self.formatMessage(record)
+[2025-09-21 14:32:08]   File "/Users/daniel/.pyenv/versions/3.13.6/lib/python3.13/logging/__init__.py", line 684, in formatMessage
+[2025-09-21 14:32:08]     return self._style.format(record)
+[2025-09-21 14:32:08]            ~~~~~~~~~~~~~~~~~~^^^^^^^^
+[2025-09-21 14:32:08]   File "/Users/daniel/.pyenv/versions/3.13.6/lib/python3.13/logging/__init__.py", line 474, in format
+[2025-09-21 14:32:08]     raise ValueError('Formatting field not found in record: %s' % e)
+[2025-09-21 14:32:08] ValueError: Formatting field not found in record: 'log_context'
+[2025-09-21 14:32:08] Call stack:
+[2025-09-21 14:32:08]   File "/Users/daniel/Documents/code/enreach-tools/netbox-export/bin/netbox_update.py", line 36, in <module>
+[2025-09-21 14:32:08]     raise SystemExit(main())
+[2025-09-21 14:32:08]   File "/Users/daniel/Documents/code/enreach-tools/netbox-export/bin/netbox_update.py", line 26, in main
+[2025-09-21 14:32:08]     service.export_all(force=args.force)
+[2025-09-21 14:32:08]   File "/Users/daniel/Documents/code/enreach-tools/src/enreach_tools/application/services/netbox.py", line 97, in export_all
+[2025-09-21 14:32:08]     self._logger.info("NetBox export started", extra={"force": force})
+[2025-09-21 14:32:08] Message: 'NetBox export started'
+[2025-09-21 14:32:08] Arguments: ()
+[2025-09-21 14:32:08] --- Logging error ---
+[2025-09-21 14:32:08] Traceback (most recent call last):
+[2025-09-21 14:32:08]   File "/Users/daniel/Documents/code/enreach-tools/src/enreach_tools/application/services/netbox.py", line 99, in export_all
+[2025-09-21 14:32:08]     self.run_devices_script(force=force)
+[2025-09-21 14:32:08]     ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^
+[2025-09-21 14:32:08]   File "/Users/daniel/Documents/code/enreach-tools/src/enreach_tools/application/services/netbox.py", line 172, in run_devices_script
+[2025-09-21 14:32:08]     code = self._run_script("netbox-export/bin/get_netbox_devices.py", "--force" if force else None)
+[2025-09-21 14:32:09]   File "/Users/daniel/Documents/code/enreach-tools/src/enreach_tools/application/services/netbox.py", line 186, in _run_script
+[2025-09-21 14:32:09]     self._logger.info("Executing legacy script", extra={"script": relative_path, "args": args[1:]})
+[2025-09-21 14:32:09]     ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[2025-09-21 14:32:09]   File "/Users/daniel/.pyenv/versions/3.13.6/lib/python3.13/logging/__init__.py", line 1520, in info
+[2025-09-21 14:32:09]     self._log(INFO, msg, args, **kwargs)
+[2025-09-21 14:32:09]     ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[2025-09-21 14:32:09]   File "/Users/daniel/.pyenv/versions/3.13.6/lib/python3.13/logging/__init__.py", line 1663, in _log
+[2025-09-21 14:32:09]     record = self.makeRecord(self.name, level, fn, lno, msg, args,
+[2025-09-21 14:32:09]                              exc_info, func, extra, sinfo)
+[2025-09-21 14:32:09]   File "/Users/daniel/.pyenv/versions/3.13.6/lib/python3.13/logging/__init__.py", line 1637, in makeRecord
+[2025-09-21 14:32:09]     raise KeyError("Attempt to overwrite %r in LogRecord" % key)
+[2025-09-21 14:32:09] KeyError: "Attempt to overwrite 'args' in LogRecord"
+[2025-09-21 14:32:09] 
+[2025-09-21 14:32:09] During handling of the above exception, another exception occurred:
+[2025-09-21 14:32:09] 
+[2025-09-21 14:32:09] Traceback (most recent call last):
+[2025-09-21 14:32:09]   File "/Users/daniel/.pyenv/versions/3.13.6/lib/python3.13/logging/__init__.py", line 472, in format
+[2025-09-21 14:32:09]     return self._format(record)
+[2025-09-21 14:32:09]            ~~~~~~~~~~~~^^^^^^^^
+[2025-09-21 14:32:09]   File "/Users/daniel/.pyenv/versions/3.13.6/lib/python3.13/logging/__init__.py", line 468, in _format
+[2025-09-21 14:32:09]     return self._fmt % values
+[2025-09-21 14:32:09]            ~~~~~~~~~~^~~~~~~~
+[2025-09-21 14:32:09] KeyError: 'log_context'
+[2025-09-21 14:32:09] 
+[2025-09-21 14:32:09] During handling of the above exception, another exception occurred:
+[2025-09-21 14:32:09] 
+[2025-09-21 14:32:09] Traceback (most recent call last):
+[2025-09-21 14:32:09]   File "/Users/daniel/.pyenv/versions/3.13.6/lib/python3.13/logging/__init__.py", line 1151, in emit
+[2025-09-21 14:32:09]     msg = self.format(record)
+[2025-09-21 14:32:09]   File "/Users/daniel/.pyenv/versions/3.13.6/lib/python3.13/logging/__init__.py", line 999, in format
+[2025-09-21 14:32:09]     return fmt.format(record)
+[2025-09-21 14:32:09]            ~~~~~~~~~~^^^^^^^^
+[2025-09-21 14:32:09]   File "/Users/daniel/.pyenv/versions/3.13.6/lib/python3.13/logging/__init__.py", line 715, in format
+[2025-09-21 14:32:09]     s = self.formatMessage(record)
+[2025-09-21 14:32:09]   File "/Users/daniel/.pyenv/versions/3.13.6/lib/python3.13/logging/__init__.py", line 684, in formatMessage
+[2025-09-21 14:32:09]     return self._style.format(record)
+[2025-09-21 14:32:09]            ~~~~~~~~~~~~~~~~~~^^^^^^^^
+[2025-09-21 14:32:09]   File "/Users/daniel/.pyenv/versions/3.13.6/lib/python3.13/logging/__init__.py", line 474, in format
+[2025-09-21 14:32:09]     raise ValueError('Formatting field not found in record: %s' % e)
+[2025-09-21 14:32:09] ValueError: Formatting field not found in record: 'log_context'
+[2025-09-21 14:32:09] Call stack:
+[2025-09-21 14:32:09]   File "/Users/daniel/Documents/code/enreach-tools/netbox-export/bin/netbox_update.py", line 36, in <module>
+[2025-09-21 14:32:09]     raise SystemExit(main())
+[2025-09-21 14:32:09]   File "/Users/daniel/Documents/code/enreach-tools/netbox-export/bin/netbox_update.py", line 26, in main
+[2025-09-21 14:32:09]     service.export_all(force=args.force)
+[2025-09-21 14:32:09]   File "/Users/daniel/Documents/code/enreach-tools/src/enreach_tools/application/services/netbox.py", line 110, in export_all
+[2025-09-21 14:32:09]     self._logger.exception(
+[2025-09-21 14:32:09] Message: 'NetBox export failed'
+[2025-09-21 14:32:09] Arguments: ()
+[2025-09-21 14:32:09] [bold]Running NetBox export service...[/bold]
+[2025-09-21 14:32:09] [red]NetBox export failed:[/red] "Attempt to overwrite 'args' in LogRecord"
+[2025-09-21 14:32:09] [exit 1]
+[2025-09-21 14:44:19] $ uv run enreach export update
+[2025-09-21 14:44:20] Using .env: /Users/daniel/Documents/code/enreach-tools/.env
+[2025-09-21 14:44:20] 2025-09-21 14:44:20,509 | INFO | enreach_tools.cli | NetBox export command invoked command=export.update mode=legacy force=False
+[2025-09-21 14:44:21] 2025-09-21 14:44:21,415 | INFO | enreach_tools.application.services.netbox | NetBox export started job=netbox.export.update force=False
+[2025-09-21 14:44:21] 2025-09-21 14:44:21,415 | INFO | enreach_tools.application.services.netbox | Executing legacy script job=netbox.export.update force=False
+[2025-09-21 14:44:29] 2025-09-21 14:44:29,224 | INFO | enreach_tools.application.services.netbox | Executing legacy script job=netbox.export.update force=False
+[2025-09-21 14:44:30] 2025-09-21 14:44:30,949 | INFO | enreach_tools.application.services.netbox | Merging NetBox CSVs job=netbox.export.update force=False
+[2025-09-21 14:44:30] 2025-09-21 14:44:30,989 | INFO | enreach_tools.application.services.netbox | NetBox CSV merge completed job=netbox.export.update force=False
+[2025-09-21 14:44:32] 2025-09-21 14:44:32,775 | INFO | enreach_tools.application.services.netbox | NetBox export completed job=netbox.export.update force=False
+[2025-09-21 14:44:32] [bold]Running NetBox export service...[/bold]
+[2025-09-21 14:44:32] Starting NetBox Devices data synchronization...
+[2025-09-21 14:44:32] Fetching device list from NetBox...
+[2025-09-21 14:44:32] Found 2385 devices in NetBox.
+[2025-09-21 14:44:32] Reading existing CSV data...
+[2025-09-21 14:44:32] Found 2385 devices in the CSV file.
+[2025-09-21 14:44:32] Identified 0 new devices.
+[2025-09-21 14:44:32] Identified 0 updated devices.
+[2025-09-21 14:44:32] Identified 0 devices to delete.
+[2025-09-21 14:44:32] Writing updated data to CSV...
+[2025-09-21 14:44:32] Sync complete.
+[2025-09-21 14:44:32] Starting NetBox VMs data synchronization...
+[2025-09-21 14:44:32] Fetching VM list from NetBox...
+[2025-09-21 14:44:32] Found 961 VMs in NetBox.
+[2025-09-21 14:44:32] Reading existing CSV data...
+[2025-09-21 14:44:32] Found 961 VMs in the CSV file.
+[2025-09-21 14:44:32] Identified 0 new VMs.
+[2025-09-21 14:44:32] Identified 0 updated VMs.
+[2025-09-21 14:44:32] Identified 0 VMs to delete.
+[2025-09-21 14:44:32] Writing updated data to CSV...
+[2025-09-21 14:44:32] Sync complete.
+[2025-09-21 14:44:32]   Processed 100 devices...
+[2025-09-21 14:44:32]   Processed 200 devices...
+[2025-09-21 14:44:32]   Processed 300 devices...
+[2025-09-21 14:44:32]   Processed 400 devices...
+[2025-09-21 14:44:32]   Processed 500 devices...
+[2025-09-21 14:44:32]   Processed 600 devices...
+[2025-09-21 14:44:32]   Processed 700 devices...
+[2025-09-21 14:44:32]   Processed 800 devices...
+[2025-09-21 14:44:32]   Processed 900 devices...
+[2025-09-21 14:44:32]   Processed 1000 devices...
+[2025-09-21 14:44:32]   Processed 1100 devices...
+[2025-09-21 14:44:32]   Processed 1200 devices...
+[2025-09-21 14:44:32]   Processed 1300 devices...
+[2025-09-21 14:44:32]   Processed 1400 devices...
+[2025-09-21 14:44:32]   Processed 1500 devices...
+[2025-09-21 14:44:32]   Processed 1600 devices...
+[2025-09-21 14:44:32]   Processed 1700 devices...
+[2025-09-21 14:44:32]   Processed 1800 devices...
+[2025-09-21 14:44:32]   Processed 1900 devices...
+[2025-09-21 14:44:32]   Processed 2000 devices...
+[2025-09-21 14:44:32]   Processed 2100 devices...
+[2025-09-21 14:44:32]   Processed 2200 devices...
+[2025-09-21 14:44:32]   Processed 2300 devices...
+[2025-09-21 14:44:32] 
+[2025-09-21 14:44:32] Creating Excel export: /Users/daniel/Documents/code/enreach-tools/data/Systems CMDB.xlsx
+[2025-09-21 14:44:32] Applying column order from: /Users/daniel/Documents/code/enreach-tools/netbox-export/etc/column_order.xlsx
+[2025-09-21 14:44:32] Creating table with range: A1:BN3347
+[2025-09-21 14:44:32] Excel file created: 836,012 bytes (0.80 MB)
+[2025-09-21 14:44:32] Excel export completed with:
+[2025-09-21 14:44:32]   - Data sorted by Name
+[2025-09-21 14:44:32]   - Filters enabled on header row
+[2025-09-21 14:44:32]   - Auto-adjusted column widths
+[2025-09-21 14:44:32]   - Table formatting applied
+[2025-09-21 14:44:32] [green]Update complete: devices + vms + merge[/green]
+[2025-09-21 14:44:33] 2025-09-21 14:44:33,046 | INFO | enreach_tools.cli | Legacy NetBox export completed command=export.update mode=legacy force=False
+[2025-09-21 14:44:33] 2025-09-21 14:44:33,046 | INFO | enreach_tools.cli | Checking Confluence auto-publish configuration command=export.update mode=legacy force=False
+[2025-09-21 14:44:33] 2025-09-21 14:44:33,046 | INFO | enreach_tools.cli | Publishing CMDB export to Confluence command=export.update mode=legacy force=False
+[2025-09-21 14:44:34] Publishing CMDB to Confluence...
+[2025-09-21 14:44:34] Uploading: /Users/daniel/Documents/code/enreach-tools/data/Systems CMDB.xlsx -> page 981533033 as Systems CMDB.xlsx
+[2025-09-21 14:44:35] Attachment exists (id att981434769); uploading new version
+[2025-09-21 14:44:35] Attachment upload complete
+[2025-09-21 14:44:35] Name: Systems CMDB.xlsx
+[2025-09-21 14:44:35] Version: 48
+[2025-09-21 14:44:35] Open: https://enreach-services.atlassian.net/wiki/pages/viewpageattachments.action?pageId=981533033&preview=%2F981533033%2F981434769%2FSystems+CMDB.xlsx
+[2025-09-21 14:44:39] Uploading: /Users/daniel/Documents/code/enreach-tools/data/netbox_devices_export.csv -> page 981533060 as netbox_devices_export.csv
+[2025-09-21 14:44:39] Attachment exists (id att981762088); uploading new version
+[2025-09-21 14:44:40] Attachment upload complete
+[2025-09-21 14:44:40] Name: netbox_devices_export.csv
+[2025-09-21 14:44:40] Version: 45
+[2025-09-21 14:44:40] Open: https://enreach-services.atlassian.net/wiki/pages/viewpageattachments.action?pageId=981533060&preview=%2F981533060%2F981762088%2Fnetbox_devices_export.csv
+[2025-09-21 14:44:40] Confluence page updated with NetBox devices table
+[2025-09-21 14:44:43] Uploading: /Users/daniel/Documents/code/enreach-tools/data/netbox_vms_export.csv -> page 981794840 as netbox_vms_export.csv
+[2025-09-21 14:44:44] Attachment exists (id att981893145); uploading new version
+[2025-09-21 14:44:44] Attachment upload complete
+[2025-09-21 14:44:44] Name: netbox_vms_export.csv
+[2025-09-21 14:44:44] Version: 45
+[2025-09-21 14:44:44] Open: https://enreach-services.atlassian.net/wiki/pages/viewpageattachments.action?pageId=981794840&preview=%2F981794840%2F981893145%2Fnetbox_vms_export.csv
+[2025-09-21 14:44:44] Confluence page updated with NetBox VMs table
+[2025-09-21 14:44:45] [exit 0]
+[2025-09-21 15:20:07] $ uv run enreach export update
+[2025-09-21 15:20:08] Using .env: /Users/daniel/Documents/code/enreach-tools/.env
+[2025-09-21 15:20:08] 2025-09-21 15:20:08,523 | INFO | enreach_tools.cli | NetBox export command invoked command=export.update mode=legacy force=False
+[2025-09-21 15:20:09] 2025-09-21 15:20:09,439 | INFO | enreach_tools.application.services.netbox | NetBox export started job=netbox.export.update force=False
+[2025-09-21 15:20:09] 2025-09-21 15:20:09,439 | INFO | enreach_tools.application.services.netbox | Executing legacy script job=netbox.export.update force=False
+[2025-09-21 15:20:16] 2025-09-21 15:20:16,565 | INFO | enreach_tools.application.services.netbox | Executing legacy script job=netbox.export.update force=False
+[2025-09-21 15:20:18] 2025-09-21 15:20:18,304 | INFO | enreach_tools.application.services.netbox | Merging NetBox CSVs job=netbox.export.update force=False
+[2025-09-21 15:20:18] 2025-09-21 15:20:18,343 | INFO | enreach_tools.application.services.netbox | NetBox CSV merge completed job=netbox.export.update force=False
+[2025-09-21 15:20:18] 2025-09-21 15:20:18,352 | INFO | enreach_tools.application.services.netbox | Creating Excel export job=netbox.export.update force=False
+[2025-09-21 15:20:18] 2025-09-21 15:20:18,375 | INFO | enreach_tools.application.services.netbox | Applying column order job=netbox.export.update force=False
+[2025-09-21 15:20:20] 2025-09-21 15:20:20,192 | INFO | enreach_tools.application.services.netbox | Excel export completed job=netbox.export.update force=False
+[2025-09-21 15:20:20] 2025-09-21 15:20:20,200 | INFO | enreach_tools.application.services.netbox | NetBox export completed job=netbox.export.update force=False
+[2025-09-21 15:20:20] [bold]Running NetBox export service...[/bold]
+[2025-09-21 15:20:20] Starting NetBox Devices data synchronization...
+[2025-09-21 15:20:20] Fetching device list from NetBox...
+[2025-09-21 15:20:20] Found 2385 devices in NetBox.
+[2025-09-21 15:20:20] Reading existing CSV data...
+[2025-09-21 15:20:20] Found 2385 devices in the CSV file.
+[2025-09-21 15:20:20] Identified 0 new devices.
+[2025-09-21 15:20:20] Identified 0 updated devices.
+[2025-09-21 15:20:20] Identified 0 devices to delete.
+[2025-09-21 15:20:20] Writing updated data to CSV...
+[2025-09-21 15:20:20] Sync complete.
+[2025-09-21 15:20:20] Starting NetBox VMs data synchronization...
+[2025-09-21 15:20:20] Fetching VM list from NetBox...
+[2025-09-21 15:20:20] Found 961 VMs in NetBox.
+[2025-09-21 15:20:20] Reading existing CSV data...
+[2025-09-21 15:20:20] Found 961 VMs in the CSV file.
+[2025-09-21 15:20:20] Identified 0 new VMs.
+[2025-09-21 15:20:20] Identified 0 updated VMs.
+[2025-09-21 15:20:20] Identified 0 VMs to delete.
+[2025-09-21 15:20:20] Writing updated data to CSV...
+[2025-09-21 15:20:20] Sync complete.
+[2025-09-21 15:20:20] [green]Update complete: devices + vms + merge[/green]
+[2025-09-21 15:20:20] 2025-09-21 15:20:20,440 | INFO | enreach_tools.cli | Legacy NetBox export completed command=export.update mode=legacy force=False
+[2025-09-21 15:20:20] 2025-09-21 15:20:20,440 | INFO | enreach_tools.cli | Checking Confluence auto-publish configuration command=export.update mode=legacy force=False
+[2025-09-21 15:20:20] 2025-09-21 15:20:20,440 | INFO | enreach_tools.cli | Publishing CMDB export to Confluence command=export.update mode=legacy force=False
+[2025-09-21 15:20:21] Publishing CMDB to Confluence...
+[2025-09-21 15:20:22] Uploading: /Users/daniel/Documents/code/enreach-tools/data/Systems CMDB.xlsx -> page 981533033 as Systems CMDB.xlsx
+[2025-09-21 15:20:23] Attachment exists (id att981434769); uploading new version
+[2025-09-21 15:20:23] Attachment upload complete
+[2025-09-21 15:20:23] Name: Systems CMDB.xlsx
+[2025-09-21 15:20:24] Version: 55
+[2025-09-21 15:20:24] Open: https://enreach-services.atlassian.net/wiki/pages/viewpageattachments.action?pageId=981533033&preview=%2F981533033%2F981434769%2FSystems+CMDB.xlsx
+[2025-09-21 15:20:27] Uploading: /Users/daniel/Documents/code/enreach-tools/data/netbox_devices_export.csv -> page 981533060 as netbox_devices_export.csv
+[2025-09-21 15:20:27] Attachment exists (id att981762088); uploading new version
+[2025-09-21 15:20:28] Attachment upload complete
+[2025-09-21 15:20:29] Name: netbox_devices_export.csv
+[2025-09-21 15:20:29] Version: 52
+[2025-09-21 15:20:29] Open: https://enreach-services.atlassian.net/wiki/pages/viewpageattachments.action?pageId=981533060&preview=%2F981533060%2F981762088%2Fnetbox_devices_export.csv
+[2025-09-21 15:20:29] Confluence page updated with NetBox devices table
+[2025-09-21 15:20:33] Uploading: /Users/daniel/Documents/code/enreach-tools/data/netbox_vms_export.csv -> page 981794840 as netbox_vms_export.csv
+[2025-09-21 15:20:33] Attachment exists (id att981893145); uploading new version
+[2025-09-21 15:20:34] Attachment upload complete
+[2025-09-21 15:20:34] Name: netbox_vms_export.csv
+[2025-09-21 15:20:34] Version: 52
+[2025-09-21 15:20:34] Open: https://enreach-services.atlassian.net/wiki/pages/viewpageattachments.action?pageId=981794840&preview=%2F981794840%2F981893145%2Fnetbox_vms_export.csv
+[2025-09-21 15:20:34] Confluence page updated with NetBox VMs table
+[2025-09-21 15:20:34] [exit 0]

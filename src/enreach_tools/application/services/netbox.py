@@ -4,19 +4,25 @@ from __future__ import annotations
 import asyncio
 import csv
 import os
-import runpy
-import sys
 from collections.abc import Iterable, Mapping
-from contextlib import contextmanager
-from dataclasses import dataclass
 from pathlib import Path
+from time import monotonic
 from typing import Protocol
 
 from enreach_tools import backup_sync
+from enreach_tools.application.exporter.netbox import (
+    ExportArtifacts,
+    ExportPaths,
+    LegacyScriptNetboxExporter,
+    NativeNetboxExporter,
+)
 from enreach_tools.application.orchestration import JobHandler
 from enreach_tools.domain.integrations import NetboxDeviceRecord, NetboxVMRecord
 from enreach_tools.domain.tasks import JobPriority, JobSpec
 from enreach_tools.infrastructure.external import NetboxClient, NetboxClientConfig
+from enreach_tools.infrastructure.logging import get_logger, logging_context
+from enreach_tools.infrastructure.metrics import record_netbox_export
+from enreach_tools.infrastructure.tracing import span
 
 try:  # optional dependencies for Excel export
     import pandas as pd  # type: ignore
@@ -36,16 +42,6 @@ except ImportError:  # pragma: no cover - optional dependency not installed
     TableStyleInfo = None  # type: ignore
 
 
-@dataclass(slots=True)
-class ExportPaths:
-    data_dir: Path
-    devices_csv: Path
-    vms_csv: Path
-    merged_csv: Path
-    excel_path: Path
-    scripts_root: Path
-
-
 class NetboxClientProtocol(Protocol):
     def list_devices(self, *, force_refresh: bool = False) -> Iterable[NetboxDeviceRecord]:
         ...
@@ -60,6 +56,12 @@ class NetboxExportService:
     def __init__(self, *, client: NetboxClientProtocol, paths: ExportPaths) -> None:
         self._client = client
         self._paths = paths
+        self._logger = get_logger(__name__)
+        use_legacy = os.getenv("ENREACH_LEGACY_EXPORTER", "").strip().lower() in {"1", "true", "yes", "on"}
+        if use_legacy:
+            self._exporter = LegacyScriptNetboxExporter(paths)
+        else:
+            self._exporter = NativeNetboxExporter(client, paths, logger=self._logger)
 
     @classmethod
     def from_env(cls) -> NetboxExportService:
@@ -82,32 +84,64 @@ class NetboxExportService:
             merged_csv=data_dir / "netbox_merged_export.csv",
             excel_path=data_dir / "Systems CMDB.xlsx",
             scripts_root=root,
+            manifest_path=data_dir / "netbox_export_manifest.json",
         )
         client = NetboxClient(NetboxClientConfig(url=url, token=token))
         return cls(client=client, paths=paths)
 
-    def export_all(self, *, force: bool = False) -> None:
-        self.run_devices_script(force=force)
-        self.run_vms_script(force=force)
-        self._merge_csv()
-        self._create_excel()
-        cache_invalidate = getattr(self._client, "invalidate_cache", None)
-        if callable(cache_invalidate):
-            cache_invalidate()
+    def export_all(self, *, force: bool = False, verbose: bool = False) -> None:
+        with logging_context(job=self.JOB_NAME, force=force, verbose=verbose), span(
+            "netbox.export", job=self.JOB_NAME, force=force, verbose=verbose
+        ):
+            start = monotonic()
+            status = "success"
+            if verbose:
+                self._logger.info("NetBox export started (verbose mode)")
+            else:
+                self._logger.info("NetBox export started")
+            try:
+                artifacts: ExportArtifacts = self._exporter.export(force=force, verbose=verbose)
+                self._merge_csv()
+                self._create_excel()
+                cache_invalidate = getattr(self._client, "invalidate_cache", None)
+                if callable(cache_invalidate):
+                    cache_invalidate()
+            except Exception:
+                status = "failure"
+                duration = monotonic() - start
+                record_netbox_export(duration_seconds=duration, mode="service", force=force, status=status)
+                self._logger.exception(
+                    "NetBox export failed",
+                    extra={"duration_ms": int(duration * 1000)},
+                )
+                raise
+            else:
+                duration = monotonic() - start
+                record_netbox_export(duration_seconds=duration, mode="service", force=force, status=status)
+                self._logger.info(
+                    "NetBox export completed",
+                    extra={
+                        "duration_ms": int(duration * 1000),
+                        "devices_csv": self._paths.devices_csv.as_posix(),
+                        "vms_csv": self._paths.vms_csv.as_posix(),
+                        "merged_csv": self._paths.merged_csv.as_posix(),
+                    },
+                )
 
-    async def export_all_async(self, *, force: bool = False) -> None:
-        await asyncio.to_thread(self.export_all, force=force)
+    async def export_all_async(self, *, force: bool = False, verbose: bool = False) -> None:
+        await asyncio.to_thread(self.export_all, force=force, verbose=verbose)
 
     def build_job_spec(
         self,
         *,
+        verbose: bool = False,
         force: bool = False,
         priority: JobPriority | None = None,
     ) -> JobSpec:
         """Create a `JobSpec` for scheduling a NetBox export run."""
 
         chosen_priority = priority or (JobPriority.HIGH if force else JobPriority.NORMAL)
-        payload: Mapping[str, bool] = {"force": force}
+        payload: Mapping[str, bool] = {"force": force, "verbose": verbose}
         return JobSpec(name=self.JOB_NAME, payload=payload, priority=chosen_priority)
 
     def job_handler(self) -> JobHandler:
@@ -115,14 +149,17 @@ class NetboxExportService:
 
         async def _handler(record) -> Mapping[str, str | bool]:
             force_flag = bool(record.payload.get("force", False))
-            await self.export_all_async(force=force_flag)
-            return {"force": force_flag, "data_dir": self._paths.data_dir.as_posix()}
+            verbose_flag = bool(record.payload.get("verbose", False))
+            await self.export_all_async(force=force_flag, verbose=verbose_flag)
+            return {
+                "force": force_flag,
+                "verbose": verbose_flag,
+                "data_dir": self._paths.data_dir.as_posix(),
+            }
 
         return _handler
 
     def _write_devices_csv(self, devices: Iterable[NetboxDeviceRecord]) -> None:
-        # placeholder minimal implementation to keep interface; actual schema merging
-        # remains in existing script for now
         with self._paths.devices_csv.open("w", newline="", encoding="utf-8") as fh:
             writer = csv.writer(fh)
             writer.writerow(["id", "name", "last_updated"])
@@ -138,28 +175,6 @@ class NetboxExportService:
                 last_updated = vm.last_updated.isoformat() if vm.last_updated else ""
                 writer.writerow([vm.id, vm.name, last_updated])
 
-    def run_devices_script(self, *, force: bool = False) -> None:
-        code = self._run_script("netbox-export/bin/get_netbox_devices.py", "--force" if force else None)
-        if code not in (0, None):
-            raise RuntimeError(f"Device export failed (exit {code})")
-
-    def run_vms_script(self, *, force: bool = False) -> None:
-        code = self._run_script("netbox-export/bin/get_netbox_vms.py", "--force" if force else None)
-        if code not in (0, None):
-            raise RuntimeError(f"VM export failed (exit {code})")
-
-    def _run_script(self, relative_path: str, arg: str | None = None) -> int | None:
-        script = self._paths.scripts_root / relative_path
-        args = [script.as_posix()]
-        if arg:
-            args.append(arg)
-        with _script_argv(args):
-            try:
-                runpy.run_path(str(script), run_name="__main__")
-            except SystemExit as exc:  # propagate exit codes from scripts
-                return exc.code
-        return None
-
     def _merge_csv(self) -> None:
         devices_file = self._paths.devices_csv
         vms_file = self._paths.vms_csv
@@ -170,11 +185,14 @@ class NetboxExportService:
         if not vms_file.exists():
             raise FileNotFoundError(f"VMs CSV not found: {vms_file}")
 
-        print("Starting NetBox CSV merge process...")
-        print(f"Devices file: {devices_file}")
-        print(f"VMs file: {vms_file}")
-        print(f"Output file: {output_file}")
-        print("-" * 50)
+        self._logger.info(
+            "Merging NetBox CSVs",
+            extra={
+                "devices_csv": devices_file.as_posix(),
+                "vms_csv": vms_file.as_posix(),
+                "output_csv": output_file.as_posix(),
+            },
+        )
 
         with devices_file.open(encoding="utf-8") as fh:
             devices_reader = csv.reader(fh)
@@ -183,18 +201,12 @@ class NetboxExportService:
             vms_reader = csv.reader(fh)
             vms_headers = next(vms_reader)
 
-        print(f"Devices headers: {len(devices_headers)} columns")
-        print(f"VMs headers: {len(vms_headers)} columns")
-
         merged_headers = devices_headers.copy()
         for header in vms_headers:
             if header not in merged_headers:
                 merged_headers.append(header)
-                print(f"Added VM-specific column: {header}")
         merged_headers.append("netbox_type")
         header_positions = {header: idx for idx, header in enumerate(merged_headers)}
-
-        print(f"Final merged headers: {len(merged_headers)} columns")
 
         devices_count = 0
         vms_count = 0
@@ -214,8 +226,6 @@ class NetboxExportService:
                     merged_row[header_positions["netbox_type"]] = "devices"
                     writer.writerow(merged_row)
                     devices_count += 1
-                    if devices_count % 100 == 0:
-                        print(f"  Processed {devices_count} devices...")
 
             with vms_file.open(encoding="utf-8") as fh:
                 reader = csv.reader(fh)
@@ -228,34 +238,39 @@ class NetboxExportService:
                     merged_row[header_positions["netbox_type"]] = "vms"
                     writer.writerow(merged_row)
                     vms_count += 1
-                    if vms_count % 100 == 0:
-                        print(f"  Processed {vms_count} VMs...")
 
         total = devices_count + vms_count
-        print("-" * 50)
-        print("Merge completed successfully!")
-        print(f"Devices processed: {devices_count:,}")
-        print(f"VMs processed: {vms_count:,}")
-        print(f"Total records: {total:,}")
+        self._logger.info(
+            "NetBox CSV merge completed",
+            extra={
+                "devices_processed": devices_count,
+                "vms_processed": vms_count,
+                "total_records": total,
+            },
+        )
         if output_file.exists():
             size = output_file.stat().st_size
-            print(f"Output file size: {size:,} bytes ({size / 1024 / 1024:.2f} MB)")
+            self._logger.debug(
+                "Merged CSV size",
+                extra={"bytes": size, "megabytes": round(size / 1024 / 1024, 2)},
+            )
 
         try:
             backup_sync.sync_paths([output_file], note="netbox_merge_csv")
         except Exception:  # pragma: no cover - best-effort logging
             pass
+
     def _create_excel(self) -> None:
         if not EXCEL_AVAILABLE or pd is None or Workbook is None or dataframe_to_rows is None:
-            print("Skipping Excel export - required libraries not available")
+            self._logger.info("Skipping Excel export - required libraries not available")
             return
         csv_file = self._paths.merged_csv
         if not csv_file.exists():
-            print("Skipping Excel export - merged CSV not found")
+            self._logger.info("Skipping Excel export - merged CSV not found", extra={"merged_csv": csv_file.as_posix()})
             return
 
         excel_file = self._paths.excel_path
-        print(f"\nCreating Excel export: {excel_file}")
+        self._logger.info("Creating Excel export", extra={"excel_file": excel_file.as_posix()})
         df = pd.read_csv(csv_file)
 
         order_candidates = [
@@ -265,16 +280,16 @@ class NetboxExportService:
         ]
         order_file = next((p for p in order_candidates if p and os.path.exists(p)), None)
         if order_file:
-            print(f"Applying column order from: {order_file}")
+            self._logger.info("Applying column order", extra={"order_file": order_file})
             desired_order = self._load_column_order_from_xlsx(Path(order_file))
             if desired_order:
                 ordered_cols = [c for c in desired_order if c in df.columns]
                 tail_cols = [c for c in df.columns if c not in ordered_cols]
                 df = df[ordered_cols + tail_cols]
             else:
-                print("Warning: could not read headers from order file; keeping CSV order.")
+                self._logger.warning("Column order file did not yield headers; keeping CSV order", extra={"order_file": order_file})
         else:
-            print("No column order template found; keeping CSV order.")
+            self._logger.debug("No column order template found; keeping CSV order")
 
         wb = Workbook()
         ws = wb.active
@@ -287,7 +302,7 @@ class NetboxExportService:
         end_col = get_column_letter(num_cols)
         if len(df) > 0:
             table_range = f"A1:{end_col}{len(df) + 1}"
-            print(f"Creating table with range: {table_range}")
+            self._logger.debug("Creating Excel table", extra={"range": table_range})
             table = Table(displayName="NetBoxInventory", ref=table_range)
             style = TableStyleInfo(
                 name="TableStyleMedium9",
@@ -299,7 +314,7 @@ class NetboxExportService:
             table.tableStyleInfo = style
             ws.add_table(table)
         else:
-            print("No data rows; skipping table creation to avoid Excel warnings.")
+            self._logger.info("No data rows; skipping Excel table creation")
 
         ws.freeze_panes = "B2"
         for column in ws.columns:
@@ -315,17 +330,19 @@ class NetboxExportService:
         wb.save(excel_file)
         if excel_file.exists():
             size = excel_file.stat().st_size
-            print(f"Excel file created: {size:,} bytes ({size / 1024 / 1024:.2f} MB)")
+            self._logger.info(
+                "Excel export completed",
+                extra={
+                    "excel_file": excel_file.as_posix(),
+                    "bytes": size,
+                    "megabytes": round(size / 1024 / 1024, 2),
+                },
+            )
 
         try:
             backup_sync.sync_paths([excel_file], note="netbox_merge_excel")
         except Exception:  # pragma: no cover
             pass
-        print("Excel export completed with:")
-        print("  - Data sorted by Name")
-        print("  - Filters enabled on header row")
-        print("  - Auto-adjusted column widths")
-        print("  - Table formatting applied")
 
     @staticmethod
     def _load_column_order_from_xlsx(order_file: Path) -> list[str]:
@@ -343,16 +360,6 @@ class NetboxExportService:
             return headers
         except Exception:
             return []
-
-
-@contextmanager
-def _script_argv(args: Iterable[str]):
-    old = sys.argv[:]
-    sys.argv = list(args)
-    try:
-        yield
-    finally:
-        sys.argv = old
 
 
 __all__ = ["ExportPaths", "NetboxClientProtocol", "NetboxExportService"]
