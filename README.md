@@ -12,7 +12,7 @@ Usage
   - `uv run enreach export devices` (add `--force` to re-fetch all)
   - `uv run enreach export vms` (add `--force` to re-fetch all)
   - `uv run enreach export merge`
-  - `uv run enreach export update` (runs devices → vms → merge; supports `--force` to re-fetch all before merge)
+  - `uv run enreach export update` (runs devices → vms → merge; supports `--force` to re-fetch all before merge and `--queue` to execute via the built-in job runner instead of legacy scripts)
   - After `update`, if Confluence publishing is configured via `.env` (`ATLASSIAN_*` + `CONFLUENCE_CMDB_PAGE_ID`), it automatically uploads the CMDB Excel as an attachment and refreshes the NetBox devices table on Confluence.
   - API server (HTTP): `uv run enreach api serve --host 127.0.0.1 --port 8000`
   - API server (HTTPS): `uv run enreach api serve --host 127.0.0.1 --port 8443 --ssl-certfile certs/localhost.pem --ssl-keyfile certs/localhost-key.pem`
@@ -54,6 +54,13 @@ Publish VMs Table
 - Required variables for NetBox: `NETBOX_URL`, `NETBOX_TOKEN`.
 - Optional Confluence envs: `CONFLUENCE_CMDB_PAGE_ID`, `CONFLUENCE_DEVICES_PAGE_ID`, `CONFLUENCE_VMS_PAGE_ID` (defaults provided), and `CONFLUENCE_ENABLE_TABLE_FILTER/SORT` to toggle macros.
 - Optional: `LOG_LEVEL` to control API logging (`warning` default, case-insensitive).
+
+Service-driven NetBox exports
+-----------------------------
+
+- CLI commands resolve to `NetboxExportService`, which orchestrates the device and VM exports, CSV merge, Excel build, and post-run cache invalidation. The service is also exposed to background workers (`--queue`) via an in-memory job queue.
+- Named TTL caches (`netbox.devices`, `netbox.vms`) provide per-process caching with hit/miss instrumentation. Inspect their state with `uv run enreach cache-stats [--json --include-empty --prime-netbox]`.
+- As we migrate the legacy scripts, the same service hooks (and caching) will back the FastAPI endpoints, CLI, and scheduled jobs.
 
 Structure
 ---------

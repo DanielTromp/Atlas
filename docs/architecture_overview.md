@@ -82,3 +82,14 @@ breakdown.
 - CLI user administration commands call into `create_admin_service` to ensure CLI/API parity using shared DTOs.
 - Suggestion endpoints now return DTO-backed responses with explicit meta blocks and total counts.
 - External adapters (`infrastructure/external/`) now provide NetBox, Confluence, and backup clients backed by a shared TTL cache utility.
+- NetBox export scripts now obtain data through `NetboxClient`, enabling per-process caching and shared auth/session handling.
+- Confluence upload scripts delegate to `ConfluenceClient`, centralising authentication and future retries.
+- 
+- NetboxExportService orchestrates device/vm exports, performs CSV merge, and (when dependencies are available) builds the Excel workbook, eliminating CLI subprocess orchestration for `netbox_update`.
+- Async orchestration lives in `application/orchestration/`; `AsyncJobRunner` plus the `infrastructure/queues.InMemoryJobQueue` provide a typed background job primitive used by the NetBox export CLI when `--queue` is enabled.
+- Caching utilities now register named TTL caches with a global registry, expose hit/miss metrics, and surface invalidation hooks so adapters can flush state after write operations.
+- The CLI exposes `enreach cache-stats` to inspect cache hit/miss counts, current sizes, and TTLs for each registered cache.
+- External clients emit typed domain integration records (`domain/integrations/`) so application services and scripts operate on stable DTOs instead of ad-hoc dictionaries.
+## NetBox Exports
+- `NetboxExportService` orchestrates NetBox device/VM exports, merges CSVs, and builds the Excel workbook (when pandas/openpyxl are installed).
+- CLI (`enreach export update`) now calls the service directly; legacy scripts remain only for the in-process export steps.

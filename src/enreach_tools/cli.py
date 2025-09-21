@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import subprocess
 import sys
 from collections.abc import Iterable
+from dataclasses import asdict
 
 import typer
 from rich import print
@@ -13,10 +15,14 @@ from rich.table import Table
 
 from .application.context import ServiceContext
 from .application.dto.admin import admin_user_to_dto, admin_users_to_dto
-from .application.services import create_admin_service
+from .application.orchestration import AsyncJobRunner
+from .application.services import NetboxExportService, create_admin_service
 from .db import get_sessionmaker
 from .db.setup import init_database
 from .env import load_env, project_root, require_env
+from .domain.tasks import JobStatus
+from .infrastructure.caching import get_cache_registry
+from .infrastructure.queues import InMemoryJobQueue
 
 # Enable -h as an alias for --help everywhere
 HELP_CTX = {"help_option_names": ["-h", "--help"]}
@@ -214,18 +220,9 @@ def netbox_status():
     raise SystemExit(code)
 
 
-@export.command("update")
-def netbox_update(
-    force: bool = typer.Option(False, "--force", help="Re-fetch all devices and VMs before merge"),
-):
-    """Run devices, vms, then merge exports in sequence."""
-    require_env(["NETBOX_URL", "NETBOX_TOKEN"])  # token needed for export endpoints
-    args = ["--force"] if force else []
-    code = _run_script("netbox-export/bin/netbox_update.py", *args)
-    if code != 0:
-        raise SystemExit(code)
+def _auto_publish_after_export() -> None:
+    """Publish NetBox exports to Confluence when env vars are configured."""
 
-    # Auto-publish CMDB to Confluence when configured
     try:
         base = os.getenv("ATLASSIAN_BASE_URL", "").strip()
         email = os.getenv("ATLASSIAN_EMAIL", "").strip()
@@ -245,8 +242,120 @@ def netbox_update(
             _ = _run_script("netbox-export/bin/confluence_publish_vms_table.py", *vms_args)
         else:
             print("[dim]Confluence not configured; skipping auto publish[/dim]")
-    except Exception as e:
-        print(f"[red]Confluence publish failed:[/red] {e}")
+    except Exception as exc:  # pragma: no cover - CLI helper
+        print(f"[red]Confluence publish failed:[/red] {exc}")
+
+
+@export.command("update")
+def netbox_update(
+    force: bool = typer.Option(False, "--force", help="Re-fetch all devices and VMs before merge"),
+    use_queue: bool = typer.Option(False, "--queue/--no-queue", help="Schedule export via the in-memory job queue"),
+):
+    """Run devices, vms, then merge exports in sequence."""
+    require_env(["NETBOX_URL", "NETBOX_TOKEN"])  # token needed for export endpoints
+    if use_queue:
+        service = NetboxExportService.from_env()
+        queue = InMemoryJobQueue()
+        runner = AsyncJobRunner(queue)
+        runner.register_handler(service.JOB_NAME, service.job_handler())
+
+        async def _run_job() -> JobStatus:
+            await runner.start()
+            try:
+                record = await queue.enqueue(service.build_job_spec(force=force))
+                while True:
+                    job = await queue.get_job(record.job_id)
+                    if job and job.status in {JobStatus.COMPLETED, JobStatus.FAILED}:
+                        return job.status
+                    await asyncio.sleep(0.2)
+            finally:
+                await runner.stop()
+
+        status = asyncio.run(_run_job())
+        if status != JobStatus.COMPLETED:
+            print("[red]Queued NetBox export failed[/red]")
+            raise typer.Exit(code=1)
+    else:
+        args = ["--force"] if force else []
+        code = _run_script("netbox-export/bin/netbox_update.py", *args)
+        if code != 0:
+            raise SystemExit(code)
+
+    _auto_publish_after_export()
+
+
+@app.command("cache-stats")
+def cache_stats(
+    json_output: bool = typer.Option(False, "--json", help="Emit metrics as JSON"),
+    include_empty: bool = typer.Option(False, "--include-empty", help="Show caches with zero usage"),
+    prime_netbox: bool = typer.Option(False, "--prime-netbox/--no-prime-netbox", help="Instantiate the NetBox client before sampling caches"),
+):
+    """Print cache hit/miss metrics for registered TTL caches."""
+
+    if prime_netbox:
+        try:
+            url = os.getenv("NETBOX_URL", "").strip()
+            token = os.getenv("NETBOX_TOKEN", "").strip()
+            if url and token:
+                from enreach_tools.infrastructure.external import NetboxClient, NetboxClientConfig
+
+                NetboxClient(NetboxClientConfig(url=url, token=token))
+            else:
+                print("[yellow]NETBOX_URL/NETBOX_TOKEN not set; skipping NetBox cache priming[/yellow]")
+        except Exception as exc:  # pragma: no cover - defensive logging
+            print(f"[red]Failed to prime NetBox caches:[/red] {exc}")
+
+    registry = get_cache_registry()
+    snapshot = registry.snapshot()
+    if not snapshot:
+        print("[dim]No caches registered[/dim]")
+        return
+
+    if not include_empty:
+        snapshot = {
+            name: info
+            for name, info in snapshot.items()
+            if (info["metrics"].hits or info["metrics"].misses or info["metrics"].loads)
+        }
+        if not snapshot:
+            print("[dim]No cache activity yet[/dim]")
+            return
+
+    if json_output:
+        payload = {
+            name: {
+                "metrics": asdict(info["metrics"]),
+                "size": info["size"],
+                "ttl_seconds": info["ttl_seconds"],
+            }
+            for name, info in snapshot.items()
+        }
+        typer.echo(json.dumps(payload, indent=2, default=float))
+        return
+
+    table = Table(title="Cache Metrics")
+    table.add_column("Cache", style="cyan")
+    table.add_column("Hits", justify="right")
+    table.add_column("Misses", justify="right")
+    table.add_column("Loads", justify="right")
+    table.add_column("Evictions", justify="right")
+    table.add_column("Size", justify="right")
+    table.add_column("TTL (s)", justify="right")
+
+    for name in sorted(snapshot.keys()):
+        info = snapshot[name]
+        metrics = info["metrics"]
+        table.add_row(
+            name,
+            str(metrics.hits),
+            str(metrics.misses),
+            str(metrics.loads),
+            str(metrics.evictions),
+            str(info["size"]),
+            f"{info['ttl_seconds']:.0f}",
+        )
+
+    console.print(table)
 
 
 @api.command("serve")

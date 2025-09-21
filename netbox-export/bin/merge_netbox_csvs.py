@@ -193,10 +193,8 @@ def merge_netbox_csvs():
         try:
             result = backup_sync.sync_paths([Path(output_file)], note="netbox_merge_csv")
             if result.get("status") == "ok" and result.get("count"):
-                print(f"Dropbox sync: uploaded {result['count']} file(s) from merge.")
-        except Exception as sync_error:  # pragma: no cover - defensive logging
-            print(f"Dropbox sync error (merge csv): {sync_error}")
-
+                print(f"        except Exception as sync_error:  # pragma: no cover - defensive logging
+            print(f"
         return True
 
     except Exception as e:
@@ -301,10 +299,8 @@ def create_excel_export(csv_file, excel_file):
         try:
             result = backup_sync.sync_paths([Path(excel_file)], note="netbox_merge_excel")
             if result.get("status") == "ok" and result.get("count"):
-                print(f"Dropbox sync: uploaded {result['count']} file(s) from Excel export.")
-        except Exception as sync_error:  # pragma: no cover - defensive logging
-            print(f"Dropbox sync error (merge excel): {sync_error}")
-
+                print(f"        except Exception as sync_error:  # pragma: no cover - defensive logging
+            print(f"
         print("Excel export completed with:")
         print("  - Data sorted by Name")
         print("  - Filters enabled on header row")

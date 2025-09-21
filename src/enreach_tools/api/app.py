@@ -52,6 +52,13 @@ from enreach_tools.application.security import hash_password, verify_password
 from enreach_tools.db import get_sessionmaker, init_database
 from enreach_tools.db.models import ChatMessage, ChatSession, GlobalAPIKey, User, UserAPIKey
 from enreach_tools.env import load_env, project_root
+from enreach_tools.infrastructure.external import (
+    ZabbixAuthError,
+    ZabbixClient,
+    ZabbixClientConfig,
+    ZabbixConfigError,
+    ZabbixError,
+)
 from enreach_tools.interfaces.api import bootstrap_api
 from enreach_tools.interfaces.api.dependencies import (
     CurrentUserDep,
@@ -2146,6 +2153,7 @@ def chat_stream(
 # Zabbix integration (read-only)
 # ---------------------------
 
+
 def _zbx_base_url() -> str | None:
     raw = os.getenv("ZABBIX_API_URL", "").strip()
     if raw:
@@ -2158,15 +2166,6 @@ def _zbx_base_url() -> str | None:
     return None
 
 
-def _zbx_headers() -> dict[str, str]:
-    token = os.getenv("ZABBIX_API_TOKEN", "").strip()
-    h = {"Content-Type": "application/json"}
-    if token:
-        # Send Authorization header for API token auth (Zabbix 5.4+)
-        h["Authorization"] = f"Bearer {token}"
-    return h
-
-
 def _zbx_web_base() -> str | None:
     web = os.getenv("ZABBIX_WEB_URL", "").strip()
     if web:
@@ -2177,78 +2176,45 @@ def _zbx_web_base() -> str | None:
     return None
 
 
-def _zbx_rpc(method: str, params: dict) -> dict:
-    url = _zbx_base_url()
-    if not url:
+def _zabbix_client() -> ZabbixClient:
+    api_url = _zbx_base_url()
+    if not api_url:
         raise HTTPException(status_code=400, detail="ZABBIX_API_URL or ZABBIX_HOST not configured")
-    token = os.getenv("ZABBIX_API_TOKEN", "").strip()
-    headers = _zbx_headers()
-    body = {
-        "jsonrpc": "2.0",
-        "method": method,
-        "params": params,
-        "id": 1,
-    }
-    # Always include 'auth' in body for compatibility (some proxies strip Authorization)
-    if token:
-        body["auth"] = token
-    r = requests.post(url, headers=headers, json=body, timeout=30)
-    r.raise_for_status()
-    data = r.json()
-    if data.get("error"):
-        # Map not authorized to 401
-        err = data["error"]
-        msg = str(err)
-        if "Not authorized" in msg or (isinstance(err, dict) and "Not authorized" in str(err.get("data", ""))):
-            raise HTTPException(status_code=401, detail=f"Zabbix error: {err}")
-        raise HTTPException(status_code=502, detail=f"Zabbix error: {err}")
-    return data.get("result", {})
+    token = os.getenv("ZABBIX_API_TOKEN", "").strip() or None
+    config = ZabbixClientConfig(
+        api_url=api_url,
+        api_token=token,
+        web_url=_zbx_web_base(),
+        timeout=30.0,
+    )
+    try:
+        return ZabbixClient(config)
+    except ZabbixConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+    def _zbx_rpc(method: str, params: dict, *, client: ZabbixClient | None = None) -> dict:
+        client = client or _zabbix_client()
+        try:
+            result = client.rpc(method, params)
+        except ZabbixAuthError as err:
+            raise HTTPException(status_code=401, detail=f"Zabbix error: {err}") from err
+        except ZabbixError as err:
+            raise HTTPException(status_code=502, detail=f"Zabbix error: {err}") from err
+        if isinstance(result, (dict, list)):
+            return result  # type: ignore[return-value]
+        return {}
 
 
 def _zbx_expand_groupids(base_group_ids: list[int]) -> list[int]:
-    """Return base_group_ids plus all subgroup IDs by name prefix matching.
-
-    This uses hostgroup.get to fetch all groups and includes those whose name
-    starts with any base group name followed by '/'. Works across Zabbix versions
-    without relying on wildcard search support.
-    """
-    try:
-        if not base_group_ids:
-            return base_group_ids
-        groups = _zbx_rpc("hostgroup.get", {"output": ["groupid", "name"], "limit": 10000})
-        if not isinstance(groups, list):
-            return base_group_ids
-        # Map id->name and collect target prefixes
-        id_to_name: dict[int, str] = {}
-        for g in groups:
-            try:
-                gid = int(g.get("groupid"))
-                nm = str(g.get("name") or "").strip()
-                id_to_name[gid] = nm
-            except Exception:
-                continue
-        prefixes = [id_to_name.get(gid, "").strip() for gid in base_group_ids]
-        prefixes = [p for p in prefixes if p]
-        if not prefixes:
-            return base_group_ids
-        # Include any group whose name equals the prefix or starts with 'prefix/'
-        out: set[int] = set()
-        for g in groups:
-            try:
-                gid = int(g.get("groupid"))
-                nm = str(g.get("name") or "").strip()
-            except Exception:
-                continue
-            for p in prefixes:
-                if nm == p or nm.startswith(p + "/"):
-                    out.add(gid)
-                    break
-        # Ensure base ids included
-        for gid in base_group_ids:
-            out.add(int(gid))
-        return sorted(out)
-    except Exception:
+    if not base_group_ids:
         return base_group_ids
+    client = _zabbix_client()
+    try:
+        expanded = client.expand_groupids(base_group_ids)
+    except ZabbixError:
+        return base_group_ids
+    return list(expanded)
 
 
 @app.get("/zabbix/problems")
@@ -2262,7 +2228,6 @@ def zabbix_problems(
     include_subgroups: int = Query(0, ge=0, le=1, description="When filtering by groupids, include all subgroup IDs"),
 ):
     """Return problems from Zabbix using problem.get with basic filters."""
-    # Do not hard-fail on missing token here; let downstream return a clear error
     try:
         sev_list = [int(s) for s in (severities.split(",") if severities else []) if str(s).strip() != ""]
     except Exception:
@@ -2276,7 +2241,6 @@ def zabbix_problems(
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid hostids")
 
-    # Defaults to match the provided filter when env not set
     if not sev_list:
         env_sev = os.getenv("ZABBIX_SEVERITIES", "2,3,4").strip()
         if env_sev:
@@ -2290,132 +2254,61 @@ def zabbix_problems(
         gid = os.getenv("ZABBIX_GROUP_ID", "").strip()
         if gid.isdigit():
             grp_list = [int(gid)]
-    # Expand group ids to include all subgroups when requested
+
+    client = _zabbix_client()
     if grp_list and include_subgroups == 1:
-        grp_list = _zbx_expand_groupids(grp_list)
+        grp_list = list(client.expand_groupids(grp_list))
 
-    params: dict = {
-        "output": [
-            "eventid",
-            "name",
-            "opdata",
-            "severity",
-            "clock",
-            "acknowledged",
-            "r_eventid",
-            "source",
-            "object",
-            "objectid",
-        ],
-        "selectTags": "extend",
-        "selectAcknowledges": "extend",
-        "selectSuppressionData": "extend",
-        # Some Zabbix installations do not allow sorting by 'clock' via API.
-        # We'll fetch recent problems and sort by clock server-side.
-        "limit": limit,
-    }
-    if sev_list:
-        params["severities"] = sev_list
-    if grp_list:
-        params["groupids"] = grp_list
-    if host_list:
-        params["hostids"] = host_list
-    # Acknowledged filter: when unacknowledged=1 -> only unacknowledged; when 0 -> no filter (show all)
-    if unacknowledged == 1:
-        params["acknowledged"] = 0
-    if suppressed in (0, 1):
-        params["suppressed"] = suppressed
+    try:
+        problem_list = client.get_problems(
+            severities=sev_list,
+            groupids=grp_list,
+            hostids=host_list,
+            unacknowledged=bool(unacknowledged),
+            suppressed=bool(suppressed) if suppressed in (0, 1) else None,
+            limit=limit,
+        )
+    except ZabbixAuthError as err:
+        raise HTTPException(status_code=401, detail=f"Zabbix error: {err}") from err
+    except ZabbixError as err:
+        raise HTTPException(status_code=502, detail=f"Zabbix error: {err}") from err
 
-    res = _zbx_rpc("problem.get", params)
     rows = []
-    base_web = _zbx_web_base() or ""
-
-    # Build map triggerid -> first host (hostid, name) for richer UI
-    trig_ids: list[str] = []
-    if isinstance(res, list):
-        seen = set()
-        for it in res:
-            tid = str(it.get("objectid") or "").strip()
-            if tid and tid not in seen:
-                seen.add(tid)
-                trig_ids.append(tid)
-    host_by_trigger: dict[str, dict] = {}
-    if trig_ids:
-        try:
-            trigs = _zbx_rpc("trigger.get", {
-                "output": ["triggerid"],
-                "selectHosts": ["hostid", "name"],
-                "triggerids": trig_ids,
-            })
-            if isinstance(trigs, list):
-                for t in trigs:
-                    tid = str(t.get("triggerid"))
-                    hs = t.get("hosts") or []
-                    if isinstance(hs, list) and hs:
-                        h = hs[0] or {}
-                        host_by_trigger[tid] = {"hostid": h.get("hostid"), "name": h.get("name")}
-        except HTTPException:
-            pass
-
-    for it in res if isinstance(res, list) else []:
-        try:
-            clk = int(it.get("clock") or 0)
-        except Exception:
-            clk = 0
-        status = "RESOLVED" if str(it.get("r_eventid", "0")) not in ("0", "", "None", "none") else "PROBLEM"
-        # No server-side opdata filtering; GUI-equivalent filters are applied in the client.
-        # Prefer trigger->host lookup (more reliable across versions)
-        trig_id = str(it.get("objectid") or "")
-        host_name = host_by_trigger.get(trig_id, {}).get("name")
-        host_id = host_by_trigger.get(trig_id, {}).get("hostid")
-        # Fallback to hosts array if present
-        if (not host_name or not host_id) and isinstance(it.get("hosts"), list) and it.get("hosts"):
-            h0 = (it.get("hosts") or [None])[0] or {}
-            host_name = host_name or h0.get("name")
-            host_id = host_id or h0.get("hostid")
-        host_url = f"{base_web}/zabbix.php?action=host.view&hostid={host_id}" if (base_web and host_id) else None
-        problem_url = f"{base_web}/zabbix.php?action=problem.view&eventid={it.get('eventid')}" if base_web and it.get("eventid") else None
-        rows.append({
-            "eventid": it.get("eventid"),
-            "name": it.get("name"),
-            "opdata": it.get("opdata"),
-            "severity": int(it.get("severity") or 0),
-            "acknowledged": int(it.get("acknowledged") or 0),
-            "clock": clk,
-            "clock_iso": datetime.utcfromtimestamp(clk).strftime("%Y-%m-%d %H:%M:%S") if clk else None,
-            "tags": it.get("tags", []),
-            "suppressed": int(it.get("suppressed") or 0),
-            "status": status,
-            "host": host_name,
-            "hostid": host_id,
-            "host_url": host_url,
-            "problem_url": problem_url,
-        })
-    # Sort by clock DESC server-side to mimic the UI
-    rows.sort(key=lambda x: x.get("clock") or 0, reverse=True)
+    for problem in problem_list.items:
+        rows.append(
+            {
+                "eventid": problem.event_id,
+                "name": problem.name,
+                "opdata": problem.opdata,
+                "severity": problem.severity,
+                "acknowledged": int(problem.acknowledged),
+                "clock": problem.clock,
+                "clock_iso": problem.clock_iso,
+                "tags": list(problem.tags),
+                "suppressed": int(problem.suppressed),
+                "status": problem.status,
+                "host": problem.host_name,
+                "hostid": problem.host_id,
+                "host_url": problem.host_url,
+                "problem_url": problem.problem_url,
+            }
+        )
     return {"items": rows, "count": len(rows)}
+
 
 
 @app.get("/zabbix/host")
 def zabbix_host(hostid: int = Query(..., description="Host ID")):
     """Return extended information about a single host for debugging/analysis."""
-    params = {
-        "output": "extend",
-        "hostids": [hostid],
-        "selectInterfaces": "extend",
-        "selectGroups": ["groupid", "name"],
-        "selectInventory": "extend",
-        "selectMacros": "extend",
-        "selectTags": "extend",
-    }
-    res = _zbx_rpc("host.get", params)
-    if isinstance(res, list) and res:
-        try:
-            h = res[0]
-            return {"host": h}
-        except Exception:
-            pass
-    raise HTTPException(status_code=404, detail="Host not found")
+    try:
+        host = _zabbix_client().get_host(hostid)
+    except ZabbixAuthError as err:
+        raise HTTPException(status_code=401, detail=f"Zabbix error: {err}") from err
+    except ZabbixError as err:
+        raise HTTPException(status_code=502, detail=f"Zabbix error: {err}") from err
+    if not host.raw:
+        raise HTTPException(status_code=404, detail="Host not found")
+    return {"host": host.raw}
 
 
 class ZabbixAckRequest(BaseModel):
@@ -2429,21 +2322,17 @@ def zabbix_ack(req: ZabbixAckRequest):
 
     Uses event.acknowledge with action=6 (acknowledge + message). Requires API token.
     """
+    ids = [str(x) for x in (req.eventids or []) if str(x).strip()]
+    if not ids:
+        raise HTTPException(status_code=400, detail="No event IDs provided")
     try:
-        ids: list[str] = [str(x) for x in (req.eventids or []) if str(x).strip()]
-        if not ids:
-            raise HTTPException(status_code=400, detail="No event IDs provided")
-        params = {
-            "eventids": ids,
-            "message": (req.message or "Acknowledged via Enreach Tools").strip(),
-            "action": 6,
-        }
-        res = _zbx_rpc("event.acknowledge", params)
-        return {"ok": True, "result": res}
-    except HTTPException:
-        raise
-    except Exception as ex:
-        raise HTTPException(status_code=500, detail=f"Ack failed: {ex}")
+        result = _zabbix_client().acknowledge(ids, message=req.message)
+    except ZabbixAuthError as err:
+        raise HTTPException(status_code=401, detail=f"Zabbix error: {err}") from err
+    except ZabbixError as err:
+        raise HTTPException(status_code=502, detail=f"Zabbix error: {err}") from err
+    return {"ok": True, "eventids": list(result.succeeded), "result": result.response}
+
 
 
 # Serve favicon from project package location (png) as /favicon.ico

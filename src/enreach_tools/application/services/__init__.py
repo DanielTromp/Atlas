@@ -46,6 +46,7 @@ class ChatHistoryService(Protocol):
 
 from .admin import AdminService, create_admin_service
 from .chat import DefaultChatHistoryService, create_chat_history_service
+from .netbox import NetboxExportService
 from .users import DefaultUserService, create_user_service
 
 __all__ = [
@@ -53,6 +54,7 @@ __all__ = [
     "ChatHistoryService",
     "DefaultChatHistoryService",
     "DefaultUserService",
+    "NetboxExportService",
     "UserService",
     "create_admin_service",
     "create_chat_history_service",

@@ -8,11 +8,9 @@ Supports `--force` to re-fetch all resources.
 from __future__ import annotations
 
 import argparse
-import os
-import subprocess
-import sys
 
-from enreach_tools.env import load_env, project_root, require_env
+from enreach_tools.application.services.netbox import NetboxExportService
+from enreach_tools.env import load_env, require_env
 
 
 def main() -> int:
@@ -22,25 +20,13 @@ def main() -> int:
     load_env()
     require_env(["NETBOX_URL", "NETBOX_TOKEN"])  # token needed for export endpoints
 
-    steps = [
-        ("devices", "netbox-export/bin/get_netbox_devices.py"),
-        ("vms", "netbox-export/bin/get_netbox_vms.py"),
-        ("merge", "netbox-export/bin/merge_netbox_csvs.py"),
-    ]
-
-    root = project_root()
-    env = os.environ.copy()
-
-    for name, rel in steps:
-        print(f"[bold]Running {name}...[/bold]")
-        script = root / rel
-        cmd = [sys.executable, str(script)]
-        if args.force and name in ("devices", "vms"):
-            cmd.append("--force")
-        code = subprocess.call(cmd, cwd=root, env=env)
-        if code != 0:
-            print(f"[red]Step failed:[/red] {name} (exit {code})")
-            return code
+    print("[bold]Running NetBox export service...[/bold]")
+    service = NetboxExportService.from_env()
+    try:
+        service.export_all(force=args.force)
+    except Exception as exc:
+        print(f"[red]NetBox export failed:[/red] {exc}")
+        return 1
 
     print("[green]Update complete: devices + vms + merge[/green]")
     return 0

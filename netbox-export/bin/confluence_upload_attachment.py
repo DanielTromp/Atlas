@@ -4,15 +4,14 @@
 from __future__ import annotations
 
 import argparse
-import json
 import mimetypes
 import os
 from pathlib import Path
 
-import requests
 from rich import print
 
 from enreach_tools.env import get_env, load_env, project_root
+from enreach_tools.infrastructure.external import ConfluenceClient, ConfluenceClientConfig
 
 
 def read_file(path: Path) -> bytes:
@@ -30,82 +29,21 @@ def ensure_page_id(raw: str | None) -> str:
     raise SystemExit(2)
 
 
-
-def build_session(base: str, email: str, token: str) -> requests.Session:
-    sess = requests.Session()
-    sess.auth = (email, token)
-    sess.headers.update({"Accept": "application/json"})
-    return sess
-
-
 def guess_mimetype(filename: str) -> str:
     mime, _ = mimetypes.guess_type(filename)
     return mime or "application/octet-stream"
 
 
-def fetch_attachment_id(session: requests.Session, api_base: str, page_id: str, name: str) -> str | None:
-    url = f"{api_base}/rest/api/content/{page_id}/child/attachment"
-    params = {"filename": name, "limit": 25}
-    try:
-        resp = session.get(url, params=params, timeout=30)
-    except requests.RequestException as exc:
-        print(f"[red]Failed to query attachments:[/red] {exc}")
-        raise SystemExit(1) from None
-    if resp.status_code != 200:
-        print(f"[red]Failed to query attachments ({resp.status_code}):[/red] {resp.text[:200]}")
-        raise SystemExit(1)
-    data = resp.json()
-    for item in data.get("results", []):
-        if item.get("title") == name:
-            return item.get("id")
-    return None
-
-
-def perform_upload(
-    session: requests.Session,
-    url: str,
-    files: dict,
-    comment: str | None,
-    action: str,
-) -> dict:
-    data = {"minorEdit": "true"}
-    if comment:
-        data["comment"] = comment
-    try:
-        resp = session.post(url, headers={"X-Atlassian-Token": "nocheck"}, files=files, data=data, timeout=60)
-    except requests.RequestException as exc:
-        print(f"[red]{action} request failed:[/red] {exc}")
-        raise SystemExit(1) from None
-    if resp.status_code not in (200, 201):
-        print(f"[red]{action} failed ({resp.status_code}):[/red] {resp.text[:400]}")
-        raise SystemExit(1)
-    return resp.json()
-
-
-def print_result(payload: dict) -> None:
-    results = payload.get("results") or payload.get("version") or {}
-    if isinstance(results, list) and results:
-        latest = results[0]
-    elif isinstance(results, dict):
-        latest = results
-    else:
-        latest = payload
-    title = latest.get("title") or payload.get("title")
-    version = latest.get("version", {}).get("number") if isinstance(latest.get("version"), dict) else latest.get("version")
-    link = None
-    links = latest.get("_links") or payload.get("_links") or {}
-    if isinstance(links, dict):
-        base = links.get("base")
-        webui = links.get("webui") or links.get("download")
-        if base and webui:
-            link = base + webui
+def print_attachment_result(attachment) -> None:
     print("[green]Attachment upload complete[/green]")
-    if title:
-        print(f"[bold]Name:[/bold] {title}")
-    if version:
-        print(f"[bold]Version:[/bold] {version}")
-    if link:
-        print(f"[bold]Open:[/bold] {link}")
+    if getattr(attachment, "title", None):
+        print(f"[bold]Name:[/bold] {attachment.title}")
+    if getattr(attachment, "version", None):
+        print(f"[bold]Version:[/bold] {attachment.version}")
+    if getattr(attachment, "web_url", None):
+        print(f"[bold]Open:[/bold] {attachment.web_url}")
+
+
 
 
 def main() -> int:
@@ -126,30 +64,34 @@ def main() -> int:
     base = get_env("ATLASSIAN_BASE_URL", required=True)
     email = get_env("ATLASSIAN_EMAIL", required=True)
     token = get_env("ATLASSIAN_API_TOKEN", required=True)
-
-    api_base = base.rstrip("/") + "/wiki"
-    session = build_session(base, email, token)
+    client = ConfluenceClient(ConfluenceClientConfig(base_url=base, email=email, api_token=token))
 
     mime = guess_mimetype(attachment_name)
     comment = args.comment.strip() or None
 
     print(f"[bold]Uploading:[/bold] {file_path} -> page {page_id} as {attachment_name}")
 
-    existing = fetch_attachment_id(session, api_base, page_id, attachment_name)
-    files = {"file": (attachment_name, file_bytes, mime)}
+    existing = client.find_attachment(page_id=page_id, name=attachment_name)
     if existing:
-        print(f"[dim]Attachment exists (id {existing}); uploading new version[/dim]")
-        url = f"{api_base}/rest/api/content/{page_id}/child/attachment/{existing}/data"
-        payload = perform_upload(session, url, files, comment, "Attachment replace")
+        print(f"[dim]Attachment exists (id {existing.id}); uploading new version[/dim]")
+        result = client.replace_attachment(
+            page_id=page_id,
+            attachment_id=existing.id,
+            name=attachment_name,
+            data=file_bytes,
+            content_type=mime,
+            comment=comment,
+        )
     else:
-        url = f"{api_base}/rest/api/content/{page_id}/child/attachment"
-        payload = perform_upload(session, url, files, comment, "Attachment upload")
+        result = client.upload_attachment(
+            page_id=page_id,
+            name=attachment_name,
+            data=file_bytes,
+            content_type=mime,
+            comment=comment,
+        )
 
-    try:
-        print_result(payload)
-    except Exception:
-        print("[yellow]Upload succeeded but could not parse response[/yellow]")
-        print(json.dumps(payload)[:400])
+    print_attachment_result(result)
     return 0
 
 

@@ -8,13 +8,11 @@ It supports incremental updates by comparing timestamps to only fetch changed da
 import argparse
 import csv
 import os
-import sys
 from pathlib import Path
-
-import pynetbox
 
 from enreach_tools import backup_sync
 from enreach_tools.env import apply_extra_headers, load_env, project_root, require_env
+from enreach_tools.infrastructure.external import NetboxClient, NetboxClientConfig
 
 # Load environment variables from central loader (.env at project root)
 load_env()
@@ -24,12 +22,50 @@ require_env(["NETBOX_URL", "NETBOX_TOKEN"])
 NETBOX_URL = os.getenv("NETBOX_URL")
 NETBOX_TOKEN = os.getenv("NETBOX_TOKEN")
 
+netbox_client = NetboxClient(NetboxClientConfig(url=NETBOX_URL, token=NETBOX_TOKEN))
+nb = netbox_client.api
+apply_extra_headers(nb.http_session)
+
 # Resolve data directory relative to project root, defaulting to legacy location under netbox-export/
 _root = project_root()
 _data_dir_env = os.getenv("NETBOX_DATA_DIR", "data")
 _data_dir_path = Path(_data_dir_env) if os.path.isabs(_data_dir_env) else (_root / _data_dir_env)
 _data_dir_path.mkdir(parents=True, exist_ok=True)
 CSV_FILE = str(_data_dir_path / "netbox_vms_export.csv")
+
+# Shared helpers -------------------------------------------------------------
+
+
+def _to_iso(dt):
+    if not dt:
+        return ""
+    if isinstance(dt, str):
+        return dt
+    try:
+        return dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    except Exception:
+        return str(dt)
+
+
+class _ListProxy(list):
+    def all(self):
+        return list(self)
+
+
+class _AttrProxy:
+    def __init__(self, payload):
+        self._payload = payload or {}
+
+    def __getattr__(self, item):
+        if item == "_payload":
+            return super().__getattribute__(item)
+        value = self._payload.get(item)
+        if isinstance(value, dict):
+            return _AttrProxy(value)
+        if isinstance(value, list):
+            proxied = [_AttrProxy(v) if isinstance(v, dict) else v for v in value]
+            return _ListProxy(proxied)
+        return value
 
 # --- Contacts helpers (NetBox 3.x/4.x compatible) ---
 
@@ -135,35 +171,16 @@ def _req_err_details(e) -> str:
     return (" [" + ", ".join(info) + "]") if info else ""
 
 
-def connect_to_netbox():
-    """Connect to NetBox API"""
-    try:
-        nb = pynetbox.api(NETBOX_URL, token=NETBOX_TOKEN)
-        apply_extra_headers(nb.http_session)
-        return nb
-    except Exception as e:
-        print(f"Error connecting to NetBox: {e}")
-        sys.exit(1)
-
-def get_vm_metadata(nb):
+def get_vm_metadata(client, *, force_refresh: bool = False):
     """Get VM metadata (id and last_updated) for comparison"""
     print("Fetching VM list from NetBox...")
     try:
-        # Get all VMs with minimal fields for comparison
-        vms = nb.virtualization.virtual_machines.all()
+        vms = client.list_vms(force_refresh=force_refresh)
         vm_metadata = {}
 
         for vm in vms:
-            # Handle last_updated field - it might be a string or datetime object
-            last_updated = vm.last_updated
-            if last_updated:
-                if hasattr(last_updated, "isoformat"):
-                    last_updated = last_updated.isoformat()
-                else:
-                    last_updated = str(last_updated)
-
             vm_metadata[vm.id] = {
-                "last_updated": last_updated,
+                "last_updated": _to_iso(vm.last_updated),
             }
 
         print(f"Found {len(vm_metadata)} VMs in NetBox.")
@@ -227,7 +244,8 @@ def identify_changes(netbox_metadata, existing_data):
 
     return new_vms, updated_vms, deleted_vms
 
-def get_vm_details(nb, vm_ids):
+
+def get_vm_details(client, vm_ids):
     """Get detailed VM information for specified VM IDs"""
     vm_details = {}
 
@@ -239,126 +257,77 @@ def get_vm_details(nb, vm_ids):
 
     for i, vm_id in enumerate(vm_ids, 1):
         try:
-            vm = nb.virtualization.virtual_machines.get(vm_id)
-            if vm:
-                # Extract VM data with comprehensive field mapping
-                vm_data = {
-                    "Name": vm.name or "",
-                    "Status": str(vm.status) if vm.status else "",
-                    "Site": str(vm.site) if vm.site else "",
-                    "Cluster": str(vm.cluster) if vm.cluster else "",
-                    "Role": str(vm.role) if vm.role else "",
-                    "Tenant": str(vm.tenant) if vm.tenant else "",
-                    "VCPUs": str(vm.vcpus) if vm.vcpus else "",
-                    "Memory (MB)": str(vm.memory) if vm.memory else "",
-                    "Disk": str(vm.disk) if vm.disk else "",
-                    "IP Address": "",  # Will be populated from primary IP
-                    "ID": str(vm.id),
-                    "Device": "",
-                    "Tenant Group": "",
-                    "IPv4 Address": "",
-                    "IPv6 Address": "",
-                    "Description": vm.description or "",
-                    "Comments": vm.comments or "",
-                    "Config Template": "",
-                    "Serial number": "",  # VMs typically don't have serial numbers
-                    "Contacts": "",
-                    "Tags": ", ".join([str(tag) for tag in vm.tags]) if vm.tags else "",
-                    "Created": "",
-                    "Last updated": "",
-                    "Platform": str(vm.platform) if vm.platform else "",
-                    "Interfaces": "0",
-                    "Virtual Disks": "",
-                    "Backup": "",
-                    "DTAP state": "",
-                    "Harddisk": "",
-                    "open actions": "",
-                    "Server Group": "",
-                }
+            record = client.get_vm(vm_id)
+            if not record:
+                continue
+            vm = record.source or _AttrProxy(record.raw)
 
-                # Handle Device field
-                if hasattr(vm, "device") and vm.device:
-                    vm_data["Device"] = str(vm.device)
+            vm_data = {
+                "Name": record.name,
+                "Status": record.status_label or (record.status or ""),
+                "Site": record.site or "",
+                "Cluster": record.cluster or "",
+                "Role": record.role_detail or record.role or "",
+                "Tenant": record.tenant or "",
+                "VCPUs": str(getattr(vm, "vcpus", "")) if getattr(vm, "vcpus", None) else "",
+                "Memory (MB)": str(getattr(vm, "memory", "")) if getattr(vm, "memory", None) else "",
+                "Disk": str(getattr(vm, "disk", "")) if getattr(vm, "disk", None) else "",
+                "IP Address": record.primary_ip_best or "",
+                "ID": str(record.id),
+                "Device": str(getattr(vm, "device", "")) if getattr(vm, "device", None) else "",
+                "Tenant Group": record.tenant_group or "",
+                "IPv4 Address": record.primary_ip4 or "",
+                "IPv6 Address": record.primary_ip6 or "",
+                "Description": record.description or getattr(vm, "description", "") or "",
+                "Comments": getattr(vm, "comments", "") or "",
+                "Config Template": str(getattr(vm, "config_template", "")) if getattr(vm, "config_template", None) else "",
+                "Serial number": "",
+                "Contacts": get_vm_contacts(client.api, vm),
+                "Tags": ", ".join(record.tags),
+                "Created": _to_iso(getattr(vm, "created", "")),
+                "Last updated": _to_iso(record.last_updated) or _to_iso(getattr(vm, "last_updated", "")),
+                "Platform": record.platform or "",
+                "Interfaces": "0",
+                "Virtual Disks": "",
+                "Backup": "",
+                "DTAP state": "",
+                "Harddisk": "",
+                "open actions": "",
+                "Server Group": "",
+            }
 
-                # Handle Tenant Group field
-                if vm.tenant and hasattr(vm.tenant, "group") and vm.tenant.group:
-                    vm_data["Tenant Group"] = str(vm.tenant.group)
-
-                # Handle Config Template field
-                if hasattr(vm, "config_template") and vm.config_template:
-                    vm_data["Config Template"] = str(vm.config_template)
-
-                # Handle Created field
-                if vm.created:
-                    if hasattr(vm.created, "isoformat"):
-                        vm_data["Created"] = vm.created.isoformat()
+            try:
+                interfaces_attr = getattr(vm, "interfaces", None)
+                if interfaces_attr is not None:
+                    if hasattr(interfaces_attr, "count"):
+                        vm_data["Interfaces"] = str(interfaces_attr.count())
                     else:
-                        vm_data["Created"] = str(vm.created)
+                        vm_data["Interfaces"] = str(len(interfaces_attr))
+            except Exception:
+                vm_data["Interfaces"] = "0"
 
-                # Handle Last updated field
-                if vm.last_updated:
-                    if hasattr(vm.last_updated, "isoformat"):
-                        vm_data["Last updated"] = vm.last_updated.isoformat()
-                    else:
-                        vm_data["Last updated"] = str(vm.last_updated)
+            custom_fields = record.custom_fields or {}
+            if custom_fields.get("Virtual_Disks"):
+                vm_data["Virtual Disks"] = str(custom_fields["Virtual_Disks"])
+            if custom_fields.get("Backup"):
+                vm_data["Backup"] = str(custom_fields["Backup"])
+            if custom_fields.get("DTAP_state"):
+                vm_data["DTAP state"] = str(custom_fields["DTAP_state"])
+            if custom_fields.get("Harddisk"):
+                vm_data["Harddisk"] = str(custom_fields["Harddisk"])
+            if custom_fields.get("open_actions"):
+                vm_data["open actions"] = str(custom_fields["open_actions"])
+            if custom_fields.get("Server Group"):
+                vm_data["Server Group"] = str(custom_fields["Server Group"])
 
-                # Handle Interfaces count - simplified to avoid API performance issues
-                try:
-                    # Check if VM has interfaces attribute directly
-                    if hasattr(vm, "interfaces") and vm.interfaces is not None:
-                        # Try to get count without fully loading all interfaces
-                        vm_data["Interfaces"] = str(vm.interfaces.count() if hasattr(vm.interfaces, "count") else len(vm.interfaces))
-                    else:
-                        # Default to 0 if no interfaces info available
-                        vm_data["Interfaces"] = "0"
-                except Exception:
-                    vm_data["Interfaces"] = "0"
-
-                # Handle Contacts field via contact assignments
-                vm_data["Contacts"] = get_vm_contacts(nb, vm)
-
-                # Handle Custom Fields
-                if hasattr(vm, "custom_fields") and vm.custom_fields:
-                    custom_fields = vm.custom_fields
-
-                    # Map custom fields to CSV columns using exact field names from NetBox
-                    if custom_fields.get("Virtual_Disks"):
-                        vm_data["Virtual Disks"] = str(custom_fields["Virtual_Disks"])
-
-                    if custom_fields.get("Backup"):
-                        vm_data["Backup"] = str(custom_fields["Backup"])
-
-                    if custom_fields.get("DTAP_state"):
-                        vm_data["DTAP state"] = str(custom_fields["DTAP_state"])
-
-                    if custom_fields.get("Harddisk"):
-                        vm_data["Harddisk"] = str(custom_fields["Harddisk"])
-
-                    if custom_fields.get("open_actions"):
-                        vm_data["open actions"] = str(custom_fields["open_actions"])
-
-                    if custom_fields.get("Server_Group"):
-                        vm_data["Server Group"] = str(custom_fields["Server_Group"])
-
-                # Get primary IP address
-                if vm.primary_ip4:
-                    vm_data["IP Address"] = str(vm.primary_ip4).split("/")[0]
-                    vm_data["IPv4 Address"] = str(vm.primary_ip4)
-                elif vm.primary_ip6:
-                    vm_data["IP Address"] = str(vm.primary_ip6).split("/")[0]
-                    vm_data["IPv6 Address"] = str(vm.primary_ip6)
-
-                vm_details[vm_id] = vm_data
-
-                # Progress indicator
-                if i % 50 == 0 or i == total_vms:
-                    print(f"Progress: {i}/{total_vms} VMs processed")
-
+            vm_details[vm_id] = vm_data
+            print(f"Progress: {i}/{total_vms} VMs processed")
         except Exception as e:
             extra = _req_err_details(e)
-            print(f"Error fetching details for VM {vm_id}: {e}{extra}")
+            print(f"Error fetching VM {vm_id}: {e}{extra}")
 
     return vm_details
+
 
 def write_csv_data(vm_details, existing_data, deleted_vm_ids):
     """Write updated VM data to CSV file"""
@@ -393,12 +362,9 @@ def write_csv_data(vm_details, existing_data, deleted_vm_ids):
 
         # CSV file written; summary printed by caller
         try:
-            result = backup_sync.sync_paths([Path(CSV_FILE)], note="netbox_vms")
-            if result.get("status") == "ok" and result.get("count"):
-                print(f"Dropbox sync: uploaded {result['count']} file(s).")
-        except Exception as sync_error:  # pragma: no cover - defensive logging
-            print(f"Dropbox sync error (vms): {sync_error}")
-
+            backup_sync.sync_paths([Path(CSV_FILE)], note="netbox_vms")
+        except Exception:  # pragma: no cover - defensive logging
+            pass
     except Exception as e:
         print(f"Error writing CSV file: {e}")
 
@@ -410,11 +376,7 @@ def main():
 
     print("Starting NetBox VMs data synchronization...")
 
-    # Connect to NetBox
-    nb = connect_to_netbox()
-
-    # Get VM metadata from NetBox
-    netbox_metadata = get_vm_metadata(nb)
+    netbox_metadata = get_vm_metadata(netbox_client, force_refresh=args.force)
     if not netbox_metadata:
         print("No VMs found in NetBox or error occurred.")
         return
@@ -432,7 +394,7 @@ def main():
         vms_to_fetch = new_vms + updated_vms
 
     # Get details for target VMs
-    vm_details = get_vm_details(nb, vms_to_fetch)
+    vm_details = get_vm_details(netbox_client, vms_to_fetch)
 
     # Write updated data to CSV
     write_csv_data(vm_details, existing_data, deleted_vms)

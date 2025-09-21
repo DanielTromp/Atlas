@@ -282,7 +282,7 @@ def _backup_local(config: BackupConfig, file_paths: list[tuple[Path, str]]) -> d
         "copied": copies,
         "count": len(copies),
         "backup_dir": str(backup_dir),
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z"),
     }
 
 
@@ -315,7 +315,7 @@ def sync_paths(paths: Sequence[Path | str], *, note: str | None = None) -> dict:
         return {
             "status": "error",
             "reason": str(e),
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z"),
         }
 
 

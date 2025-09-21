@@ -1,0 +1,3 @@
+ID,Name,netbox_type
+1,Device A,devices
+2,VM B,vms

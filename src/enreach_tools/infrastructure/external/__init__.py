@@ -1,14 +1,25 @@
-"""External service adapters (NetBox, Confluence, backups)."""
+"""External service adapters (NetBox, Confluence, backups, Zabbix)."""
 
-from .netbox_client import NetboxClient, NetboxClientConfig
+from .backup_provider import BackupProvider
 from .confluence_client import ConfluenceClient, ConfluenceClientConfig
-from .backup_provider import BackupProvider, BackupJobResult
+from .netbox_client import NetboxClient, NetboxClientConfig
+from .zabbix_client import (
+    ZabbixAuthError,
+    ZabbixClient,
+    ZabbixClientConfig,
+    ZabbixConfigError,
+    ZabbixError,
+)
 
 __all__ = [
-    "NetboxClient",
-    "NetboxClientConfig",
+    "BackupProvider",
     "ConfluenceClient",
     "ConfluenceClientConfig",
-    "BackupProvider",
-    "BackupJobResult",
+    "NetboxClient",
+    "NetboxClientConfig",
+    "ZabbixAuthError",
+    "ZabbixClient",
+    "ZabbixClientConfig",
+    "ZabbixConfigError",
+    "ZabbixError",
 ]

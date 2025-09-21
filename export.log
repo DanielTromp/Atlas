@@ -1413,3 +1413,1295 @@
 [2025-09-21 02:06:01] Name: netbox_vms_export.csv
 [2025-09-21 02:06:01] Confluence page updated with NetBox VMs table
 [2025-09-21 02:06:01] [exit 0]
+[2025-09-21 09:18:54] $ uv run enreach export update
+[2025-09-21 09:18:55] Using .env: /Users/daniel/Documents/code/enreach-tools/.env
+[2025-09-21 09:18:56]   File "/Users/daniel/Documents/code/enreach-tools/netbox-export/bin/get_netbox_devices.py", line 59
+[2025-09-21 09:18:56]     snippet = text.strip().replace('
+[2025-09-21 09:18:56]                                    ^
+[2025-09-21 09:18:56] SyntaxError: unterminated string literal (detected at line 59)
+[2025-09-21 09:18:56] [bold]Running devices...[/bold]
+[2025-09-21 09:18:56] [red]Step failed:[/red] devices (exit 1)
+[2025-09-21 09:18:56] [exit 1]
+[2025-09-21 11:49:22] $ uv run enreach export update
+[2025-09-21 11:49:23] Using .env: /Users/daniel/Documents/code/enreach-tools/.env
+[2025-09-21 11:54:06] [bold]Running NetBox export service...[/bold]
+[2025-09-21 11:54:06] Starting NetBox Devices data synchronization...
+[2025-09-21 11:54:06] Fetching device list from NetBox...
+[2025-09-21 11:54:06] Found 2385 devices in NetBox.
+[2025-09-21 11:54:06] Reading existing CSV data...
+[2025-09-21 11:54:06] Found 2385 devices in the CSV file.
+[2025-09-21 11:54:06] Identified 0 new devices.
+[2025-09-21 11:54:06] Identified 0 updated devices.
+[2025-09-21 11:54:06] Identified 0 devices to delete.
+[2025-09-21 11:54:06] Writing updated data to CSV...
+[2025-09-21 11:54:06] Sync complete.
+[2025-09-21 11:54:06] Starting NetBox VMs data synchronization...
+[2025-09-21 11:54:06] Fetching VM list from NetBox...
+[2025-09-21 11:54:06] Found 961 VMs in NetBox.
+[2025-09-21 11:54:06] Reading existing CSV data...
+[2025-09-21 11:54:06] Found 961 VMs in the CSV file.
+[2025-09-21 11:54:06] Identified 0 new VMs.
+[2025-09-21 11:54:06] Identified 961 updated VMs.
+[2025-09-21 11:54:06] Identified 0 VMs to delete.
+[2025-09-21 11:54:06] Fetching details for 961 VMs...
+[2025-09-21 11:54:06] Progress: 1/961 VMs processed
+[2025-09-21 11:54:06] Progress: 2/961 VMs processed
+[2025-09-21 11:54:06] Progress: 3/961 VMs processed
+[2025-09-21 11:54:06] Progress: 4/961 VMs processed
+[2025-09-21 11:54:06] Progress: 5/961 VMs processed
+[2025-09-21 11:54:06] Progress: 6/961 VMs processed
+[2025-09-21 11:54:06] Progress: 7/961 VMs processed
+[2025-09-21 11:54:06] Progress: 8/961 VMs processed
+[2025-09-21 11:54:06] Progress: 9/961 VMs processed
+[2025-09-21 11:54:06] Progress: 10/961 VMs processed
+[2025-09-21 11:54:06] Progress: 11/961 VMs processed
+[2025-09-21 11:54:06] Progress: 12/961 VMs processed
+[2025-09-21 11:54:06] Progress: 13/961 VMs processed
+[2025-09-21 11:54:06] Progress: 14/961 VMs processed
+[2025-09-21 11:54:06] Progress: 15/961 VMs processed
+[2025-09-21 11:54:06] Progress: 16/961 VMs processed
+[2025-09-21 11:54:06] Progress: 17/961 VMs processed
+[2025-09-21 11:54:06] Progress: 18/961 VMs processed
+[2025-09-21 11:54:06] Progress: 19/961 VMs processed
+[2025-09-21 11:54:06] Progress: 20/961 VMs processed
+[2025-09-21 11:54:06] Progress: 21/961 VMs processed
+[2025-09-21 11:54:06] Progress: 22/961 VMs processed
+[2025-09-21 11:54:06] Progress: 23/961 VMs processed
+[2025-09-21 11:54:06] Progress: 24/961 VMs processed
+[2025-09-21 11:54:06] Progress: 25/961 VMs processed
+[2025-09-21 11:54:06] Progress: 26/961 VMs processed
+[2025-09-21 11:54:06] Progress: 27/961 VMs processed
+[2025-09-21 11:54:06] Progress: 28/961 VMs processed
+[2025-09-21 11:54:06] Progress: 29/961 VMs processed
+[2025-09-21 11:54:06] Progress: 30/961 VMs processed
+[2025-09-21 11:54:06] Progress: 31/961 VMs processed
+[2025-09-21 11:54:06] Progress: 32/961 VMs processed
+[2025-09-21 11:54:06] Progress: 33/961 VMs processed
+[2025-09-21 11:54:06] Progress: 34/961 VMs processed
+[2025-09-21 11:54:06] Progress: 35/961 VMs processed
+[2025-09-21 11:54:06] Progress: 36/961 VMs processed
+[2025-09-21 11:54:06] Progress: 37/961 VMs processed
+[2025-09-21 11:54:06] Progress: 38/961 VMs processed
+[2025-09-21 11:54:06] Progress: 39/961 VMs processed
+[2025-09-21 11:54:06] Progress: 40/961 VMs processed
+[2025-09-21 11:54:06] Progress: 41/961 VMs processed
+[2025-09-21 11:54:06] Progress: 42/961 VMs processed
+[2025-09-21 11:54:06] Progress: 43/961 VMs processed
+[2025-09-21 11:54:06] Progress: 44/961 VMs processed
+[2025-09-21 11:54:06] Progress: 45/961 VMs processed
+[2025-09-21 11:54:06] Progress: 46/961 VMs processed
+[2025-09-21 11:54:06] Progress: 47/961 VMs processed
+[2025-09-21 11:54:06] Progress: 48/961 VMs processed
+[2025-09-21 11:54:06] Progress: 49/961 VMs processed
+[2025-09-21 11:54:06] Progress: 50/961 VMs processed
+[2025-09-21 11:54:06] Progress: 51/961 VMs processed
+[2025-09-21 11:54:06] Progress: 52/961 VMs processed
+[2025-09-21 11:54:06] Progress: 53/961 VMs processed
+[2025-09-21 11:54:06] Progress: 54/961 VMs processed
+[2025-09-21 11:54:06] Progress: 55/961 VMs processed
+[2025-09-21 11:54:06] Progress: 56/961 VMs processed
+[2025-09-21 11:54:06] Progress: 57/961 VMs processed
+[2025-09-21 11:54:06] Progress: 58/961 VMs processed
+[2025-09-21 11:54:06] Progress: 59/961 VMs processed
+[2025-09-21 11:54:06] Progress: 60/961 VMs processed
+[2025-09-21 11:54:06] Progress: 61/961 VMs processed
+[2025-09-21 11:54:06] Progress: 62/961 VMs processed
+[2025-09-21 11:54:06] Progress: 63/961 VMs processed
+[2025-09-21 11:54:06] Progress: 64/961 VMs processed
+[2025-09-21 11:54:06] Progress: 65/961 VMs processed
+[2025-09-21 11:54:06] Progress: 66/961 VMs processed
+[2025-09-21 11:54:06] Progress: 67/961 VMs processed
+[2025-09-21 11:54:06] Progress: 68/961 VMs processed
+[2025-09-21 11:54:06] Progress: 69/961 VMs processed
+[2025-09-21 11:54:06] Progress: 70/961 VMs processed
+[2025-09-21 11:54:06] Progress: 71/961 VMs processed
+[2025-09-21 11:54:06] Progress: 72/961 VMs processed
+[2025-09-21 11:54:06] Progress: 73/961 VMs processed
+[2025-09-21 11:54:06] Progress: 74/961 VMs processed
+[2025-09-21 11:54:06] Progress: 75/961 VMs processed
+[2025-09-21 11:54:06] Progress: 76/961 VMs processed
+[2025-09-21 11:54:06] Progress: 77/961 VMs processed
+[2025-09-21 11:54:06] Progress: 78/961 VMs processed
+[2025-09-21 11:54:06] Progress: 79/961 VMs processed
+[2025-09-21 11:54:06] Progress: 80/961 VMs processed
+[2025-09-21 11:54:06] Progress: 81/961 VMs processed
+[2025-09-21 11:54:06] Progress: 82/961 VMs processed
+[2025-09-21 11:54:06] Progress: 83/961 VMs processed
+[2025-09-21 11:54:06] Progress: 84/961 VMs processed
+[2025-09-21 11:54:06] Progress: 85/961 VMs processed
+[2025-09-21 11:54:06] Progress: 86/961 VMs processed
+[2025-09-21 11:54:06] Progress: 87/961 VMs processed
+[2025-09-21 11:54:06] Progress: 88/961 VMs processed
+[2025-09-21 11:54:06] Progress: 89/961 VMs processed
+[2025-09-21 11:54:06] Progress: 90/961 VMs processed
+[2025-09-21 11:54:06] Progress: 91/961 VMs processed
+[2025-09-21 11:54:06] Progress: 92/961 VMs processed
+[2025-09-21 11:54:06] Progress: 93/961 VMs processed
+[2025-09-21 11:54:06] Progress: 94/961 VMs processed
+[2025-09-21 11:54:06] Progress: 95/961 VMs processed
+[2025-09-21 11:54:06] Progress: 96/961 VMs processed
+[2025-09-21 11:54:06] Progress: 97/961 VMs processed
+[2025-09-21 11:54:06] Progress: 98/961 VMs processed
+[2025-09-21 11:54:06] Progress: 99/961 VMs processed
+[2025-09-21 11:54:06] Progress: 100/961 VMs processed
+[2025-09-21 11:54:06] Progress: 101/961 VMs processed
+[2025-09-21 11:54:06] Progress: 102/961 VMs processed
+[2025-09-21 11:54:06] Progress: 103/961 VMs processed
+[2025-09-21 11:54:06] Progress: 104/961 VMs processed
+[2025-09-21 11:54:06] Progress: 105/961 VMs processed
+[2025-09-21 11:54:06] Progress: 106/961 VMs processed
+[2025-09-21 11:54:06] Progress: 107/961 VMs processed
+[2025-09-21 11:54:06] Progress: 108/961 VMs processed
+[2025-09-21 11:54:06] Progress: 109/961 VMs processed
+[2025-09-21 11:54:06] Progress: 110/961 VMs processed
+[2025-09-21 11:54:06] Progress: 111/961 VMs processed
+[2025-09-21 11:54:06] Progress: 112/961 VMs processed
+[2025-09-21 11:54:06] Progress: 113/961 VMs processed
+[2025-09-21 11:54:06] Progress: 114/961 VMs processed
+[2025-09-21 11:54:06] Progress: 115/961 VMs processed
+[2025-09-21 11:54:06] Progress: 116/961 VMs processed
+[2025-09-21 11:54:06] Progress: 117/961 VMs processed
+[2025-09-21 11:54:06] Progress: 118/961 VMs processed
+[2025-09-21 11:54:06] Progress: 119/961 VMs processed
+[2025-09-21 11:54:06] Progress: 120/961 VMs processed
+[2025-09-21 11:54:06] Progress: 121/961 VMs processed
+[2025-09-21 11:54:06] Progress: 122/961 VMs processed
+[2025-09-21 11:54:06] Progress: 123/961 VMs processed
+[2025-09-21 11:54:06] Progress: 124/961 VMs processed
+[2025-09-21 11:54:06] Progress: 125/961 VMs processed
+[2025-09-21 11:54:06] Progress: 126/961 VMs processed
+[2025-09-21 11:54:06] Progress: 127/961 VMs processed
+[2025-09-21 11:54:06] Progress: 128/961 VMs processed
+[2025-09-21 11:54:06] Progress: 129/961 VMs processed
+[2025-09-21 11:54:06] Progress: 130/961 VMs processed
+[2025-09-21 11:54:06] Progress: 131/961 VMs processed
+[2025-09-21 11:54:06] Progress: 132/961 VMs processed
+[2025-09-21 11:54:06] Progress: 133/961 VMs processed
+[2025-09-21 11:54:06] Progress: 134/961 VMs processed
+[2025-09-21 11:54:06] Progress: 135/961 VMs processed
+[2025-09-21 11:54:06] Progress: 136/961 VMs processed
+[2025-09-21 11:54:06] Progress: 137/961 VMs processed
+[2025-09-21 11:54:06] Progress: 138/961 VMs processed
+[2025-09-21 11:54:06] Progress: 139/961 VMs processed
+[2025-09-21 11:54:06] Progress: 140/961 VMs processed
+[2025-09-21 11:54:06] Progress: 141/961 VMs processed
+[2025-09-21 11:54:06] Progress: 142/961 VMs processed
+[2025-09-21 11:54:06] Progress: 143/961 VMs processed
+[2025-09-21 11:54:06] Progress: 144/961 VMs processed
+[2025-09-21 11:54:06] Progress: 145/961 VMs processed
+[2025-09-21 11:54:06] Progress: 146/961 VMs processed
+[2025-09-21 11:54:06] Progress: 147/961 VMs processed
+[2025-09-21 11:54:06] Progress: 148/961 VMs processed
+[2025-09-21 11:54:06] Progress: 149/961 VMs processed
+[2025-09-21 11:54:06] Progress: 150/961 VMs processed
+[2025-09-21 11:54:06] Progress: 151/961 VMs processed
+[2025-09-21 11:54:06] Progress: 152/961 VMs processed
+[2025-09-21 11:54:06] Progress: 153/961 VMs processed
+[2025-09-21 11:54:06] Progress: 154/961 VMs processed
+[2025-09-21 11:54:06] Progress: 155/961 VMs processed
+[2025-09-21 11:54:06] Progress: 156/961 VMs processed
+[2025-09-21 11:54:06] Progress: 157/961 VMs processed
+[2025-09-21 11:54:06] Progress: 158/961 VMs processed
+[2025-09-21 11:54:06] Progress: 159/961 VMs processed
+[2025-09-21 11:54:06] Progress: 160/961 VMs processed
+[2025-09-21 11:54:06] Progress: 161/961 VMs processed
+[2025-09-21 11:54:06] Progress: 162/961 VMs processed
+[2025-09-21 11:54:06] Progress: 163/961 VMs processed
+[2025-09-21 11:54:06] Progress: 164/961 VMs processed
+[2025-09-21 11:54:06] Progress: 165/961 VMs processed
+[2025-09-21 11:54:06] Progress: 166/961 VMs processed
+[2025-09-21 11:54:06] Progress: 167/961 VMs processed
+[2025-09-21 11:54:06] Progress: 168/961 VMs processed
+[2025-09-21 11:54:06] Progress: 169/961 VMs processed
+[2025-09-21 11:54:06] Progress: 170/961 VMs processed
+[2025-09-21 11:54:06] Progress: 171/961 VMs processed
+[2025-09-21 11:54:06] Progress: 172/961 VMs processed
+[2025-09-21 11:54:06] Progress: 173/961 VMs processed
+[2025-09-21 11:54:06] Progress: 174/961 VMs processed
+[2025-09-21 11:54:06] Progress: 175/961 VMs processed
+[2025-09-21 11:54:06] Progress: 176/961 VMs processed
+[2025-09-21 11:54:06] Progress: 177/961 VMs processed
+[2025-09-21 11:54:06] Progress: 178/961 VMs processed
+[2025-09-21 11:54:06] Progress: 179/961 VMs processed
+[2025-09-21 11:54:06] Progress: 180/961 VMs processed
+[2025-09-21 11:54:06] Progress: 181/961 VMs processed
+[2025-09-21 11:54:06] Progress: 182/961 VMs processed
+[2025-09-21 11:54:06] Progress: 183/961 VMs processed
+[2025-09-21 11:54:06] Progress: 184/961 VMs processed
+[2025-09-21 11:54:06] Progress: 185/961 VMs processed
+[2025-09-21 11:54:06] Progress: 186/961 VMs processed
+[2025-09-21 11:54:06] Progress: 187/961 VMs processed
+[2025-09-21 11:54:06] Progress: 188/961 VMs processed
+[2025-09-21 11:54:06] Progress: 189/961 VMs processed
+[2025-09-21 11:54:06] Progress: 190/961 VMs processed
+[2025-09-21 11:54:06] Progress: 191/961 VMs processed
+[2025-09-21 11:54:06] Progress: 192/961 VMs processed
+[2025-09-21 11:54:06] Progress: 193/961 VMs processed
+[2025-09-21 11:54:06] Progress: 194/961 VMs processed
+[2025-09-21 11:54:06] Progress: 195/961 VMs processed
+[2025-09-21 11:54:06] Progress: 196/961 VMs processed
+[2025-09-21 11:54:06] Progress: 197/961 VMs processed
+[2025-09-21 11:54:06] Progress: 198/961 VMs processed
+[2025-09-21 11:54:06] Progress: 199/961 VMs processed
+[2025-09-21 11:54:06] Progress: 200/961 VMs processed
+[2025-09-21 11:54:06] Progress: 201/961 VMs processed
+[2025-09-21 11:54:06] Progress: 202/961 VMs processed
+[2025-09-21 11:54:06] Progress: 203/961 VMs processed
+[2025-09-21 11:54:06] Progress: 204/961 VMs processed
+[2025-09-21 11:54:06] Progress: 205/961 VMs processed
+[2025-09-21 11:54:06] Progress: 206/961 VMs processed
+[2025-09-21 11:54:06] Progress: 207/961 VMs processed
+[2025-09-21 11:54:06] Progress: 208/961 VMs processed
+[2025-09-21 11:54:06] Progress: 209/961 VMs processed
+[2025-09-21 11:54:06] Progress: 210/961 VMs processed
+[2025-09-21 11:54:06] Progress: 211/961 VMs processed
+[2025-09-21 11:54:06] Progress: 212/961 VMs processed
+[2025-09-21 11:54:06] Progress: 213/961 VMs processed
+[2025-09-21 11:54:06] Progress: 214/961 VMs processed
+[2025-09-21 11:54:06] Progress: 215/961 VMs processed
+[2025-09-21 11:54:06] Progress: 216/961 VMs processed
+[2025-09-21 11:54:06] Progress: 217/961 VMs processed
+[2025-09-21 11:54:06] Progress: 218/961 VMs processed
+[2025-09-21 11:54:06] Progress: 219/961 VMs processed
+[2025-09-21 11:54:06] Progress: 220/961 VMs processed
+[2025-09-21 11:54:06] Progress: 221/961 VMs processed
+[2025-09-21 11:54:06] Progress: 222/961 VMs processed
+[2025-09-21 11:54:06] Progress: 223/961 VMs processed
+[2025-09-21 11:54:06] Progress: 224/961 VMs processed
+[2025-09-21 11:54:06] Progress: 225/961 VMs processed
+[2025-09-21 11:54:06] Progress: 226/961 VMs processed
+[2025-09-21 11:54:06] Progress: 227/961 VMs processed
+[2025-09-21 11:54:06] Progress: 228/961 VMs processed
+[2025-09-21 11:54:06] Progress: 229/961 VMs processed
+[2025-09-21 11:54:06] Progress: 230/961 VMs processed
+[2025-09-21 11:54:06] Progress: 231/961 VMs processed
+[2025-09-21 11:54:06] Progress: 232/961 VMs processed
+[2025-09-21 11:54:06] Progress: 233/961 VMs processed
+[2025-09-21 11:54:06] Progress: 234/961 VMs processed
+[2025-09-21 11:54:06] Progress: 235/961 VMs processed
+[2025-09-21 11:54:06] Progress: 236/961 VMs processed
+[2025-09-21 11:54:06] Progress: 237/961 VMs processed
+[2025-09-21 11:54:06] Progress: 238/961 VMs processed
+[2025-09-21 11:54:06] Progress: 239/961 VMs processed
+[2025-09-21 11:58:27] Progress: 240/961 VMs processed
+[2025-09-21 11:58:27] Progress: 241/961 VMs processed
+[2025-09-21 11:58:27] Progress: 242/961 VMs processed
+[2025-09-21 11:58:27] Progress: 243/961 VMs processed
+[2025-09-21 11:58:27] Progress: 244/961 VMs processed
+[2025-09-21 11:58:27] Progress: 245/961 VMs processed
+[2025-09-21 11:58:27] Progress: 246/961 VMs processed
+[2025-09-21 11:58:27] Progress: 247/961 VMs processed
+[2025-09-21 11:58:27] Progress: 248/961 VMs processed
+[2025-09-21 11:58:27] Progress: 249/961 VMs processed
+[2025-09-21 11:58:27] Progress: 250/961 VMs processed
+[2025-09-21 11:58:27] Progress: 251/961 VMs processed
+[2025-09-21 11:58:27] Progress: 252/961 VMs processed
+[2025-09-21 11:58:27] Progress: 253/961 VMs processed
+[2025-09-21 11:58:27] Progress: 254/961 VMs processed
+[2025-09-21 11:58:27] Progress: 255/961 VMs processed
+[2025-09-21 11:58:27] Progress: 256/961 VMs processed
+[2025-09-21 11:58:27] Progress: 257/961 VMs processed
+[2025-09-21 11:58:27] Progress: 258/961 VMs processed
+[2025-09-21 11:58:27] Progress: 259/961 VMs processed
+[2025-09-21 11:58:27] Progress: 260/961 VMs processed
+[2025-09-21 11:58:27] Progress: 261/961 VMs processed
+[2025-09-21 11:58:27] Progress: 262/961 VMs processed
+[2025-09-21 11:58:27] Progress: 263/961 VMs processed
+[2025-09-21 11:58:27] Progress: 264/961 VMs processed
+[2025-09-21 11:58:27] Progress: 265/961 VMs processed
+[2025-09-21 11:58:27] Progress: 266/961 VMs processed
+[2025-09-21 11:58:27] Progress: 267/961 VMs processed
+[2025-09-21 11:58:27] Progress: 268/961 VMs processed
+[2025-09-21 11:58:27] Progress: 269/961 VMs processed
+[2025-09-21 11:58:27] Progress: 270/961 VMs processed
+[2025-09-21 11:58:27] Progress: 271/961 VMs processed
+[2025-09-21 11:58:27] Progress: 272/961 VMs processed
+[2025-09-21 11:58:27] Progress: 273/961 VMs processed
+[2025-09-21 11:58:27] Progress: 274/961 VMs processed
+[2025-09-21 11:58:27] Progress: 275/961 VMs processed
+[2025-09-21 11:58:27] Progress: 276/961 VMs processed
+[2025-09-21 11:58:27] Progress: 277/961 VMs processed
+[2025-09-21 11:58:27] Progress: 278/961 VMs processed
+[2025-09-21 11:58:27] Progress: 279/961 VMs processed
+[2025-09-21 11:58:27] Progress: 280/961 VMs processed
+[2025-09-21 11:58:27] Progress: 281/961 VMs processed
+[2025-09-21 11:58:27] Progress: 282/961 VMs processed
+[2025-09-21 11:58:27] Progress: 283/961 VMs processed
+[2025-09-21 11:58:27] Progress: 284/961 VMs processed
+[2025-09-21 11:58:27] Progress: 285/961 VMs processed
+[2025-09-21 11:58:27] Progress: 286/961 VMs processed
+[2025-09-21 11:58:27] Progress: 287/961 VMs processed
+[2025-09-21 11:58:27] Progress: 288/961 VMs processed
+[2025-09-21 11:58:27] Progress: 289/961 VMs processed
+[2025-09-21 11:58:27] Progress: 290/961 VMs processed
+[2025-09-21 11:58:27] Progress: 291/961 VMs processed
+[2025-09-21 11:58:27] Progress: 292/961 VMs processed
+[2025-09-21 11:58:27] Progress: 293/961 VMs processed
+[2025-09-21 11:58:27] Progress: 294/961 VMs processed
+[2025-09-21 11:58:27] Progress: 295/961 VMs processed
+[2025-09-21 11:58:27] Progress: 296/961 VMs processed
+[2025-09-21 11:58:27] Progress: 297/961 VMs processed
+[2025-09-21 11:58:27] Progress: 298/961 VMs processed
+[2025-09-21 11:58:27] Progress: 299/961 VMs processed
+[2025-09-21 11:58:27] Progress: 300/961 VMs processed
+[2025-09-21 11:58:27] Progress: 301/961 VMs processed
+[2025-09-21 11:58:27] Progress: 302/961 VMs processed
+[2025-09-21 11:58:27] Progress: 303/961 VMs processed
+[2025-09-21 11:58:27] Progress: 304/961 VMs processed
+[2025-09-21 11:58:27] Progress: 305/961 VMs processed
+[2025-09-21 11:58:27] Progress: 306/961 VMs processed
+[2025-09-21 11:58:27] Progress: 307/961 VMs processed
+[2025-09-21 11:58:27] Progress: 308/961 VMs processed
+[2025-09-21 11:58:27] Progress: 309/961 VMs processed
+[2025-09-21 11:58:27] Progress: 310/961 VMs processed
+[2025-09-21 11:58:27] Progress: 311/961 VMs processed
+[2025-09-21 11:58:27] Progress: 312/961 VMs processed
+[2025-09-21 11:58:27] Progress: 313/961 VMs processed
+[2025-09-21 11:58:27] Progress: 314/961 VMs processed
+[2025-09-21 11:58:27] Progress: 315/961 VMs processed
+[2025-09-21 11:58:27] Progress: 316/961 VMs processed
+[2025-09-21 11:58:27] Progress: 317/961 VMs processed
+[2025-09-21 11:58:27] Progress: 318/961 VMs processed
+[2025-09-21 11:58:27] Progress: 319/961 VMs processed
+[2025-09-21 11:58:27] Progress: 320/961 VMs processed
+[2025-09-21 11:58:27] Progress: 321/961 VMs processed
+[2025-09-21 11:58:27] Progress: 322/961 VMs processed
+[2025-09-21 11:58:27] Progress: 323/961 VMs processed
+[2025-09-21 11:58:27] Progress: 324/961 VMs processed
+[2025-09-21 11:58:27] Progress: 325/961 VMs processed
+[2025-09-21 11:58:27] Progress: 326/961 VMs processed
+[2025-09-21 11:58:27] Progress: 327/961 VMs processed
+[2025-09-21 11:58:27] Progress: 328/961 VMs processed
+[2025-09-21 11:58:27] Progress: 329/961 VMs processed
+[2025-09-21 11:58:27] Progress: 330/961 VMs processed
+[2025-09-21 11:58:27] Progress: 331/961 VMs processed
+[2025-09-21 11:58:27] Progress: 332/961 VMs processed
+[2025-09-21 11:58:27] Progress: 333/961 VMs processed
+[2025-09-21 11:58:27] Progress: 334/961 VMs processed
+[2025-09-21 11:58:27] Progress: 335/961 VMs processed
+[2025-09-21 11:58:27] Progress: 336/961 VMs processed
+[2025-09-21 11:58:27] Progress: 337/961 VMs processed
+[2025-09-21 11:58:27] Progress: 338/961 VMs processed
+[2025-09-21 11:58:27] Progress: 339/961 VMs processed
+[2025-09-21 11:58:27] Progress: 340/961 VMs processed
+[2025-09-21 11:58:27] Progress: 341/961 VMs processed
+[2025-09-21 11:58:27] Progress: 342/961 VMs processed
+[2025-09-21 11:58:27] Progress: 343/961 VMs processed
+[2025-09-21 11:58:27] Progress: 344/961 VMs processed
+[2025-09-21 11:58:27] Progress: 345/961 VMs processed
+[2025-09-21 11:58:27] Progress: 346/961 VMs processed
+[2025-09-21 11:58:27] Progress: 347/961 VMs processed
+[2025-09-21 11:58:27] Progress: 348/961 VMs processed
+[2025-09-21 11:58:27] Progress: 349/961 VMs processed
+[2025-09-21 11:58:27] Progress: 350/961 VMs processed
+[2025-09-21 11:58:27] Progress: 351/961 VMs processed
+[2025-09-21 11:58:27] Progress: 352/961 VMs processed
+[2025-09-21 11:58:27] Progress: 353/961 VMs processed
+[2025-09-21 11:58:27] Progress: 354/961 VMs processed
+[2025-09-21 11:58:27] Progress: 355/961 VMs processed
+[2025-09-21 11:58:27] Progress: 356/961 VMs processed
+[2025-09-21 11:58:27] Progress: 357/961 VMs processed
+[2025-09-21 11:58:27] Progress: 358/961 VMs processed
+[2025-09-21 11:58:27] Progress: 359/961 VMs processed
+[2025-09-21 11:58:27] Progress: 360/961 VMs processed
+[2025-09-21 11:58:27] Progress: 361/961 VMs processed
+[2025-09-21 11:58:27] Progress: 362/961 VMs processed
+[2025-09-21 11:58:27] Progress: 363/961 VMs processed
+[2025-09-21 11:58:27] Progress: 364/961 VMs processed
+[2025-09-21 11:58:27] Progress: 365/961 VMs processed
+[2025-09-21 11:58:27] Progress: 366/961 VMs processed
+[2025-09-21 11:58:27] Progress: 367/961 VMs processed
+[2025-09-21 11:58:27] Progress: 368/961 VMs processed
+[2025-09-21 11:58:27] Progress: 369/961 VMs processed
+[2025-09-21 11:58:27] Progress: 370/961 VMs processed
+[2025-09-21 11:58:27] Progress: 371/961 VMs processed
+[2025-09-21 11:58:27] Progress: 372/961 VMs processed
+[2025-09-21 11:58:27] Progress: 373/961 VMs processed
+[2025-09-21 11:58:27] Progress: 374/961 VMs processed
+[2025-09-21 11:58:27] Progress: 375/961 VMs processed
+[2025-09-21 11:58:27] Progress: 376/961 VMs processed
+[2025-09-21 11:58:27] Progress: 377/961 VMs processed
+[2025-09-21 11:58:27] Progress: 378/961 VMs processed
+[2025-09-21 11:58:27] Progress: 379/961 VMs processed
+[2025-09-21 11:58:27] Progress: 380/961 VMs processed
+[2025-09-21 11:58:27] Progress: 381/961 VMs processed
+[2025-09-21 11:58:27] Progress: 382/961 VMs processed
+[2025-09-21 11:58:27] Progress: 383/961 VMs processed
+[2025-09-21 11:58:27] Progress: 384/961 VMs processed
+[2025-09-21 11:58:27] Progress: 385/961 VMs processed
+[2025-09-21 11:58:27] Progress: 386/961 VMs processed
+[2025-09-21 11:58:27] Progress: 387/961 VMs processed
+[2025-09-21 11:58:27] Progress: 388/961 VMs processed
+[2025-09-21 11:58:27] Progress: 389/961 VMs processed
+[2025-09-21 11:58:27] Progress: 390/961 VMs processed
+[2025-09-21 11:58:27] Progress: 391/961 VMs processed
+[2025-09-21 11:58:27] Progress: 392/961 VMs processed
+[2025-09-21 11:58:27] Progress: 393/961 VMs processed
+[2025-09-21 11:58:27] Progress: 394/961 VMs processed
+[2025-09-21 11:58:27] Progress: 395/961 VMs processed
+[2025-09-21 11:58:27] Progress: 396/961 VMs processed
+[2025-09-21 11:58:27] Progress: 397/961 VMs processed
+[2025-09-21 11:58:27] Progress: 398/961 VMs processed
+[2025-09-21 11:58:27] Progress: 399/961 VMs processed
+[2025-09-21 11:58:27] Progress: 400/961 VMs processed
+[2025-09-21 11:58:27] Progress: 401/961 VMs processed
+[2025-09-21 11:58:27] Progress: 402/961 VMs processed
+[2025-09-21 11:58:27] Progress: 403/961 VMs processed
+[2025-09-21 11:58:27] Progress: 404/961 VMs processed
+[2025-09-21 11:58:27] Progress: 405/961 VMs processed
+[2025-09-21 11:58:27] Progress: 406/961 VMs processed
+[2025-09-21 11:58:27] Progress: 407/961 VMs processed
+[2025-09-21 11:58:27] Progress: 408/961 VMs processed
+[2025-09-21 11:58:27] Progress: 409/961 VMs processed
+[2025-09-21 11:58:27] Progress: 410/961 VMs processed
+[2025-09-21 11:58:27] Progress: 411/961 VMs processed
+[2025-09-21 11:58:27] Progress: 412/961 VMs processed
+[2025-09-21 11:58:27] Progress: 413/961 VMs processed
+[2025-09-21 11:58:27] Progress: 414/961 VMs processed
+[2025-09-21 11:58:27] Progress: 415/961 VMs processed
+[2025-09-21 11:58:27] Progress: 416/961 VMs processed
+[2025-09-21 11:58:27] Progress: 417/961 VMs processed
+[2025-09-21 11:58:27] Progress: 418/961 VMs processed
+[2025-09-21 11:58:27] Progress: 419/961 VMs processed
+[2025-09-21 11:58:27] Progress: 420/961 VMs processed
+[2025-09-21 11:58:27] Progress: 421/961 VMs processed
+[2025-09-21 11:58:27] Progress: 422/961 VMs processed
+[2025-09-21 11:58:27] Progress: 423/961 VMs processed
+[2025-09-21 11:58:27] Progress: 424/961 VMs processed
+[2025-09-21 11:58:27] Progress: 425/961 VMs processed
+[2025-09-21 11:58:27] Progress: 426/961 VMs processed
+[2025-09-21 11:58:27] Progress: 427/961 VMs processed
+[2025-09-21 11:58:27] Progress: 428/961 VMs processed
+[2025-09-21 11:58:27] Progress: 429/961 VMs processed
+[2025-09-21 11:58:27] Progress: 430/961 VMs processed
+[2025-09-21 11:58:27] Progress: 431/961 VMs processed
+[2025-09-21 11:58:27] Progress: 432/961 VMs processed
+[2025-09-21 11:58:27] Progress: 433/961 VMs processed
+[2025-09-21 11:58:27] Progress: 434/961 VMs processed
+[2025-09-21 11:58:27] Progress: 435/961 VMs processed
+[2025-09-21 11:58:27] Progress: 436/961 VMs processed
+[2025-09-21 11:58:27] Progress: 437/961 VMs processed
+[2025-09-21 11:58:27] Progress: 438/961 VMs processed
+[2025-09-21 11:58:27] Progress: 439/961 VMs processed
+[2025-09-21 11:58:27] Progress: 440/961 VMs processed
+[2025-09-21 11:58:27] Progress: 441/961 VMs processed
+[2025-09-21 11:58:27] Progress: 442/961 VMs processed
+[2025-09-21 11:58:27] Progress: 443/961 VMs processed
+[2025-09-21 11:58:27] Progress: 444/961 VMs processed
+[2025-09-21 11:58:27] Progress: 445/961 VMs processed
+[2025-09-21 11:58:27] Progress: 446/961 VMs processed
+[2025-09-21 11:58:27] Progress: 447/961 VMs processed
+[2025-09-21 11:58:27] Progress: 448/961 VMs processed
+[2025-09-21 11:58:27] Progress: 449/961 VMs processed
+[2025-09-21 11:58:27] Progress: 450/961 VMs processed
+[2025-09-21 11:58:27] Progress: 451/961 VMs processed
+[2025-09-21 11:58:27] Progress: 452/961 VMs processed
+[2025-09-21 11:58:27] Progress: 453/961 VMs processed
+[2025-09-21 11:58:27] Progress: 454/961 VMs processed
+[2025-09-21 11:58:27] Progress: 455/961 VMs processed
+[2025-09-21 11:58:27] Progress: 456/961 VMs processed
+[2025-09-21 11:58:27] Progress: 457/961 VMs processed
+[2025-09-21 11:58:27] Progress: 458/961 VMs processed
+[2025-09-21 11:58:27] Progress: 459/961 VMs processed
+[2025-09-21 11:58:27] Progress: 460/961 VMs processed
+[2025-09-21 11:58:27] Progress: 461/961 VMs processed
+[2025-09-21 11:58:28] Progress: 462/961 VMs processed
+[2025-09-21 11:58:28] Progress: 463/961 VMs processed
+[2025-09-21 11:58:28] Progress: 464/961 VMs processed
+[2025-09-21 11:58:28] Progress: 465/961 VMs processed
+[2025-09-21 11:58:28] Progress: 466/961 VMs processed
+[2025-09-21 11:58:28] Progress: 467/961 VMs processed
+[2025-09-21 11:58:28] Progress: 468/961 VMs processed
+[2025-09-21 11:58:28] Progress: 469/961 VMs processed
+[2025-09-21 11:58:28] Progress: 470/961 VMs processed
+[2025-09-21 11:58:28] Progress: 471/961 VMs processed
+[2025-09-21 11:58:28] Progress: 472/961 VMs processed
+[2025-09-21 11:58:28] Progress: 473/961 VMs processed
+[2025-09-21 11:58:28] Progress: 474/961 VMs processed
+[2025-09-21 11:58:28] Progress: 475/961 VMs processed
+[2025-09-21 11:58:28] Progress: 476/961 VMs processed
+[2025-09-21 11:58:28] Progress: 477/961 VMs processed
+[2025-09-21 11:58:28] Progress: 478/961 VMs processed
+[2025-09-21 11:58:28] Progress: 479/961 VMs processed
+[2025-09-21 11:58:28] Progress: 480/961 VMs processed
+[2025-09-21 11:58:28] Progress: 481/961 VMs processed
+[2025-09-21 11:58:28] Progress: 482/961 VMs processed
+[2025-09-21 11:58:28] Progress: 483/961 VMs processed
+[2025-09-21 11:58:28] Progress: 484/961 VMs processed
+[2025-09-21 11:58:28] Progress: 485/961 VMs processed
+[2025-09-21 11:58:28] Progress: 486/961 VMs processed
+[2025-09-21 11:58:28] Progress: 487/961 VMs processed
+[2025-09-21 11:58:28] Progress: 488/961 VMs processed
+[2025-09-21 11:58:28] Progress: 489/961 VMs processed
+[2025-09-21 11:58:28] Progress: 490/961 VMs processed
+[2025-09-21 11:58:28] Progress: 491/961 VMs processed
+[2025-09-21 11:58:28] Progress: 492/961 VMs processed
+[2025-09-21 11:58:28] Progress: 493/961 VMs processed
+[2025-09-21 11:58:28] Progress: 494/961 VMs processed
+[2025-09-21 11:58:28] Progress: 495/961 VMs processed
+[2025-09-21 11:58:28] Progress: 496/961 VMs processed
+[2025-09-21 11:58:28] Progress: 497/961 VMs processed
+[2025-09-21 11:58:28] Progress: 498/961 VMs processed
+[2025-09-21 11:58:28] Progress: 499/961 VMs processed
+[2025-09-21 11:58:28] Progress: 500/961 VMs processed
+[2025-09-21 11:58:28] Progress: 501/961 VMs processed
+[2025-09-21 11:58:28] Progress: 502/961 VMs processed
+[2025-09-21 11:58:28] Progress: 503/961 VMs processed
+[2025-09-21 11:58:28] Progress: 504/961 VMs processed
+[2025-09-21 11:58:28] Progress: 505/961 VMs processed
+[2025-09-21 11:58:28] Progress: 506/961 VMs processed
+[2025-09-21 11:58:28] Progress: 507/961 VMs processed
+[2025-09-21 11:58:28] Progress: 508/961 VMs processed
+[2025-09-21 11:58:28] Progress: 509/961 VMs processed
+[2025-09-21 11:58:28] Progress: 510/961 VMs processed
+[2025-09-21 11:58:28] Progress: 511/961 VMs processed
+[2025-09-21 11:58:28] Progress: 512/961 VMs processed
+[2025-09-21 11:58:28] Progress: 513/961 VMs processed
+[2025-09-21 11:58:28] Progress: 514/961 VMs processed
+[2025-09-21 11:58:28] Progress: 515/961 VMs processed
+[2025-09-21 11:58:28] Progress: 516/961 VMs processed
+[2025-09-21 11:58:28] Progress: 517/961 VMs processed
+[2025-09-21 11:58:28] Progress: 518/961 VMs processed
+[2025-09-21 11:58:28] Progress: 519/961 VMs processed
+[2025-09-21 11:58:28] Progress: 520/961 VMs processed
+[2025-09-21 11:58:28] Progress: 521/961 VMs processed
+[2025-09-21 11:58:28] Progress: 522/961 VMs processed
+[2025-09-21 11:58:28] Progress: 523/961 VMs processed
+[2025-09-21 11:58:28] Progress: 524/961 VMs processed
+[2025-09-21 11:58:28] Progress: 525/961 VMs processed
+[2025-09-21 11:58:28] Progress: 526/961 VMs processed
+[2025-09-21 11:58:28] Progress: 527/961 VMs processed
+[2025-09-21 11:58:28] Progress: 528/961 VMs processed
+[2025-09-21 11:58:28] Progress: 529/961 VMs processed
+[2025-09-21 11:58:28] Progress: 530/961 VMs processed
+[2025-09-21 11:58:28] Progress: 531/961 VMs processed
+[2025-09-21 11:58:28] Progress: 532/961 VMs processed
+[2025-09-21 11:58:28] Progress: 533/961 VMs processed
+[2025-09-21 11:58:28] Progress: 534/961 VMs processed
+[2025-09-21 11:58:28] Progress: 535/961 VMs processed
+[2025-09-21 11:58:28] Progress: 536/961 VMs processed
+[2025-09-21 11:58:28] Progress: 537/961 VMs processed
+[2025-09-21 11:58:28] Progress: 538/961 VMs processed
+[2025-09-21 11:58:28] Progress: 539/961 VMs processed
+[2025-09-21 11:58:28] Progress: 540/961 VMs processed
+[2025-09-21 11:58:28] Progress: 541/961 VMs processed
+[2025-09-21 11:58:28] Progress: 542/961 VMs processed
+[2025-09-21 11:58:28] Progress: 543/961 VMs processed
+[2025-09-21 11:58:28] Progress: 544/961 VMs processed
+[2025-09-21 11:58:28] Progress: 545/961 VMs processed
+[2025-09-21 11:58:28] Progress: 546/961 VMs processed
+[2025-09-21 11:58:28] Progress: 547/961 VMs processed
+[2025-09-21 11:58:28] Progress: 548/961 VMs processed
+[2025-09-21 11:58:28] Progress: 549/961 VMs processed
+[2025-09-21 11:58:28] Progress: 550/961 VMs processed
+[2025-09-21 11:58:28] Progress: 551/961 VMs processed
+[2025-09-21 11:58:28] Progress: 552/961 VMs processed
+[2025-09-21 11:58:28] Progress: 553/961 VMs processed
+[2025-09-21 11:58:28] Progress: 554/961 VMs processed
+[2025-09-21 11:58:28] Progress: 555/961 VMs processed
+[2025-09-21 11:58:28] Progress: 556/961 VMs processed
+[2025-09-21 11:58:28] Progress: 557/961 VMs processed
+[2025-09-21 11:58:28] Progress: 558/961 VMs processed
+[2025-09-21 11:58:28] Progress: 559/961 VMs processed
+[2025-09-21 11:58:28] Progress: 560/961 VMs processed
+[2025-09-21 11:58:28] Progress: 561/961 VMs processed
+[2025-09-21 11:58:28] Progress: 562/961 VMs processed
+[2025-09-21 11:58:28] Progress: 563/961 VMs processed
+[2025-09-21 11:58:28] Progress: 564/961 VMs processed
+[2025-09-21 11:58:28] Progress: 565/961 VMs processed
+[2025-09-21 11:58:28] Progress: 566/961 VMs processed
+[2025-09-21 11:58:28] Progress: 567/961 VMs processed
+[2025-09-21 11:58:28] Progress: 568/961 VMs processed
+[2025-09-21 11:58:28] Progress: 569/961 VMs processed
+[2025-09-21 11:58:28] Progress: 570/961 VMs processed
+[2025-09-21 11:58:28] Progress: 571/961 VMs processed
+[2025-09-21 11:58:28] Progress: 572/961 VMs processed
+[2025-09-21 11:58:28] Progress: 573/961 VMs processed
+[2025-09-21 11:58:28] Progress: 574/961 VMs processed
+[2025-09-21 11:58:28] Progress: 575/961 VMs processed
+[2025-09-21 11:58:28] Progress: 576/961 VMs processed
+[2025-09-21 11:58:28] Progress: 577/961 VMs processed
+[2025-09-21 11:58:28] Progress: 578/961 VMs processed
+[2025-09-21 11:58:28] Progress: 579/961 VMs processed
+[2025-09-21 11:58:28] Progress: 580/961 VMs processed
+[2025-09-21 11:58:28] Progress: 581/961 VMs processed
+[2025-09-21 11:58:28] Progress: 582/961 VMs processed
+[2025-09-21 11:58:28] Progress: 583/961 VMs processed
+[2025-09-21 11:58:28] Progress: 584/961 VMs processed
+[2025-09-21 11:58:28] Progress: 585/961 VMs processed
+[2025-09-21 11:58:28] Progress: 586/961 VMs processed
+[2025-09-21 11:58:28] Progress: 587/961 VMs processed
+[2025-09-21 11:58:28] Progress: 588/961 VMs processed
+[2025-09-21 11:58:28] Progress: 589/961 VMs processed
+[2025-09-21 11:58:28] Progress: 590/961 VMs processed
+[2025-09-21 11:58:28] Progress: 591/961 VMs processed
+[2025-09-21 11:58:28] Progress: 592/961 VMs processed
+[2025-09-21 11:58:28] Progress: 593/961 VMs processed
+[2025-09-21 11:58:28] Progress: 594/961 VMs processed
+[2025-09-21 11:58:28] Progress: 595/961 VMs processed
+[2025-09-21 11:58:28] Progress: 596/961 VMs processed
+[2025-09-21 11:58:28] Progress: 597/961 VMs processed
+[2025-09-21 11:58:28] Progress: 598/961 VMs processed
+[2025-09-21 11:58:28] Progress: 599/961 VMs processed
+[2025-09-21 11:58:28] Progress: 600/961 VMs processed
+[2025-09-21 11:58:28] Progress: 601/961 VMs processed
+[2025-09-21 11:58:28] Progress: 602/961 VMs processed
+[2025-09-21 11:58:28] Progress: 603/961 VMs processed
+[2025-09-21 11:58:28] Progress: 604/961 VMs processed
+[2025-09-21 11:58:28] Progress: 605/961 VMs processed
+[2025-09-21 11:58:28] Progress: 606/961 VMs processed
+[2025-09-21 11:58:28] Progress: 607/961 VMs processed
+[2025-09-21 11:58:28] Progress: 608/961 VMs processed
+[2025-09-21 11:58:28] Progress: 609/961 VMs processed
+[2025-09-21 11:58:28] Progress: 610/961 VMs processed
+[2025-09-21 11:58:28] Progress: 611/961 VMs processed
+[2025-09-21 11:58:28] Progress: 612/961 VMs processed
+[2025-09-21 11:58:28] Progress: 613/961 VMs processed
+[2025-09-21 11:58:28] Progress: 614/961 VMs processed
+[2025-09-21 11:58:28] Progress: 615/961 VMs processed
+[2025-09-21 11:58:28] Progress: 616/961 VMs processed
+[2025-09-21 11:58:28] Progress: 617/961 VMs processed
+[2025-09-21 11:58:28] Progress: 618/961 VMs processed
+[2025-09-21 11:58:28] Progress: 619/961 VMs processed
+[2025-09-21 11:58:28] Progress: 620/961 VMs processed
+[2025-09-21 11:58:28] Progress: 621/961 VMs processed
+[2025-09-21 11:58:28] Progress: 622/961 VMs processed
+[2025-09-21 11:58:28] Progress: 623/961 VMs processed
+[2025-09-21 11:58:28] Progress: 624/961 VMs processed
+[2025-09-21 11:58:28] Progress: 625/961 VMs processed
+[2025-09-21 11:58:28] Progress: 626/961 VMs processed
+[2025-09-21 11:58:28] Progress: 627/961 VMs processed
+[2025-09-21 11:58:28] Progress: 628/961 VMs processed
+[2025-09-21 11:58:28] Progress: 629/961 VMs processed
+[2025-09-21 11:58:28] Progress: 630/961 VMs processed
+[2025-09-21 11:58:28] Progress: 631/961 VMs processed
+[2025-09-21 11:58:28] Progress: 632/961 VMs processed
+[2025-09-21 11:58:28] Progress: 633/961 VMs processed
+[2025-09-21 11:58:28] Progress: 634/961 VMs processed
+[2025-09-21 11:58:28] Progress: 635/961 VMs processed
+[2025-09-21 11:58:28] Progress: 636/961 VMs processed
+[2025-09-21 11:58:28] Progress: 637/961 VMs processed
+[2025-09-21 11:58:28] Progress: 638/961 VMs processed
+[2025-09-21 11:58:28] Progress: 639/961 VMs processed
+[2025-09-21 11:58:28] Progress: 640/961 VMs processed
+[2025-09-21 11:58:28] Progress: 641/961 VMs processed
+[2025-09-21 11:58:28] Progress: 642/961 VMs processed
+[2025-09-21 11:58:28] Progress: 643/961 VMs processed
+[2025-09-21 11:58:28] Progress: 644/961 VMs processed
+[2025-09-21 11:58:28] Progress: 645/961 VMs processed
+[2025-09-21 11:58:28] Progress: 646/961 VMs processed
+[2025-09-21 11:58:28] Progress: 647/961 VMs processed
+[2025-09-21 11:58:28] Progress: 648/961 VMs processed
+[2025-09-21 11:58:28] Progress: 649/961 VMs processed
+[2025-09-21 11:58:28] Progress: 650/961 VMs processed
+[2025-09-21 11:58:28] Progress: 651/961 VMs processed
+[2025-09-21 11:58:28] Progress: 652/961 VMs processed
+[2025-09-21 11:58:28] Progress: 653/961 VMs processed
+[2025-09-21 11:58:28] Progress: 654/961 VMs processed
+[2025-09-21 11:58:28] Progress: 655/961 VMs processed
+[2025-09-21 11:58:28] Progress: 656/961 VMs processed
+[2025-09-21 11:58:28] Progress: 657/961 VMs processed
+[2025-09-21 11:58:28] Progress: 658/961 VMs processed
+[2025-09-21 11:58:28] Progress: 659/961 VMs processed
+[2025-09-21 11:58:28] Progress: 660/961 VMs processed
+[2025-09-21 11:58:28] Progress: 661/961 VMs processed
+[2025-09-21 11:58:28] Progress: 662/961 VMs processed
+[2025-09-21 11:58:28] Progress: 663/961 VMs processed
+[2025-09-21 11:58:28] Progress: 664/961 VMs processed
+[2025-09-21 11:58:28] Progress: 665/961 VMs processed
+[2025-09-21 11:58:28] Progress: 666/961 VMs processed
+[2025-09-21 11:58:28] Progress: 667/961 VMs processed
+[2025-09-21 11:58:28] Progress: 668/961 VMs processed
+[2025-09-21 11:58:28] Progress: 669/961 VMs processed
+[2025-09-21 11:58:28] Progress: 670/961 VMs processed
+[2025-09-21 11:58:28] Progress: 671/961 VMs processed
+[2025-09-21 11:58:28] Progress: 672/961 VMs processed
+[2025-09-21 11:58:28] Progress: 673/961 VMs processed
+[2025-09-21 11:58:28] Progress: 674/961 VMs processed
+[2025-09-21 11:58:28] Progress: 675/961 VMs processed
+[2025-09-21 11:58:28] Progress: 676/961 VMs processed
+[2025-09-21 11:58:28] Progress: 677/961 VMs processed
+[2025-09-21 11:58:28] Progress: 678/961 VMs processed
+[2025-09-21 11:58:28] Progress: 679/961 VMs processed
+[2025-09-21 11:58:28] Progress: 680/961 VMs processed
+[2025-09-21 11:58:28] Progress: 681/961 VMs processed
+[2025-09-21 11:58:28] Progress: 682/961 VMs processed
+[2025-09-21 11:58:28] Progress: 683/961 VMs processed
+[2025-09-21 11:58:28] Progress: 684/961 VMs processed
+[2025-09-21 11:58:28] Progress: 685/961 VMs processed
+[2025-09-21 11:58:28] Progress: 686/961 VMs processed
+[2025-09-21 11:58:28] Progress: 687/961 VMs processed
+[2025-09-21 11:58:28] Progress: 688/961 VMs processed
+[2025-09-21 11:58:28] Progress: 689/961 VMs processed
+[2025-09-21 11:58:28] Progress: 690/961 VMs processed
+[2025-09-21 11:58:28] Progress: 691/961 VMs processed
+[2025-09-21 11:58:28] Progress: 692/961 VMs processed
+[2025-09-21 11:58:28] Progress: 693/961 VMs processed
+[2025-09-21 11:58:28] Progress: 694/961 VMs processed
+[2025-09-21 11:58:28] Progress: 695/961 VMs processed
+[2025-09-21 11:58:28] Progress: 696/961 VMs processed
+[2025-09-21 11:58:28] Progress: 697/961 VMs processed
+[2025-09-21 11:58:28] Progress: 698/961 VMs processed
+[2025-09-21 11:58:28] Progress: 699/961 VMs processed
+[2025-09-21 11:58:28] Progress: 700/961 VMs processed
+[2025-09-21 11:58:28] Progress: 701/961 VMs processed
+[2025-09-21 11:58:28] Progress: 702/961 VMs processed
+[2025-09-21 11:58:28] Progress: 703/961 VMs processed
+[2025-09-21 11:58:28] Progress: 704/961 VMs processed
+[2025-09-21 11:58:28] Progress: 705/961 VMs processed
+[2025-09-21 11:58:28] Progress: 706/961 VMs processed
+[2025-09-21 11:58:28] Progress: 707/961 VMs processed
+[2025-09-21 11:58:28] Progress: 708/961 VMs processed
+[2025-09-21 11:58:28] Progress: 709/961 VMs processed
+[2025-09-21 11:58:28] Progress: 710/961 VMs processed
+[2025-09-21 11:58:28] Progress: 711/961 VMs processed
+[2025-09-21 11:58:28] Progress: 712/961 VMs processed
+[2025-09-21 11:58:28] Progress: 713/961 VMs processed
+[2025-09-21 11:58:28] Progress: 714/961 VMs processed
+[2025-09-21 11:58:28] Progress: 715/961 VMs processed
+[2025-09-21 11:58:28] Progress: 716/961 VMs processed
+[2025-09-21 11:58:28] Progress: 717/961 VMs processed
+[2025-09-21 11:58:28] Progress: 718/961 VMs processed
+[2025-09-21 11:58:28] Progress: 719/961 VMs processed
+[2025-09-21 11:58:28] Progress: 720/961 VMs processed
+[2025-09-21 11:58:28] Progress: 721/961 VMs processed
+[2025-09-21 11:58:28] Progress: 722/961 VMs processed
+[2025-09-21 11:58:28] Progress: 723/961 VMs processed
+[2025-09-21 11:58:28] Progress: 724/961 VMs processed
+[2025-09-21 11:58:28] Progress: 725/961 VMs processed
+[2025-09-21 11:58:28] Progress: 726/961 VMs processed
+[2025-09-21 11:58:28] Progress: 727/961 VMs processed
+[2025-09-21 11:58:28] Progress: 728/961 VMs processed
+[2025-09-21 11:58:28] Progress: 729/961 VMs processed
+[2025-09-21 11:58:28] Progress: 730/961 VMs processed
+[2025-09-21 11:58:28] Progress: 731/961 VMs processed
+[2025-09-21 11:58:28] Progress: 732/961 VMs processed
+[2025-09-21 11:58:28] Progress: 733/961 VMs processed
+[2025-09-21 11:58:28] Progress: 734/961 VMs processed
+[2025-09-21 11:58:28] Progress: 735/961 VMs processed
+[2025-09-21 11:58:28] Progress: 736/961 VMs processed
+[2025-09-21 11:58:28] Progress: 737/961 VMs processed
+[2025-09-21 11:58:28] Progress: 738/961 VMs processed
+[2025-09-21 11:58:28] Progress: 739/961 VMs processed
+[2025-09-21 11:58:28] Progress: 740/961 VMs processed
+[2025-09-21 11:58:28] Progress: 741/961 VMs processed
+[2025-09-21 11:58:28] Progress: 742/961 VMs processed
+[2025-09-21 11:58:28] Progress: 743/961 VMs processed
+[2025-09-21 11:58:28] Progress: 744/961 VMs processed
+[2025-09-21 11:58:28] Progress: 745/961 VMs processed
+[2025-09-21 11:58:28] Progress: 746/961 VMs processed
+[2025-09-21 11:58:28] Progress: 747/961 VMs processed
+[2025-09-21 11:58:28] Progress: 748/961 VMs processed
+[2025-09-21 11:58:28] Progress: 749/961 VMs processed
+[2025-09-21 11:58:28] Progress: 750/961 VMs processed
+[2025-09-21 11:58:28] Progress: 751/961 VMs processed
+[2025-09-21 11:58:29] Progress: 752/961 VMs processed
+[2025-09-21 11:58:29] Progress: 753/961 VMs processed
+[2025-09-21 11:58:29] Progress: 754/961 VMs processed
+[2025-09-21 11:58:29] Progress: 755/961 VMs processed
+[2025-09-21 11:58:29] Progress: 756/961 VMs processed
+[2025-09-21 11:58:29] Progress: 757/961 VMs processed
+[2025-09-21 11:58:29] Progress: 758/961 VMs processed
+[2025-09-21 11:58:29] Progress: 759/961 VMs processed
+[2025-09-21 11:58:29] Progress: 760/961 VMs processed
+[2025-09-21 11:58:29] Progress: 761/961 VMs processed
+[2025-09-21 11:58:29] Progress: 762/961 VMs processed
+[2025-09-21 11:58:29] Progress: 763/961 VMs processed
+[2025-09-21 11:58:29] Progress: 764/961 VMs processed
+[2025-09-21 11:58:29] Progress: 765/961 VMs processed
+[2025-09-21 11:58:29] Progress: 766/961 VMs processed
+[2025-09-21 11:58:29] Progress: 767/961 VMs processed
+[2025-09-21 11:58:29] Progress: 768/961 VMs processed
+[2025-09-21 11:58:29] Progress: 769/961 VMs processed
+[2025-09-21 11:58:29] Progress: 770/961 VMs processed
+[2025-09-21 11:58:29] Progress: 771/961 VMs processed
+[2025-09-21 11:58:29] Progress: 772/961 VMs processed
+[2025-09-21 11:58:29] Progress: 773/961 VMs processed
+[2025-09-21 11:58:29] Progress: 774/961 VMs processed
+[2025-09-21 11:58:29] Progress: 775/961 VMs processed
+[2025-09-21 11:58:29] Progress: 776/961 VMs processed
+[2025-09-21 11:58:29] Progress: 777/961 VMs processed
+[2025-09-21 11:58:29] Progress: 778/961 VMs processed
+[2025-09-21 11:58:29] Progress: 779/961 VMs processed
+[2025-09-21 11:58:29] Progress: 780/961 VMs processed
+[2025-09-21 11:58:29] Progress: 781/961 VMs processed
+[2025-09-21 11:58:29] Progress: 782/961 VMs processed
+[2025-09-21 11:58:29] Progress: 783/961 VMs processed
+[2025-09-21 11:58:29] Progress: 784/961 VMs processed
+[2025-09-21 11:58:29] Progress: 785/961 VMs processed
+[2025-09-21 11:58:29] Progress: 786/961 VMs processed
+[2025-09-21 11:58:29] Progress: 787/961 VMs processed
+[2025-09-21 11:58:29] Progress: 788/961 VMs processed
+[2025-09-21 11:58:29] Progress: 789/961 VMs processed
+[2025-09-21 11:58:29] Progress: 790/961 VMs processed
+[2025-09-21 11:58:29] Progress: 791/961 VMs processed
+[2025-09-21 11:58:29] Progress: 792/961 VMs processed
+[2025-09-21 11:58:29] Progress: 793/961 VMs processed
+[2025-09-21 11:58:29] Progress: 794/961 VMs processed
+[2025-09-21 11:58:29] Progress: 795/961 VMs processed
+[2025-09-21 11:58:29] Progress: 796/961 VMs processed
+[2025-09-21 11:58:29] Progress: 797/961 VMs processed
+[2025-09-21 11:58:29] Progress: 798/961 VMs processed
+[2025-09-21 11:58:29] Progress: 799/961 VMs processed
+[2025-09-21 11:58:29] Progress: 800/961 VMs processed
+[2025-09-21 11:58:29] Progress: 801/961 VMs processed
+[2025-09-21 11:58:29] Progress: 802/961 VMs processed
+[2025-09-21 11:58:29] Progress: 803/961 VMs processed
+[2025-09-21 11:58:29] Progress: 804/961 VMs processed
+[2025-09-21 11:58:29] Progress: 805/961 VMs processed
+[2025-09-21 11:58:29] Progress: 806/961 VMs processed
+[2025-09-21 11:58:29] Progress: 807/961 VMs processed
+[2025-09-21 11:58:29] Progress: 808/961 VMs processed
+[2025-09-21 11:58:29] Progress: 809/961 VMs processed
+[2025-09-21 11:58:29] Progress: 810/961 VMs processed
+[2025-09-21 11:58:29] Progress: 811/961 VMs processed
+[2025-09-21 11:58:29] Progress: 812/961 VMs processed
+[2025-09-21 11:58:29] Progress: 813/961 VMs processed
+[2025-09-21 11:58:29] Progress: 814/961 VMs processed
+[2025-09-21 11:58:29] Progress: 815/961 VMs processed
+[2025-09-21 11:58:29] Progress: 816/961 VMs processed
+[2025-09-21 11:58:29] Progress: 817/961 VMs processed
+[2025-09-21 11:58:29] Progress: 818/961 VMs processed
+[2025-09-21 11:58:29] Progress: 819/961 VMs processed
+[2025-09-21 11:58:29] Progress: 820/961 VMs processed
+[2025-09-21 11:58:29] Progress: 821/961 VMs processed
+[2025-09-21 11:58:29] Progress: 822/961 VMs processed
+[2025-09-21 11:58:29] Progress: 823/961 VMs processed
+[2025-09-21 11:58:29] Progress: 824/961 VMs processed
+[2025-09-21 11:58:29] Progress: 825/961 VMs processed
+[2025-09-21 11:58:29] Progress: 826/961 VMs processed
+[2025-09-21 11:58:29] Progress: 827/961 VMs processed
+[2025-09-21 11:58:29] Progress: 828/961 VMs processed
+[2025-09-21 11:58:29] Progress: 829/961 VMs processed
+[2025-09-21 11:58:29] Progress: 830/961 VMs processed
+[2025-09-21 11:58:29] Progress: 831/961 VMs processed
+[2025-09-21 11:58:29] Progress: 832/961 VMs processed
+[2025-09-21 11:58:29] Progress: 833/961 VMs processed
+[2025-09-21 11:58:29] Progress: 834/961 VMs processed
+[2025-09-21 11:58:29] Progress: 835/961 VMs processed
+[2025-09-21 11:58:29] Progress: 836/961 VMs processed
+[2025-09-21 11:58:29] Progress: 837/961 VMs processed
+[2025-09-21 11:58:29] Progress: 838/961 VMs processed
+[2025-09-21 11:58:29] Progress: 839/961 VMs processed
+[2025-09-21 11:58:29] Progress: 840/961 VMs processed
+[2025-09-21 11:58:29] Progress: 841/961 VMs processed
+[2025-09-21 11:58:29] Progress: 842/961 VMs processed
+[2025-09-21 11:58:29] Progress: 843/961 VMs processed
+[2025-09-21 11:58:29] Progress: 844/961 VMs processed
+[2025-09-21 11:58:29] Progress: 845/961 VMs processed
+[2025-09-21 11:58:29] Progress: 846/961 VMs processed
+[2025-09-21 11:58:29] Progress: 847/961 VMs processed
+[2025-09-21 11:58:29] Progress: 848/961 VMs processed
+[2025-09-21 11:58:29] Progress: 849/961 VMs processed
+[2025-09-21 11:58:29] Progress: 850/961 VMs processed
+[2025-09-21 11:58:29] Progress: 851/961 VMs processed
+[2025-09-21 11:58:29] Progress: 852/961 VMs processed
+[2025-09-21 11:58:29] Progress: 853/961 VMs processed
+[2025-09-21 11:58:29] Progress: 854/961 VMs processed
+[2025-09-21 11:58:29] Progress: 855/961 VMs processed
+[2025-09-21 11:58:29] Progress: 856/961 VMs processed
+[2025-09-21 11:58:29] Progress: 857/961 VMs processed
+[2025-09-21 11:58:29] Progress: 858/961 VMs processed
+[2025-09-21 11:58:29] Progress: 859/961 VMs processed
+[2025-09-21 11:58:29] Progress: 860/961 VMs processed
+[2025-09-21 11:58:29] Progress: 861/961 VMs processed
+[2025-09-21 11:58:29] Progress: 862/961 VMs processed
+[2025-09-21 11:58:29] Progress: 863/961 VMs processed
+[2025-09-21 11:58:29] Progress: 864/961 VMs processed
+[2025-09-21 11:58:29] Progress: 865/961 VMs processed
+[2025-09-21 11:58:29] Progress: 866/961 VMs processed
+[2025-09-21 11:58:29] Progress: 867/961 VMs processed
+[2025-09-21 11:58:29] Progress: 868/961 VMs processed
+[2025-09-21 11:58:29] Progress: 869/961 VMs processed
+[2025-09-21 11:58:29] Progress: 870/961 VMs processed
+[2025-09-21 11:58:29] Progress: 871/961 VMs processed
+[2025-09-21 11:58:29] Progress: 872/961 VMs processed
+[2025-09-21 11:58:29] Progress: 873/961 VMs processed
+[2025-09-21 11:58:29] Progress: 874/961 VMs processed
+[2025-09-21 11:58:29] Progress: 875/961 VMs processed
+[2025-09-21 11:58:29] Progress: 876/961 VMs processed
+[2025-09-21 11:58:29] Progress: 877/961 VMs processed
+[2025-09-21 11:58:29] Progress: 878/961 VMs processed
+[2025-09-21 11:58:29] Progress: 879/961 VMs processed
+[2025-09-21 11:58:29] Progress: 880/961 VMs processed
+[2025-09-21 11:58:29] Progress: 881/961 VMs processed
+[2025-09-21 11:58:29] Progress: 882/961 VMs processed
+[2025-09-21 11:58:29] Progress: 883/961 VMs processed
+[2025-09-21 11:58:29] Progress: 884/961 VMs processed
+[2025-09-21 11:58:29] Progress: 885/961 VMs processed
+[2025-09-21 11:58:29] Progress: 886/961 VMs processed
+[2025-09-21 11:58:29] Progress: 887/961 VMs processed
+[2025-09-21 11:58:29] Progress: 888/961 VMs processed
+[2025-09-21 11:58:29] Progress: 889/961 VMs processed
+[2025-09-21 11:58:29] Progress: 890/961 VMs processed
+[2025-09-21 11:58:29] Progress: 891/961 VMs processed
+[2025-09-21 11:58:29] Progress: 892/961 VMs processed
+[2025-09-21 11:58:29] Progress: 893/961 VMs processed
+[2025-09-21 11:58:29] Progress: 894/961 VMs processed
+[2025-09-21 11:58:29] Progress: 895/961 VMs processed
+[2025-09-21 11:58:29] Progress: 896/961 VMs processed
+[2025-09-21 11:58:29] Progress: 897/961 VMs processed
+[2025-09-21 11:58:29] Progress: 898/961 VMs processed
+[2025-09-21 11:58:29] Progress: 899/961 VMs processed
+[2025-09-21 11:58:29] Progress: 900/961 VMs processed
+[2025-09-21 11:58:29] Progress: 901/961 VMs processed
+[2025-09-21 11:58:29] Progress: 902/961 VMs processed
+[2025-09-21 11:58:29] Progress: 903/961 VMs processed
+[2025-09-21 11:58:29] Progress: 904/961 VMs processed
+[2025-09-21 11:58:29] Progress: 905/961 VMs processed
+[2025-09-21 11:58:29] Progress: 906/961 VMs processed
+[2025-09-21 11:58:29] Progress: 907/961 VMs processed
+[2025-09-21 11:58:29] Progress: 908/961 VMs processed
+[2025-09-21 11:58:29] Progress: 909/961 VMs processed
+[2025-09-21 11:58:29] Progress: 910/961 VMs processed
+[2025-09-21 11:58:29] Progress: 911/961 VMs processed
+[2025-09-21 11:58:29] Progress: 912/961 VMs processed
+[2025-09-21 11:58:29] Progress: 913/961 VMs processed
+[2025-09-21 11:58:29] Progress: 914/961 VMs processed
+[2025-09-21 11:58:29] Progress: 915/961 VMs processed
+[2025-09-21 11:58:29] Progress: 916/961 VMs processed
+[2025-09-21 11:58:29] Progress: 917/961 VMs processed
+[2025-09-21 11:58:29] Progress: 918/961 VMs processed
+[2025-09-21 11:58:29] Progress: 919/961 VMs processed
+[2025-09-21 11:58:29] Progress: 920/961 VMs processed
+[2025-09-21 11:58:29] Progress: 921/961 VMs processed
+[2025-09-21 11:58:29] Progress: 922/961 VMs processed
+[2025-09-21 11:58:29] Progress: 923/961 VMs processed
+[2025-09-21 11:58:29] Progress: 924/961 VMs processed
+[2025-09-21 11:58:29] Progress: 925/961 VMs processed
+[2025-09-21 11:58:29] Progress: 926/961 VMs processed
+[2025-09-21 11:58:29] Progress: 927/961 VMs processed
+[2025-09-21 11:58:29] Progress: 928/961 VMs processed
+[2025-09-21 11:58:29] Progress: 929/961 VMs processed
+[2025-09-21 11:58:29] Progress: 930/961 VMs processed
+[2025-09-21 11:58:29] Progress: 931/961 VMs processed
+[2025-09-21 11:58:29] Progress: 932/961 VMs processed
+[2025-09-21 11:58:29] Progress: 933/961 VMs processed
+[2025-09-21 11:58:29] Progress: 934/961 VMs processed
+[2025-09-21 11:58:29] Progress: 935/961 VMs processed
+[2025-09-21 11:58:29] Progress: 936/961 VMs processed
+[2025-09-21 11:58:29] Progress: 937/961 VMs processed
+[2025-09-21 11:58:29] Progress: 938/961 VMs processed
+[2025-09-21 11:58:29] Progress: 939/961 VMs processed
+[2025-09-21 11:58:29] Progress: 940/961 VMs processed
+[2025-09-21 11:58:29] Progress: 941/961 VMs processed
+[2025-09-21 11:58:29] Progress: 942/961 VMs processed
+[2025-09-21 11:58:29] Progress: 943/961 VMs processed
+[2025-09-21 11:58:29] Progress: 944/961 VMs processed
+[2025-09-21 11:58:29] Progress: 945/961 VMs processed
+[2025-09-21 11:58:29] Progress: 946/961 VMs processed
+[2025-09-21 11:58:29] Progress: 947/961 VMs processed
+[2025-09-21 11:58:29] Progress: 948/961 VMs processed
+[2025-09-21 11:58:29] Progress: 949/961 VMs processed
+[2025-09-21 11:58:29] Progress: 950/961 VMs processed
+[2025-09-21 11:58:29] Progress: 951/961 VMs processed
+[2025-09-21 11:58:29] Progress: 952/961 VMs processed
+[2025-09-21 11:58:29] Progress: 953/961 VMs processed
+[2025-09-21 11:58:29] Progress: 954/961 VMs processed
+[2025-09-21 11:58:29] Progress: 955/961 VMs processed
+[2025-09-21 11:58:29] Progress: 956/961 VMs processed
+[2025-09-21 11:58:29] Progress: 957/961 VMs processed
+[2025-09-21 11:58:29] Progress: 958/961 VMs processed
+[2025-09-21 11:58:29] Progress: 959/961 VMs processed
+[2025-09-21 11:58:29] Progress: 960/961 VMs processed
+[2025-09-21 11:58:29] Progress: 961/961 VMs processed
+[2025-09-21 11:58:29] Writing updated data to CSV...
+[2025-09-21 11:58:29] Sync complete.
+[2025-09-21 11:58:29] Starting NetBox CSV merge process...
+[2025-09-21 11:58:29] Devices file: /Users/daniel/Documents/code/enreach-tools/data/netbox_devices_export.csv
+[2025-09-21 11:58:29] VMs file: /Users/daniel/Documents/code/enreach-tools/data/netbox_vms_export.csv
+[2025-09-21 11:58:29] Output file: /Users/daniel/Documents/code/enreach-tools/data/netbox_merged_export.csv
+[2025-09-21 11:58:29] --------------------------------------------------
+[2025-09-21 11:58:29] Devices headers: 60 columns
+[2025-09-21 11:58:29] VMs headers: 31 columns
+[2025-09-21 11:58:29] Added VM-specific column: VCPUs
+[2025-09-21 11:58:29] Added VM-specific column: Memory (MB)
+[2025-09-21 11:58:29] Added VM-specific column: Disk
+[2025-09-21 11:58:29] Added VM-specific column: Device
+[2025-09-21 11:58:29] Added VM-specific column: Virtual Disks
+[2025-09-21 11:58:29] Final merged headers: 66 columns
+[2025-09-21 11:58:29]   Processed 100 devices...
+[2025-09-21 11:58:29]   Processed 200 devices...
+[2025-09-21 11:58:29]   Processed 300 devices...
+[2025-09-21 11:58:29]   Processed 400 devices...
+[2025-09-21 11:58:29]   Processed 500 devices...
+[2025-09-21 11:58:29]   Processed 600 devices...
+[2025-09-21 11:58:29]   Processed 700 devices...
+[2025-09-21 11:58:29]   Processed 800 devices...
+[2025-09-21 11:58:29]   Processed 900 devices...
+[2025-09-21 11:58:29]   Processed 1000 devices...
+[2025-09-21 11:58:29]   Processed 1100 devices...
+[2025-09-21 11:58:29]   Processed 1200 devices...
+[2025-09-21 11:58:29]   Processed 1300 devices...
+[2025-09-21 11:58:29]   Processed 1400 devices...
+[2025-09-21 11:58:29]   Processed 1500 devices...
+[2025-09-21 11:58:29]   Processed 1600 devices...
+[2025-09-21 11:58:29]   Processed 1700 devices...
+[2025-09-21 11:58:29]   Processed 1800 devices...
+[2025-09-21 11:58:29]   Processed 1900 devices...
+[2025-09-21 11:58:29]   Processed 2000 devices...
+[2025-09-21 11:58:29]   Processed 2100 devices...
+[2025-09-21 11:58:29]   Processed 2200 devices...
+[2025-09-21 11:58:29]   Processed 2300 devices...
+[2025-09-21 11:58:29]   Processed 100 VMs...
+[2025-09-21 11:58:29]   Processed 200 VMs...
+[2025-09-21 11:58:29]   Processed 300 VMs...
+[2025-09-21 11:58:29]   Processed 400 VMs...
+[2025-09-21 11:58:29]   Processed 500 VMs...
+[2025-09-21 11:58:29]   Processed 600 VMs...
+[2025-09-21 11:58:29]   Processed 700 VMs...
+[2025-09-21 11:58:29]   Processed 800 VMs...
+[2025-09-21 11:58:29]   Processed 900 VMs...
+[2025-09-21 11:58:29] --------------------------------------------------
+[2025-09-21 11:58:29] Merge completed successfully!
+[2025-09-21 11:58:29] Devices processed: 2,385
+[2025-09-21 11:58:29] VMs processed: 961
+[2025-09-21 11:58:29] Total records: 3,346
+[2025-09-21 11:58:29] Output file size: 1,135,798 bytes (1.08 MB)
+[2025-09-21 11:58:29] 
+[2025-09-21 11:58:29] Creating Excel export: /Users/daniel/Documents/code/enreach-tools/data/Systems CMDB.xlsx
+[2025-09-21 11:58:29] Applying column order from: /Users/daniel/Documents/code/enreach-tools/netbox-export/etc/column_order.xlsx
+[2025-09-21 11:58:29] Creating table with range: A1:BN3347
+[2025-09-21 11:58:29] Excel file created: 836,016 bytes (0.80 MB)
+[2025-09-21 11:58:29] Excel export completed with:
+[2025-09-21 11:58:29]   - Data sorted by Name
+[2025-09-21 11:58:29]   - Filters enabled on header row
+[2025-09-21 11:58:29]   - Auto-adjusted column widths
+[2025-09-21 11:58:29]   - Table formatting applied
+[2025-09-21 11:58:29] [green]Update complete: devices + vms + merge[/green]
+[2025-09-21 11:58:30] Publishing CMDB to Confluence...
+[2025-09-21 11:58:31] Uploading: /Users/daniel/Documents/code/enreach-tools/data/Systems CMDB.xlsx -> page 981533033 as Systems CMDB.xlsx
+[2025-09-21 11:58:31] Attachment exists (id att981434769); uploading new version
+[2025-09-21 11:58:32] Attachment upload complete
+[2025-09-21 11:58:32] Name: Systems CMDB.xlsx
+[2025-09-21 11:58:32] Version: 22
+[2025-09-21 11:58:32] Open: https://enreach-services.atlassian.net/wiki/pages/viewpageattachments.action?pageId=981533033&preview=%2F981533033%2F981434769%2FSystems+CMDB.xlsx
+[2025-09-21 11:58:35] Uploading: /Users/daniel/Documents/code/enreach-tools/data/netbox_devices_export.csv -> page 981533060 as netbox_devices_export.csv
+[2025-09-21 11:58:35] Attachment exists (id att981762088); uploading new version
+[2025-09-21 11:58:37] Attachment upload complete
+[2025-09-21 11:58:37] Name: netbox_devices_export.csv
+[2025-09-21 11:58:37] Version: 19
+[2025-09-21 11:58:37] Open: https://enreach-services.atlassian.net/wiki/pages/viewpageattachments.action?pageId=981533060&preview=%2F981533060%2F981762088%2Fnetbox_devices_export.csv
+[2025-09-21 11:58:37] Confluence page updated with NetBox devices table
+[2025-09-21 11:58:40] Uploading: /Users/daniel/Documents/code/enreach-tools/data/netbox_vms_export.csv -> page 981794840 as netbox_vms_export.csv
+[2025-09-21 11:58:40] Attachment exists (id att981893145); uploading new version
+[2025-09-21 11:58:41] Attachment upload complete
+[2025-09-21 11:58:41] Name: netbox_vms_export.csv
+[2025-09-21 11:58:41] Version: 19
+[2025-09-21 11:58:41] Open: https://enreach-services.atlassian.net/wiki/pages/viewpageattachments.action?pageId=981794840&preview=%2F981794840%2F981893145%2Fnetbox_vms_export.csv
+[2025-09-21 11:58:41] Confluence page updated with NetBox VMs table
+[2025-09-21 11:58:41] [exit 0]
+[2025-09-21 12:11:23] $ uv run enreach export update
+[2025-09-21 12:11:25] Using .env: /Users/daniel/Documents/code/enreach-tools/.env
+[2025-09-21 12:11:37] [bold]Running NetBox export service...[/bold]
+[2025-09-21 12:11:37] Starting NetBox Devices data synchronization...
+[2025-09-21 12:11:37] Fetching device list from NetBox...
+[2025-09-21 12:11:37] Found 2385 devices in NetBox.
+[2025-09-21 12:11:37] Reading existing CSV data...
+[2025-09-21 12:11:37] Found 2385 devices in the CSV file.
+[2025-09-21 12:11:37] Identified 0 new devices.
+[2025-09-21 12:11:37] Identified 0 updated devices.
+[2025-09-21 12:11:37] Identified 0 devices to delete.
+[2025-09-21 12:11:37] Writing updated data to CSV...
+[2025-09-21 12:11:37] Sync complete.
+[2025-09-21 12:11:37] Starting NetBox VMs data synchronization...
+[2025-09-21 12:11:37] Fetching VM list from NetBox...
+[2025-09-21 12:11:37] Found 961 VMs in NetBox.
+[2025-09-21 12:11:37] Reading existing CSV data...
+[2025-09-21 12:11:37] Found 961 VMs in the CSV file.
+[2025-09-21 12:11:37] Identified 0 new VMs.
+[2025-09-21 12:11:37] Identified 0 updated VMs.
+[2025-09-21 12:11:37] Identified 0 VMs to delete.
+[2025-09-21 12:11:37] Writing updated data to CSV...
+[2025-09-21 12:11:37] Sync complete.
+[2025-09-21 12:11:37] Starting NetBox CSV merge process...
+[2025-09-21 12:11:37] Devices file: /Users/daniel/Documents/code/enreach-tools/data/netbox_devices_export.csv
+[2025-09-21 12:11:37] VMs file: /Users/daniel/Documents/code/enreach-tools/data/netbox_vms_export.csv
+[2025-09-21 12:11:37] Output file: /Users/daniel/Documents/code/enreach-tools/data/netbox_merged_export.csv
+[2025-09-21 12:11:37] --------------------------------------------------
+[2025-09-21 12:11:37] Devices headers: 60 columns
+[2025-09-21 12:11:37] VMs headers: 31 columns
+[2025-09-21 12:11:37] Added VM-specific column: VCPUs
+[2025-09-21 12:11:37] Added VM-specific column: Memory (MB)
+[2025-09-21 12:11:37] Added VM-specific column: Disk
+[2025-09-21 12:11:37] Added VM-specific column: Device
+[2025-09-21 12:11:37] Added VM-specific column: Virtual Disks
+[2025-09-21 12:11:37] Final merged headers: 66 columns
+[2025-09-21 12:11:37]   Processed 100 devices...
+[2025-09-21 12:11:37]   Processed 200 devices...
+[2025-09-21 12:11:37]   Processed 300 devices...
+[2025-09-21 12:11:37]   Processed 400 devices...
+[2025-09-21 12:11:37]   Processed 500 devices...
+[2025-09-21 12:11:37]   Processed 600 devices...
+[2025-09-21 12:11:37]   Processed 700 devices...
+[2025-09-21 12:11:37]   Processed 800 devices...
+[2025-09-21 12:11:37]   Processed 900 devices...
+[2025-09-21 12:11:37]   Processed 1000 devices...
+[2025-09-21 12:11:37]   Processed 1100 devices...
+[2025-09-21 12:11:37]   Processed 1200 devices...
+[2025-09-21 12:11:37]   Processed 1300 devices...
+[2025-09-21 12:11:37]   Processed 1400 devices...
+[2025-09-21 12:11:37]   Processed 1500 devices...
+[2025-09-21 12:11:37]   Processed 1600 devices...
+[2025-09-21 12:11:37]   Processed 1700 devices...
+[2025-09-21 12:11:37]   Processed 1800 devices...
+[2025-09-21 12:11:37]   Processed 1900 devices...
+[2025-09-21 12:11:37]   Processed 2000 devices...
+[2025-09-21 12:11:37]   Processed 2100 devices...
+[2025-09-21 12:11:37]   Processed 2200 devices...
+[2025-09-21 12:11:37]   Processed 2300 devices...
+[2025-09-21 12:11:37]   Processed 100 VMs...
+[2025-09-21 12:11:37]   Processed 200 VMs...
+[2025-09-21 12:11:37]   Processed 300 VMs...
+[2025-09-21 12:11:37]   Processed 400 VMs...
+[2025-09-21 12:11:37]   Processed 500 VMs...
+[2025-09-21 12:11:37]   Processed 600 VMs...
+[2025-09-21 12:11:37]   Processed 700 VMs...
+[2025-09-21 12:11:37]   Processed 800 VMs...
+[2025-09-21 12:11:37]   Processed 900 VMs...
+[2025-09-21 12:11:37] --------------------------------------------------
+[2025-09-21 12:11:37] Merge completed successfully!
+[2025-09-21 12:11:37] Devices processed: 2,385
+[2025-09-21 12:11:37] VMs processed: 961
+[2025-09-21 12:11:37] Total records: 3,346
+[2025-09-21 12:11:37] Output file size: 1,135,798 bytes (1.08 MB)
+[2025-09-21 12:11:37] 
+[2025-09-21 12:11:37] Creating Excel export: /Users/daniel/Documents/code/enreach-tools/data/Systems CMDB.xlsx
+[2025-09-21 12:11:37] Applying column order from: /Users/daniel/Documents/code/enreach-tools/netbox-export/etc/column_order.xlsx
+[2025-09-21 12:11:37] Creating table with range: A1:BN3347
+[2025-09-21 12:11:37] Excel file created: 836,012 bytes (0.80 MB)
+[2025-09-21 12:11:37] Excel export completed with:
+[2025-09-21 12:11:37]   - Data sorted by Name
+[2025-09-21 12:11:37]   - Filters enabled on header row
+[2025-09-21 12:11:37]   - Auto-adjusted column widths
+[2025-09-21 12:11:37]   - Table formatting applied
+[2025-09-21 12:11:37] [green]Update complete: devices + vms + merge[/green]
+[2025-09-21 12:11:38] Publishing CMDB to Confluence...
+[2025-09-21 12:11:39] Uploading: /Users/daniel/Documents/code/enreach-tools/data/Systems CMDB.xlsx -> page 981533033 as Systems CMDB.xlsx
+[2025-09-21 12:11:39] Attachment exists (id att981434769); uploading new version
+[2025-09-21 12:11:40] Attachment upload complete
+[2025-09-21 12:11:40] Name: Systems CMDB.xlsx
+[2025-09-21 12:11:40] Version: 25
+[2025-09-21 12:11:40] Open: https://enreach-services.atlassian.net/wiki/pages/viewpageattachments.action?pageId=981533033&preview=%2F981533033%2F981434769%2FSystems+CMDB.xlsx
+[2025-09-21 12:11:43] Uploading: /Users/daniel/Documents/code/enreach-tools/data/netbox_devices_export.csv -> page 981533060 as netbox_devices_export.csv
+[2025-09-21 12:11:43] Attachment exists (id att981762088); uploading new version
+[2025-09-21 12:11:44] Attachment upload complete
+[2025-09-21 12:11:44] Name: netbox_devices_export.csv
+[2025-09-21 12:11:44] Version: 22
+[2025-09-21 12:11:44] Open: https://enreach-services.atlassian.net/wiki/pages/viewpageattachments.action?pageId=981533060&preview=%2F981533060%2F981762088%2Fnetbox_devices_export.csv
+[2025-09-21 12:11:45] Confluence page updated with NetBox devices table
+[2025-09-21 12:11:48] Uploading: /Users/daniel/Documents/code/enreach-tools/data/netbox_vms_export.csv -> page 981794840 as netbox_vms_export.csv
+[2025-09-21 12:11:48] Attachment exists (id att981893145); uploading new version
+[2025-09-21 12:11:49] Attachment upload complete
+[2025-09-21 12:11:49] Name: netbox_vms_export.csv
+[2025-09-21 12:11:49] Version: 22
+[2025-09-21 12:11:49] Open: https://enreach-services.atlassian.net/wiki/pages/viewpageattachments.action?pageId=981794840&preview=%2F981794840%2F981893145%2Fnetbox_vms_export.csv
+[2025-09-21 12:11:49] Confluence page updated with NetBox VMs table
+[2025-09-21 12:11:49] [exit 0]
+[2025-09-21 12:31:11] $ uv run enreach export update
+[2025-09-21 12:31:12] Using .env: /Users/daniel/Documents/code/enreach-tools/.env
+[2025-09-21 12:31:29] [bold]Running NetBox export service...[/bold]
+[2025-09-21 12:31:29] Starting NetBox Devices data synchronization...
+[2025-09-21 12:31:29] Fetching device list from NetBox...
+[2025-09-21 12:31:29] Found 2385 devices in NetBox.
+[2025-09-21 12:31:29] Reading existing CSV data...
+[2025-09-21 12:31:29] Found 2385 devices in the CSV file.
+[2025-09-21 12:31:29] Identified 0 new devices.
+[2025-09-21 12:31:29] Identified 0 updated devices.
+[2025-09-21 12:31:29] Identified 0 devices to delete.
+[2025-09-21 12:31:29] Writing updated data to CSV...
+[2025-09-21 12:31:29] Sync complete.
+[2025-09-21 12:31:29] Starting NetBox VMs data synchronization...
+[2025-09-21 12:31:29] Fetching VM list from NetBox...
+[2025-09-21 12:31:29] Found 961 VMs in NetBox.
+[2025-09-21 12:31:29] Reading existing CSV data...
+[2025-09-21 12:31:29] Found 961 VMs in the CSV file.
+[2025-09-21 12:31:29] Identified 0 new VMs.
+[2025-09-21 12:31:29] Identified 0 updated VMs.
+[2025-09-21 12:31:29] Identified 0 VMs to delete.
+[2025-09-21 12:31:29] Writing updated data to CSV...
+[2025-09-21 12:31:29] Sync complete.
+[2025-09-21 12:31:29] Starting NetBox CSV merge process...
+[2025-09-21 12:31:29] Devices file: /Users/daniel/Documents/code/enreach-tools/data/netbox_devices_export.csv
+[2025-09-21 12:31:29] VMs file: /Users/daniel/Documents/code/enreach-tools/data/netbox_vms_export.csv
+[2025-09-21 12:31:29] Output file: /Users/daniel/Documents/code/enreach-tools/data/netbox_merged_export.csv
+[2025-09-21 12:31:29] --------------------------------------------------
+[2025-09-21 12:31:29] Devices headers: 60 columns
+[2025-09-21 12:31:29] VMs headers: 31 columns
+[2025-09-21 12:31:29] Added VM-specific column: VCPUs
+[2025-09-21 12:31:29] Added VM-specific column: Memory (MB)
+[2025-09-21 12:31:29] Added VM-specific column: Disk
+[2025-09-21 12:31:29] Added VM-specific column: Device
+[2025-09-21 12:31:29] Added VM-specific column: Virtual Disks
+[2025-09-21 12:31:29] Final merged headers: 66 columns
+[2025-09-21 12:31:29]   Processed 100 devices...
+[2025-09-21 12:31:29]   Processed 200 devices...
+[2025-09-21 12:31:29]   Processed 300 devices...
+[2025-09-21 12:31:29]   Processed 400 devices...
+[2025-09-21 12:31:29]   Processed 500 devices...
+[2025-09-21 12:31:29]   Processed 600 devices...
+[2025-09-21 12:31:29]   Processed 700 devices...
+[2025-09-21 12:31:29]   Processed 800 devices...
+[2025-09-21 12:31:29]   Processed 900 devices...
+[2025-09-21 12:31:29]   Processed 1000 devices...
+[2025-09-21 12:31:29]   Processed 1100 devices...
+[2025-09-21 12:31:29]   Processed 1200 devices...
+[2025-09-21 12:31:29]   Processed 1300 devices...
+[2025-09-21 12:31:29]   Processed 1400 devices...
+[2025-09-21 12:31:29]   Processed 1500 devices...
+[2025-09-21 12:31:29]   Processed 1600 devices...
+[2025-09-21 12:31:29]   Processed 1700 devices...
+[2025-09-21 12:31:29]   Processed 1800 devices...
+[2025-09-21 12:31:29]   Processed 1900 devices...
+[2025-09-21 12:31:29]   Processed 2000 devices...
+[2025-09-21 12:31:29]   Processed 2100 devices...
+[2025-09-21 12:31:29]   Processed 2200 devices...
+[2025-09-21 12:31:29]   Processed 2300 devices...
+[2025-09-21 12:31:29]   Processed 100 VMs...
+[2025-09-21 12:31:29]   Processed 200 VMs...
+[2025-09-21 12:31:29]   Processed 300 VMs...
+[2025-09-21 12:31:29]   Processed 400 VMs...
+[2025-09-21 12:31:29]   Processed 500 VMs...
+[2025-09-21 12:31:29]   Processed 600 VMs...
+[2025-09-21 12:31:29]   Processed 700 VMs...
+[2025-09-21 12:31:29]   Processed 800 VMs...
+[2025-09-21 12:31:29]   Processed 900 VMs...
+[2025-09-21 12:31:29] --------------------------------------------------
+[2025-09-21 12:31:29] Merge completed successfully!
+[2025-09-21 12:31:29] Devices processed: 2,385
+[2025-09-21 12:31:29] VMs processed: 961
+[2025-09-21 12:31:29] Total records: 3,346
+[2025-09-21 12:31:29] Output file size: 1,135,798 bytes (1.08 MB)
+[2025-09-21 12:31:29] 
+[2025-09-21 12:31:29] Creating Excel export: /Users/daniel/Documents/code/enreach-tools/data/Systems CMDB.xlsx
+[2025-09-21 12:31:29] Applying column order from: /Users/daniel/Documents/code/enreach-tools/netbox-export/etc/column_order.xlsx
+[2025-09-21 12:31:29] Creating table with range: A1:BN3347
+[2025-09-21 12:31:29] Excel file created: 836,016 bytes (0.80 MB)
+[2025-09-21 12:31:29] Excel export completed with:
+[2025-09-21 12:31:29]   - Data sorted by Name
+[2025-09-21 12:31:29]   - Filters enabled on header row
+[2025-09-21 12:31:29]   - Auto-adjusted column widths
+[2025-09-21 12:31:29]   - Table formatting applied
+[2025-09-21 12:31:29] [green]Update complete: devices + vms + merge[/green]
+[2025-09-21 12:31:30] Publishing CMDB to Confluence...
+[2025-09-21 12:31:31] Uploading: /Users/daniel/Documents/code/enreach-tools/data/Systems CMDB.xlsx -> page 981533033 as Systems CMDB.xlsx
+[2025-09-21 12:31:31] Attachment exists (id att981434769); uploading new version
+[2025-09-21 12:31:32] Attachment upload complete
+[2025-09-21 12:31:32] Name: Systems CMDB.xlsx
+[2025-09-21 12:31:32] Version: 27
+[2025-09-21 12:31:32] Open: https://enreach-services.atlassian.net/wiki/pages/viewpageattachments.action?pageId=981533033&preview=%2F981533033%2F981434769%2FSystems+CMDB.xlsx
+[2025-09-21 12:31:36] Uploading: /Users/daniel/Documents/code/enreach-tools/data/netbox_devices_export.csv -> page 981533060 as netbox_devices_export.csv
+[2025-09-21 12:31:36] Attachment exists (id att981762088); uploading new version
+[2025-09-21 12:31:37] Attachment upload complete
+[2025-09-21 12:31:37] Name: netbox_devices_export.csv
+[2025-09-21 12:31:37] Version: 24
+[2025-09-21 12:31:37] Open: https://enreach-services.atlassian.net/wiki/pages/viewpageattachments.action?pageId=981533060&preview=%2F981533060%2F981762088%2Fnetbox_devices_export.csv
+[2025-09-21 12:31:37] Confluence page updated with NetBox devices table
+[2025-09-21 12:31:41] Uploading: /Users/daniel/Documents/code/enreach-tools/data/netbox_vms_export.csv -> page 981794840 as netbox_vms_export.csv
+[2025-09-21 12:31:41] Attachment exists (id att981893145); uploading new version
+[2025-09-21 12:31:42] Attachment upload complete
+[2025-09-21 12:31:42] Name: netbox_vms_export.csv
+[2025-09-21 12:31:42] Version: 24
+[2025-09-21 12:31:42] Open: https://enreach-services.atlassian.net/wiki/pages/viewpageattachments.action?pageId=981794840&preview=%2F981794840%2F981893145%2Fnetbox_vms_export.csv
+[2025-09-21 12:31:42] Confluence page updated with NetBox VMs table
+[2025-09-21 12:31:42] [exit 0]

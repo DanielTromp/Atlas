@@ -4,10 +4,9 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-import pynetbox
-
 from enreach_tools import backup_sync
 from enreach_tools.env import apply_extra_headers, load_env, project_root, require_env
+from enreach_tools.infrastructure.external import NetboxClient, NetboxClientConfig
 
 # Note: file renamed from get_netbox_data.py to get_netbox_devices.py
 
@@ -19,10 +18,51 @@ require_env(["NETBOX_URL", "NETBOX_TOKEN"])
 NETBOX_URL = os.getenv("NETBOX_URL")
 NETBOX_TOKEN = os.getenv("NETBOX_TOKEN")
 
+netbox_client = NetboxClient(NetboxClientConfig(url=NETBOX_URL, token=NETBOX_TOKEN))
+nb = netbox_client.api
+
 # Verbose debug control via env NETBOX_DEBUG=1|true
 NETBOX_DEBUG = os.getenv("NETBOX_DEBUG", "").lower() in ("1", "true", "yes", "y")
 PREVIEW_ATTR_LIMIT = 20
 
+
+def _to_iso(dt):
+    if not dt:
+        return ""
+    if isinstance(dt, str):
+        return dt
+    try:
+        return dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    except Exception:
+        return str(dt)
+
+
+class _ListProxy(list):
+    """List wrapper providing an ``all`` method for compatibility."""
+
+    def __iter__(self):  # keep typing happy for mypy later
+        return super().__iter__()
+
+    def all(self):
+        return list(self)
+
+
+class _AttrProxy:
+    """Lightweight attribute accessor for dict payloads."""
+
+    def __init__(self, payload):
+        self._payload = payload or {}
+
+    def __getattr__(self, item):
+        if item == "_payload":
+            return super().__getattribute__(item)
+        value = self._payload.get(item)
+        if isinstance(value, dict):
+            return _AttrProxy(value)
+        if isinstance(value, list):
+            proxied = [_AttrProxy(v) if isinstance(v, dict) else v for v in value]
+            return _ListProxy(proxied)
+        return value
 def _dbg(msg: str):
     if NETBOX_DEBUG:
         print(f"[DEBUG] {msg}")
@@ -38,6 +78,27 @@ def _preview(obj):
         return f"obj attrs={attrs[:PREVIEW_ATTR_LIMIT]}{'...' if len(attrs)>PREVIEW_ATTR_LIMIT else ''}"
     except Exception as e:
         return f"<preview-error {e}>"
+
+
+
+def _req_err_details(exc) -> str:
+    info = []
+    try:
+        req = getattr(exc, "req", None) or getattr(exc, "request", None)
+        if req is not None:
+            status = getattr(req, "status_code", None)
+            url = getattr(req, "url", None)
+            if status:
+                info.append(f"status={status}")
+            if url:
+                info.append(f"url={url}")
+            text = getattr(req, "text", "") or ""
+            if text:
+                snippet = text.strip().replace("\n", " ")
+                info.append(f"response_snippet={snippet[:300]}")
+    except Exception:
+        pass
+    return (" [" + ", ".join(info) + "]") if info else ""
 
 
 def _norm_key(s: str) -> str:
@@ -198,62 +259,64 @@ def get_device_contacts(nb, device):
         # Fail closed; do not break the sync
         return ""
 
-def get_full_device_data(nb, device_id):
+
+def get_full_device_data(client, device_id):
     """Fetches detailed data for a single device."""
-    device = nb.dcim.devices.get(device_id)
-    # Extract custom fields safely (NetBox may return dict or None)
-    custom_fields = getattr(device, "custom_fields", None) or {}
+    nb = client.api
+    record = client.get_device(device_id)
+    device = record.source or _AttrProxy(record.raw)
+    custom_fields = record.custom_fields or {}
+
+    last_updated_str = (
+        record.last_updated.isoformat().replace("+00:00", "Z")
+        if record.last_updated
+        else str(getattr(device, "last_updated", "") or "")
+    )
 
     return {
-        "Name": getattr(device, "name", ""),
-        "Status": getattr(device.status, "label", "") if device.status else "",
-        "Tenant": getattr(device.tenant, "name", "") if device.tenant else "",
-        "Site": getattr(device.site, "name", "") if device.site else "",
-        "Location": getattr(device.location, "name", "") if device.location else "",
-        "Rack": getattr(device.rack, "name", "") if device.rack else "",
+        "Name": record.name,
+        "Status": record.status_label or "",
+        "Tenant": record.tenant or "",
+        "Site": record.site or "",
+        "Location": record.location or "",
+        "Rack": getattr(device.rack, "name", "") if getattr(device, "rack", None) else "",
         # New: Rack Position (U) with optional face prefix
         "Rack Position": (
             (f"{getattr(getattr(device, 'face', ''), 'label', getattr(device, 'face', ''))} {getattr(device, 'position', '')}").strip()
             if getattr(device, "position", None) not in (None, "") else ""
         ),
-        "Role": getattr(device.role, "name", "") if device.role else "",
-        "Manufacturer": getattr(device.device_type.manufacturer, "name", "") if device.device_type and device.device_type.manufacturer else "",
-        "Type": getattr(device.device_type, "model", "") if device.device_type else "",
-        "IP Address": str(device.primary_ip) if device.primary_ip else "",
-        "ID": device.id,
-        "Tenant Group": getattr(device.tenant.group, "name", "") if device.tenant and device.tenant.group else "",
-        "Serial number": getattr(device, "serial", ""),
-        "Asset tag": getattr(device, "asset_tag", ""),
-        "Region": getattr(device.site.region, "name", "") if device.site and device.site.region else "",
-        "Site Group": getattr(device.site.group, "name", "") if device.site and device.site.group else "",
-        "Parent Device": getattr(device.parent_device, "name", "") if device.parent_device else "",
+        "Role": record.role or "",
+        "Manufacturer": record.manufacturer or "",
+        "Type": record.model or "",
+        "IP Address": record.primary_ip_best or "",
+        "ID": record.id,
+        "Tenant Group": record.tenant_group or "",
+        "Serial number": record.serial or "",
+        "Asset tag": record.asset_tag or "",
+        "Region": record.region or "",
+        "Site Group": record.site_group or "",
+        "Parent Device": getattr(device.parent_device, "name", "") if getattr(device, "parent_device", None) else "",
         "Position (Device Bay)": getattr(device, "device_bay", ""),
         "Position": getattr(device, "position", ""),
         "Rack face": getattr(device, "face", ""),
         "Latitude": getattr(device, "latitude", ""),
         "Longitude": getattr(device, "longitude", ""),
         "Airflow": getattr(device, "airflow", ""),
-        "IPv4 Address": str(device.primary_ip4) if device.primary_ip4 else "",
-        "IPv6 Address": str(device.primary_ip6) if device.primary_ip6 else "",
-        "OOB IP": str(device.oob_ip) if device.oob_ip else "",
-        "Cluster": getattr(device.cluster, "name", "") if device.cluster else "",
+        "IPv4 Address": record.primary_ip4 or "",
+        "IPv6 Address": record.primary_ip6 or "",
+        "OOB IP": record.oob_ip or "",
+        "Cluster": record.cluster or "",
         "Virtual Chassis": getattr(device, "virtual_chassis", ""),
         "VC Position": getattr(device, "vc_position", ""),
         "VC Priority": getattr(device, "vc_priority", ""),
-        "Description": getattr(device, "description", ""),
-        "Config Template": getattr(device.config_template, "name", "") if device.config_template else "",
+        "Description": record.description or getattr(device, "description", ""),
+        "Config Template": getattr(device.config_template, "name", "") if getattr(device, "config_template", None) else "",
         "Comments": getattr(device, "comments", ""),
         "Contacts": get_device_contacts(nb, device),
-        # Normalize tags (support object or dict forms)
-        "Tags": ", ".join([
-            str(getattr(t, "name", None) or (t.get("name") if isinstance(t, dict) else ""))
-            for t in getattr(device, "tags", [])
-            if (getattr(t, "name", None) or (isinstance(t, dict) and t.get("name")))
-        ]),
+        "Tags": ", ".join(record.tags),
         "Created": str(getattr(device, "created", "") or ""),
-        "Last updated": str(getattr(device, "last_updated", "") or ""),
-        "Platform": getattr(device.platform, "name", "") if device.platform else "",
-        # Common and requested custom fields; include for devices when present
+        "Last updated": last_updated_str,
+        "Platform": getattr(device.platform, "name", "") if getattr(device, "platform", None) else "",
         "Server Group": _cf_get(custom_fields, "Server Group", "Server_Group"),
         "Backup": _cf_get(custom_fields, "Backup"),
         "DTAP state": _cf_get(custom_fields, "DTAP state", "DTAP_state"),
@@ -277,6 +340,7 @@ def get_full_device_data(nb, device_id):
         "Inventory items": len(list(device.inventory_items.all())) if hasattr(device, "inventory_items") else 0,
     }
 
+
 def sync_netbox_to_csv(force: bool = False):
     """Connects to NetBox, retrieves all devices, and incrementally updates a CSV file.
     """
@@ -286,12 +350,11 @@ def sync_netbox_to_csv(force: bool = False):
     print("Starting NetBox Devices data synchronization...")
 
     try:
-        nb = pynetbox.api(url=NETBOX_URL, token=NETBOX_TOKEN)
         apply_extra_headers(nb.http_session)
 
-        # 1. Fetch only id and last_updated from NetBox
         print("Fetching device list from NetBox...")
-        netbox_device_info = {str(d.id): d.last_updated for d in nb.dcim.devices.all()}
+        devices = netbox_client.list_devices(force_refresh=force)
+        netbox_device_info = {str(d.id): _to_iso(d.last_updated) for d in devices}
         print(f"Found {len(netbox_device_info)} devices in NetBox.")
 
         # Resolve data directory relative to project root
@@ -321,7 +384,11 @@ def sync_netbox_to_csv(force: bool = False):
             to_update = []
         else:
             for device_id, last_updated_str in netbox_device_info.items():
-                last_updated_dt = datetime.fromisoformat(last_updated_str.replace("Z", "+00:00"))
+                last_updated_dt = (
+                    datetime.fromisoformat(last_updated_str.replace("Z", "+00:00"))
+                    if last_updated_str
+                    else datetime.min
+                )
 
                 if device_id not in existing_devices:
                     to_add.append(device_id)
@@ -354,7 +421,7 @@ def sync_netbox_to_csv(force: bool = False):
             for device_id in devices_to_fetch:
                 count += 1
                 print(f"Progress: {count}/{total_to_fetch} devices processed")
-                updated_data[device_id] = get_full_device_data(nb, device_id)
+                updated_data[device_id] = get_full_device_data(netbox_client, device_id)
 
         # 5. Update the device dictionary
         for device_id, data in updated_data.items():
@@ -374,7 +441,7 @@ def sync_netbox_to_csv(force: bool = False):
         if netbox_device_info:
             try:
                 first_device_id = next(iter(netbox_device_info.keys()))
-                headers = list(get_full_device_data(nb, first_device_id).keys())
+                headers = list(get_full_device_data(netbox_client, first_device_id).keys())
             except Exception:
                 headers = []
 
@@ -415,35 +482,12 @@ def sync_netbox_to_csv(force: bool = False):
         print("Sync complete.")
 
         try:
-            result = backup_sync.sync_paths([csv_file_path], note="netbox_devices")
-            if result.get("status") == "ok" and result.get("count"):
-                print(f"Dropbox sync: uploaded {result['count']} file(s).")
-        except Exception as sync_error:  # pragma: no cover - defensive logging
-            print(f"Dropbox sync error (devices): {sync_error}")
-
-    except pynetbox.RequestError as e:
-        # Enriched diagnostics for 403/other errors
-        info = []
-        try:
-            req = getattr(e, "req", None) or getattr(e, "request", None)
-            if req is not None:
-                status = getattr(req, "status_code", None)
-                url = getattr(req, "url", None)
-                if status:
-                    info.append(f"status={status}")
-                if url:
-                    info.append(f"url={url}")
-                text = getattr(req, "text", "") or ""
-                if text:
-                    snippet = text.strip().replace("\n", " ")
-                    snippet = snippet[:300]
-                    info.append(f"response_snippet={snippet}")
-        except Exception:
+            backup_sync.sync_paths([csv_file_path], note="netbox_devices")
+        except Exception:  # pragma: no cover - defensive logging
             pass
-        extra = (" [" + ", ".join(info) + "]") if info else ""
-        print(f"Error connecting to NetBox: {e}{extra}")
     except Exception as e:
-        print(f"An error occurred: {e}")
+        extra = _req_err_details(e)
+        print(f"Error interacting with NetBox: {e}{extra}")
 
 def main():
     parser = argparse.ArgumentParser(description="Export NetBox devices to CSV")
