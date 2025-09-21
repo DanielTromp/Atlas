@@ -9,7 +9,6 @@ import secrets
 import shutil
 import sys
 import uuid
-from collections.abc import Generator
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
@@ -20,7 +19,7 @@ import numpy as np
 import pandas as pd
 import requests
 from dotenv import dotenv_values
-from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
     FileResponse,
@@ -30,17 +29,35 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
-from passlib.context import CryptContext
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from enreach_tools import backup_sync
+from enreach_tools.application.dto import (
+    AdminEnvResponseDTO,
+    BackupInfoDTO,
+    EnvSettingDTO,
+    SuggestionCommentDTO,
+    SuggestionCommentResponseDTO,
+    SuggestionItemDTO,
+    SuggestionListDTO,
+    meta_to_dto,
+    suggestion_to_dto,
+    suggestions_to_dto,
+)
+from enreach_tools.application.security import hash_password, verify_password
 from enreach_tools.db import get_sessionmaker, init_database
 from enreach_tools.db.models import ChatMessage, ChatSession, GlobalAPIKey, User, UserAPIKey
 from enreach_tools.env import load_env, project_root
+from enreach_tools.interfaces.api import bootstrap_api
+from enreach_tools.interfaces.api.dependencies import (
+    CurrentUserDep,
+    DbSessionDep,
+    OptionalUserDep,
+)
 
 try:
     from openai import OpenAI  # type: ignore
@@ -58,41 +75,6 @@ except Exception as exc:  # pragma: no cover - surfaces during boot
     raise
 
 SessionLocal = get_sessionmaker()
-
-try:  # Work around bcrypt>=4.3 dropping __about__ which passlib expects
-    import bcrypt as _bcrypt
-
-    if not hasattr(_bcrypt, "__about__"):
-        class _BcryptAbout:
-            __version__ = getattr(_bcrypt, "__version__", "")
-
-
-        _bcrypt.__about__ = _BcryptAbout()  # type: ignore[attr-defined]
-except Exception:
-    _bcrypt = None  # type: ignore[assignment]
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-
-def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
-
-
-def verify_password(password: str, password_hash: str | None) -> bool:
-    if not password_hash:
-        return False
-    try:
-        return pwd_context.verify(password, password_hash)
-    except Exception:
-        return False
-
-
-def get_db() -> Generator[Session, None, None]:
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 def ensure_default_admin() -> None:
@@ -141,28 +123,6 @@ def authenticate_user(db: Session, username: str, password: str) -> User | None:
     if verify_password(password, user.password_hash):
         return user
     return None
-
-
-def current_user(request: Request) -> User:
-    user = getattr(request.state, "user", None)
-    if not user:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    return user
-
-
-def optional_user(request: Request) -> User | None:
-    user = getattr(request.state, "user", None)
-    return user if isinstance(user, User) else None
-
-
-CurrentUserDep = Annotated[User, Depends(current_user)]
-OptionalUserDep = Annotated[User | None, Depends(optional_user)]
-DbSessionDep = Annotated[Session, Depends(get_db)]
-def admin_user(user: CurrentUserDep) -> User:
-    return _ensure_admin(user)
-
-
-AdminUserDep = Annotated[User, Depends(admin_user)]
 
 
 def _ensure_admin(user: User) -> User:
@@ -235,6 +195,8 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+app.include_router(bootstrap_api())
 
 
 # Reduce aggressive caching for the static UI during development to avoid stale assets
@@ -464,264 +426,22 @@ def auth_logout(request: Request):
     return RedirectResponse(url="/auth/login")
 
 
-class ProfileUpdate(BaseModel):
-    display_name: str | None = None
-    email: str | None = None
-
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
 
-class PasswordChange(BaseModel):
-    current_password: str | None = None
-    new_password: str
-
-    model_config = ConfigDict(extra="forbid")
 
 
-class APIKeyPayload(BaseModel):
-    secret: str
-    label: str | None = None
-
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
 
-class AdminCreateUser(BaseModel):
-    username: str
-    password: str
-    display_name: str | None = None
-    email: str | None = None
-    role: Literal["admin", "member"] = "member"
-
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
 
-class AdminUpdateUser(BaseModel):
-    display_name: str | None = None
-    email: str | None = None
-    role: Literal["admin", "member"] | None = None
-    is_active: bool | None = None
-
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
 
-class AdminSetPassword(BaseModel):
-    new_password: str
-
-    model_config = ConfigDict(extra="forbid")
 
 
-for _model in (ProfileUpdate, PasswordChange, APIKeyPayload, AdminCreateUser, AdminUpdateUser, AdminSetPassword):
-    _model.model_rebuild()
 
-
-@app.get("/auth/me")
-def auth_me(user: CurrentUserDep):
-    return _serialize_user(user)
-
-
-@app.patch("/profile")
-def profile_update(user: CurrentUserDep, db: DbSessionDep, payload: ProfileUpdate = Body(...)):
-    changed = False
-    if payload.display_name is not None:
-        user.display_name = payload.display_name or None
-        changed = True
-    if payload.email is not None:
-        email = payload.email or None
-        if email and "@" not in email:
-            raise HTTPException(status_code=400, detail="Invalid email address")
-        user.email = email
-        changed = True
-    if changed:
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-    return _serialize_user(user)
-
-
-@app.post("/profile/password")
-def profile_change_password(user: CurrentUserDep, db: DbSessionDep, payload: PasswordChange = Body(...)):
-    new_pw = (payload.new_password or "").strip()
-    if len(new_pw) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
-
-    current_pw = (payload.current_password or "").strip() if payload.current_password is not None else ""
-    if user.password_hash:
-        if not current_pw or not verify_password(current_pw, user.password_hash):
-            raise HTTPException(status_code=400, detail="Current password is incorrect")
-
-    user.password_hash = hash_password(new_pw)
-    db.add(user)
-    db.commit()
-    return {"status": "ok"}
-
-
-@app.get("/profile/api-keys")
-def profile_list_api_keys(user: CurrentUserDep, db: DbSessionDep):
-    stmt = select(UserAPIKey).where(UserAPIKey.user_id == user.id).order_by(UserAPIKey.provider.asc())
-    records = db.execute(stmt).scalars().all()
-    return [_serialize_user_api_key(rec) for rec in records]
-
-
-@app.put("/profile/api-keys/{provider}")
-def profile_upsert_api_key(provider: str, user: CurrentUserDep, db: DbSessionDep, payload: APIKeyPayload = Body(...)):
-    provider_norm = (provider or "").strip().lower()
-    if not provider_norm:
-        raise HTTPException(status_code=400, detail="Provider is required")
-    secret = payload.secret.strip()
-    if not secret:
-        raise HTTPException(status_code=400, detail="Secret is required")
-
-    record = _get_user_api_key(db, user.id, provider_norm)
-    label = payload.label or None
-    if record is None:
-        record = UserAPIKey(user_id=user.id, provider=provider_norm, secret=secret, label=label)
-        db.add(record)
-    else:
-        record.secret = secret
-        record.label = label
-    db.commit()
-    db.refresh(record)
-    return _serialize_user_api_key(record)
-
-
-@app.delete("/profile/api-keys/{provider}")
-def profile_delete_api_key(provider: str, user: CurrentUserDep, db: DbSessionDep):
-    provider_norm = (provider or "").strip().lower()
-    record = _get_user_api_key(db, user.id, provider_norm)
-    if record is None:
-        raise HTTPException(status_code=404, detail="API key not found")
-    db.delete(record)
-    db.commit()
-    return {"status": "deleted"}
 
 
 @app.get("/admin/users")
-def admin_list_users(
-    user: AdminUserDep,
-    db: DbSessionDep,
-    include_inactive: bool = False,
-):
-    stmt = select(User)
-    if not include_inactive:
-        stmt = stmt.where(User.is_active.is_(True))
-    stmt = stmt.order_by(User.username.asc())
-    users = db.execute(stmt).scalars().all()
-    return [_serialize_user(u) for u in users]
-
-
-@app.post("/admin/users")
-def admin_create_user(user: AdminUserDep, db: DbSessionDep, payload: AdminCreateUser = Body(...)):
-    username = payload.username.strip().lower()
-    if not username:
-        raise HTTPException(status_code=400, detail="Username is required")
-    if len(payload.password.strip()) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
-    if get_user_by_username(db, username):
-        raise HTTPException(status_code=400, detail="Username already exists")
-
-    user = User(
-        username=username,
-        display_name=payload.display_name or None,
-        email=payload.email or None,
-        role=payload.role,
-        is_active=True,
-        password_hash=hash_password(payload.password.strip()),
-    )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    return _serialize_user(user)
-
-
-@app.patch("/admin/users/{user_id}")
-def admin_update_user(user_id: str, admin: AdminUserDep, db: DbSessionDep, payload: AdminUpdateUser = Body(...)):
-    target = db.get(User, user_id)
-    if not target:
-        raise HTTPException(status_code=404, detail="User not found")
-    if target.id == admin.id and payload.role and payload.role != admin.role:
-        raise HTTPException(status_code=400, detail="You cannot change your own role")
-    if payload.display_name is not None:
-        target.display_name = payload.display_name or None
-    if payload.email is not None:
-        email = payload.email or None
-        if email and "@" not in email:
-            raise HTTPException(status_code=400, detail="Invalid email address")
-        target.email = email
-    if payload.role is not None:
-        target.role = payload.role
-    if payload.is_active is not None:
-        if target.id == admin.id and not payload.is_active:
-            raise HTTPException(status_code=400, detail="You cannot deactivate yourself")
-        target.is_active = payload.is_active
-    db.add(target)
-    db.commit()
-    db.refresh(target)
-    return _serialize_user(target)
-
-
-@app.post("/admin/users/{user_id}/password")
-def admin_set_user_password(user_id: str, admin: AdminUserDep, db: DbSessionDep, payload: AdminSetPassword = Body(...)):
-    target = db.get(User, user_id)
-    if not target:
-        raise HTTPException(status_code=404, detail="User not found")
-    new_pw = payload.new_password.strip()
-    if len(new_pw) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
-    target.password_hash = hash_password(new_pw)
-    db.add(target)
-    db.commit()
-    return {"status": "ok"}
-
-
-@app.delete("/admin/users/{user_id}")
-def admin_delete_user(user_id: str, admin: AdminUserDep, db: DbSessionDep):
-    target = db.get(User, user_id)
-    if not target:
-        raise HTTPException(status_code=404, detail="User not found")
-    if target.id == admin.id:
-        raise HTTPException(status_code=400, detail="You cannot delete yourself")
-    db.delete(target)
-    db.commit()
-    return {"status": "deleted"}
-
-
-@app.get("/admin/global-api-keys")
-def admin_list_global_api_keys(user: AdminUserDep, db: DbSessionDep):
-    stmt = select(GlobalAPIKey).order_by(GlobalAPIKey.provider.asc())
-    records = db.execute(stmt).scalars().all()
-    return [_serialize_global_api_key(rec) for rec in records]
-
-
-@app.put("/admin/global-api-keys/{provider}")
-def admin_upsert_global_api_key(provider: str, user: AdminUserDep, db: DbSessionDep, payload: APIKeyPayload = Body(...)):
-    provider_norm = (provider or "").strip().lower()
-    if not provider_norm:
-        raise HTTPException(status_code=400, detail="Provider is required")
-    secret = payload.secret.strip()
-    if not secret:
-        raise HTTPException(status_code=400, detail="Secret is required")
-
-    record = _get_global_api_key(db, provider_norm)
-    label = payload.label or None
-    if record is None:
-        record = GlobalAPIKey(provider=provider_norm, secret=secret, label=label)
-        db.add(record)
-    else:
-        record.secret = secret
-        record.label = label
-    db.commit()
-    db.refresh(record)
-    return _serialize_global_api_key(record)
-
-
-@app.delete("/admin/global-api-keys/{provider}")
-def admin_delete_global_api_key(provider: str, user: AdminUserDep, db: DbSessionDep):
-    record = _get_global_api_key(db, (provider or "").strip().lower())
-    if record is None:
-        raise HTTPException(status_code=404, detail="API key not found")
-    db.delete(record)
-    db.commit()
-    return {"status": "deleted"}
 
 
 def _data_dir() -> Path:
@@ -882,7 +602,7 @@ def _require_status(value: str | None) -> str:
 
 
 def _now_iso() -> str:
-    return datetime.utcnow().replace(microsecond=0).isoformat()
+    return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
 def _decorate_suggestion(item: dict[str, Any]) -> dict[str, Any]:
@@ -1078,7 +798,13 @@ def _suggestion_meta() -> dict[str, Any]:
 def suggestions_list() -> dict:
     with _suggestions_lock:
         items = _load_suggestions()
-    return {"items": items, **_suggestion_meta()}
+    meta = meta_to_dto(_suggestion_meta())
+    dto = SuggestionListDTO(
+        items=suggestions_to_dto(items),
+        total=len(items),
+        meta=meta,
+    )
+    return dto.dict_clean()
 
 
 @app.get("/suggestions/{suggestion_id}")
@@ -1087,7 +813,12 @@ def suggestions_detail(suggestion_id: str) -> dict:
         items = _load_suggestions()
     for item in items:
         if str(item.get("id")) == suggestion_id:
-            return {"item": item, **_suggestion_meta()}
+            meta = meta_to_dto(_suggestion_meta())
+            dto = SuggestionItemDTO(
+                item=suggestion_to_dto(item),
+                meta=meta,
+            )
+            return dto.dict_clean()
     raise HTTPException(status_code=404, detail="Suggestion not found")
 
 
@@ -1114,7 +845,9 @@ def suggestions_create(req: SuggestionCreate) -> dict:
         rows = _load_suggestions()
         rows.append(item)
         _write_suggestions(rows)
-    return {"item": _decorate_suggestion(item)}
+    decorated = _decorate_suggestion(item)
+    dto = SuggestionItemDTO(item=suggestion_to_dto(decorated))
+    return dto.dict_clean()
 
 
 @app.put("/suggestions/{suggestion_id}")
@@ -1148,7 +881,8 @@ def suggestions_update(suggestion_id: str, req: SuggestionUpdate) -> dict:
         _write_suggestions(rows)
         saved = _decorate_suggestion(target)
 
-    return {"item": saved}
+    dto = SuggestionItemDTO(item=suggestion_to_dto(saved))
+    return dto.dict_clean()
 
 
 @app.post("/suggestions/{suggestion_id}/like")
@@ -1177,7 +911,8 @@ def suggestions_like(suggestion_id: str, req: SuggestionLikeRequest) -> dict:
         _write_suggestions(rows)
         saved = _decorate_suggestion(target)
 
-    return {"item": saved}
+    dto = SuggestionItemDTO(item=suggestion_to_dto(saved))
+    return dto.dict_clean()
 
 
 @app.post("/suggestions/{suggestion_id}/comments")
@@ -1212,7 +947,11 @@ def suggestions_add_comment(suggestion_id: str, req: SuggestionCommentCreate) ->
         _write_suggestions(rows)
         saved = _decorate_suggestion(target)
 
-    return {"item": saved, "comment": comment}
+    dto = SuggestionCommentResponseDTO(
+        item=suggestion_to_dto(saved),
+        comment=SuggestionCommentDTO.model_validate(comment),
+    )
+    return dto.dict_clean()
 
 
 @app.delete("/suggestions/{suggestion_id}/comments/{comment_id}")
@@ -1241,7 +980,8 @@ def suggestions_delete_comment(suggestion_id: str, comment_id: str) -> dict:
         _write_suggestions(rows)
         saved = _decorate_suggestion(target)
 
-    return {"item": saved}
+    dto = SuggestionItemDTO(item=suggestion_to_dto(saved))
+    return dto.dict_clean()
 
 
 @app.delete("/suggestions/{suggestion_id}")
@@ -1311,15 +1051,15 @@ def admin_env_settings():
         backup_configured = bool(host and username and (password or private_key))
         backup_target = f"{username}@{host}:{remote_path}" if host and username and remote_path else f"{username}@{host}" if host and username else ""
     
-    return {
-        "settings": settings,
-        "backup": {
-            "enabled": backup_enabled,
-            "configured": backup_configured,
-            "type": backup_type,
-            "target": backup_target,
-        },
-    }
+    settings_dto = [EnvSettingDTO.model_validate(setting) for setting in settings]
+    backup_dto = BackupInfoDTO(
+        enabled=backup_enabled,
+        configured=backup_configured,
+        type=backup_type,
+        target=backup_target or None,
+    )
+    dto = AdminEnvResponseDTO(settings=settings_dto, backup=backup_dto)
+    return dto.dict_clean()
 
 
 @app.post("/admin/env")

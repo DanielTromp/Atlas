@@ -1,0 +1,162 @@
+"""Admin management endpoints."""
+from __future__ import annotations
+
+from fastapi import APIRouter, Body, Depends, HTTPException
+
+from enreach_tools.application.dto.admin import (
+    admin_global_key_to_dto,
+    admin_global_keys_to_dto,
+    admin_user_to_dto,
+    admin_users_to_dto,
+)
+from enreach_tools.application.services.admin import AdminService
+from enreach_tools.interfaces.api.dependencies import AdminUserDep, get_admin_service
+from enreach_tools.interfaces.api.schemas import (
+    AdminCreateUser,
+    AdminSetPassword,
+    AdminUpdateUser,
+    APIKeyPayload,
+)
+
+router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+@router.get("/users")
+def list_users(
+    admin: AdminUserDep,
+    include_inactive: bool = False,
+    service: AdminService = Depends(get_admin_service),
+):
+    entities = service.list_users(include_inactive=include_inactive)
+    return [dto.dict_clean() for dto in admin_users_to_dto(entities)]
+
+
+@router.post("/users")
+def create_user(
+    admin: AdminUserDep,
+    payload: AdminCreateUser = Body(...),
+    service: AdminService = Depends(get_admin_service),
+):
+    username = payload.username.strip().lower()
+    password = payload.password.strip()
+    if not username:
+        raise HTTPException(status_code=400, detail="Username is required")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    try:
+        service.ensure_username_available(username)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    entity = service.create_user(
+        username=username,
+        password=password,
+        display_name=payload.display_name or None,
+        email=payload.email or None,
+        role=payload.role,
+    )
+    return admin_user_to_dto(entity).dict_clean()
+
+
+@router.patch("/users/{user_id}")
+def update_user(
+    user_id: str,
+    admin: AdminUserDep,
+    payload: AdminUpdateUser = Body(...),
+    service: AdminService = Depends(get_admin_service),
+):
+    target = service.get_user(user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if payload.role and target.id == admin.id and payload.role != admin.role:
+        raise HTTPException(status_code=400, detail="You cannot change your own role")
+    if payload.is_active is False and target.id == admin.id:
+        raise HTTPException(status_code=400, detail="You cannot deactivate yourself")
+
+    if payload.display_name is not None:
+        target.display_name = payload.display_name or None
+    if payload.email is not None:
+        email = payload.email or None
+        if email and "@" not in email:
+            raise HTTPException(status_code=400, detail="Invalid email address")
+        target.email = email
+    if payload.role is not None:
+        target.role = payload.role
+    if payload.is_active is not None:
+        target.is_active = payload.is_active
+
+    updated = service.save_user(target)
+    return admin_user_to_dto(updated).dict_clean()
+
+
+@router.post("/users/{user_id}/password")
+def set_user_password(
+    user_id: str,
+    admin: AdminUserDep,
+    payload: AdminSetPassword = Body(...),
+    service: AdminService = Depends(get_admin_service),
+):
+    target = service.get_user(user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    new_password = payload.new_password.strip()
+    if len(new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    service.set_password(target, new_password)
+    return {"status": "ok"}
+
+
+@router.delete("/users/{user_id}")
+def delete_user(
+    user_id: str,
+    admin: AdminUserDep,
+    service: AdminService = Depends(get_admin_service),
+):
+    target = service.get_user(user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    if target.id == admin.id:
+        raise HTTPException(status_code=400, detail="You cannot delete yourself")
+    service.delete_user(target)
+    return {"status": "deleted"}
+
+
+@router.get("/global-api-keys")
+def list_global_api_keys(
+    admin: AdminUserDep,
+    service: AdminService = Depends(get_admin_service),
+):
+    entities = service.list_global_api_keys()
+    return [dto.dict_clean() for dto in admin_global_keys_to_dto(entities)]
+
+
+@router.put("/global-api-keys/{provider}")
+def upsert_global_api_key(
+    provider: str,
+    admin: AdminUserDep,
+    payload: APIKeyPayload = Body(...),
+    service: AdminService = Depends(get_admin_service),
+):
+    provider_norm = (provider or "").strip().lower()
+    if not provider_norm:
+        raise HTTPException(status_code=400, detail="Provider is required")
+    secret = payload.secret.strip()
+    if not secret:
+        raise HTTPException(status_code=400, detail="Secret is required")
+    entity = service.upsert_global_api_key(provider_norm, secret, payload.label or None)
+    return admin_global_key_to_dto(entity).dict_clean()
+
+
+@router.delete("/global-api-keys/{provider}")
+def delete_global_api_key(
+    provider: str,
+    admin: AdminUserDep,
+    service: AdminService = Depends(get_admin_service),
+):
+    provider_norm = (provider or "").strip().lower()
+    if not service.delete_global_api_key(provider_norm):
+        raise HTTPException(status_code=404, detail="API key not found")
+    return {"status": "deleted"}

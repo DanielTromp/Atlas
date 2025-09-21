@@ -11,7 +11,7 @@ from typing import Literal
 
 try:
     import paramiko
-    from paramiko import SSHClient, SFTPClient
+    from paramiko import SFTPClient, SSHClient
 except ImportError:  # pragma: no cover - optional dependency not installed
     paramiko = None  # type: ignore
     SSHClient = SFTPClient = object  # type: ignore

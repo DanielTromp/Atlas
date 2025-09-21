@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
+from collections.abc import Iterable
 
 import typer
 from rich import print
+from rich.console import Console
+from rich.table import Table
 
+from .application.context import ServiceContext
+from .application.dto.admin import admin_user_to_dto, admin_users_to_dto
+from .application.services import create_admin_service
+from .db import get_sessionmaker
 from .db.setup import init_database
 from .env import load_env, project_root, require_env
 
@@ -14,6 +22,8 @@ from .env import load_env, project_root, require_env
 HELP_CTX = {"help_option_names": ["-h", "--help"]}
 
 app = typer.Typer(help="Enreach Tools CLI", context_settings=HELP_CTX)
+
+console = Console()
 
 
 def _run_script(relpath: str, *args: str) -> int:
@@ -32,7 +42,6 @@ def _env_flag(name: str, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
-
 
 @app.callback()
 def _common(override_env: bool = typer.Option(False, "--override-env", help="Override existing env vars from .env")):
@@ -56,6 +65,117 @@ search = typer.Typer(help="Cross-system search (Home aggregator)", context_setti
 app.add_typer(search, name="search")
 db = typer.Typer(help="Database utilities", context_settings=HELP_CTX)
 app.add_typer(db, name="db")
+users_cli = typer.Typer(help="User administration helpers", context_settings=HELP_CTX)
+app.add_typer(users_cli, name="users")
+
+
+def _service_context() -> ServiceContext:
+    return ServiceContext(session_factory=get_sessionmaker())
+
+
+def _echo_json_dicts(items: Iterable[dict]) -> None:
+    typer.echo(json.dumps(list(items), indent=2))
+
+
+@users_cli.command("list")
+def users_list(
+    include_inactive: bool = typer.Option(False, "--include-inactive", help="Include inactive users"),
+    json_output: bool = typer.Option(False, "--json", help="Output results as JSON"),
+):
+    """List users in the internal authentication database."""
+    ctx = _service_context()
+    with ctx.session_scope() as session:
+        service = create_admin_service(session)
+        entities = service.list_users(include_inactive=include_inactive)
+    dtos = admin_users_to_dto(entities)
+    payload = [dto.model_dump(mode="json") for dto in dtos]
+    if json_output:
+        _echo_json_dicts(payload)
+        return
+    if not payload:
+        print("[yellow]No users found[/yellow]")
+        return
+    table = Table(title="Users")
+    table.add_column("Username", style="cyan")
+    table.add_column("Role", style="magenta")
+    table.add_column("Active", style="green")
+    table.add_column("Email")
+    table.add_column("Display Name")
+    for dto in dtos:
+        table.add_row(
+            dto.username,
+            dto.role,
+            "yes" if dto.is_active else "no",
+            dto.email or "-",
+            dto.display_name or "-",
+        )
+    console.print(table)
+
+
+@users_cli.command("create")
+def users_create(
+    username: str = typer.Argument(..., help="Username (will be normalised to lowercase)"),
+    password: str = typer.Option(..., "--password", help="Initial password (min length 8)"),
+    role: str = typer.Option("member", "--role", help="User role", show_choices=True, case_sensitive=False),
+    display_name: str = typer.Option("", "--display-name", help="Optional display name"),
+    email: str = typer.Option("", "--email", help="Optional email address"),
+    json_output: bool = typer.Option(False, "--json", help="Output result as JSON"),
+):
+    """Create a new user."""
+    username_norm = username.strip().lower()
+    if not username_norm:
+        print("[red]Username is required[/red]")
+        raise typer.Exit(code=1)
+    if len(password.strip()) < 8:
+        print("[red]Password must be at least 8 characters[/red]")
+        raise typer.Exit(code=1)
+    if role.lower() not in {"admin", "member"}:
+        print("[red]Role must be 'admin' or 'member'[/red]")
+        raise typer.Exit(code=1)
+
+    ctx = _service_context()
+    with ctx.session_scope() as session:
+        service = create_admin_service(session)
+        try:
+            service.ensure_username_available(username_norm)
+        except ValueError as exc:
+            print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=1) from exc
+        entity = service.create_user(
+            username=username_norm,
+            password=password.strip(),
+            display_name=display_name or None,
+            email=email or None,
+            role=role.lower(),
+        )
+    dto = admin_user_to_dto(entity)
+    if json_output:
+        _echo_json_dicts([dto.model_dump(mode="json")])
+    else:
+        print(f"[green]Created user[/green] {dto.username} ({dto.role})")
+
+
+@users_cli.command("set-password")
+def users_set_password(
+    username: str = typer.Argument(..., help="Username"),
+    password: str = typer.Option(..., "--password", help="New password (min length 8)"),
+):
+    """Set or reset a user's password."""
+    username_norm = username.strip().lower()
+    new_password = password.strip()
+    if len(new_password) < 8:
+        print("[red]Password must be at least 8 characters[/red]")
+        raise typer.Exit(code=1)
+
+    ctx = _service_context()
+    with ctx.session_scope() as session:
+        service = create_admin_service(session)
+        user = service.get_user_by_username(username_norm)
+        if user is None:
+            print(f"[red]User '{username_norm}' not found[/red]")
+            raise typer.Exit(code=1)
+        service.set_password(user, new_password)
+    print(f"[green]Password updated for[/green] {username_norm}")
 
 
 @export.command("devices")
