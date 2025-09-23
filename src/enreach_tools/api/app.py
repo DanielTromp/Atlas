@@ -2242,18 +2242,17 @@ def _zabbix_client() -> ZabbixClient:
     except ZabbixConfigError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-
-    def _zbx_rpc(method: str, params: dict, *, client: ZabbixClient | None = None) -> dict:
-        client = client or _zabbix_client()
-        try:
-            result = client.rpc(method, params)
-        except ZabbixAuthError as err:
-            raise HTTPException(status_code=401, detail=f"Zabbix error: {err}") from err
-        except ZabbixError as err:
-            raise HTTPException(status_code=502, detail=f"Zabbix error: {err}") from err
-        if isinstance(result, (dict, list)):
-            return result  # type: ignore[return-value]
-        return {}
+def _zbx_rpc(method: str, params: dict, *, client: ZabbixClient | None = None) -> dict:
+    client = client or _zabbix_client()
+    try:
+        result = client.rpc(method, params)
+    except ZabbixAuthError as err:
+        raise HTTPException(status_code=401, detail=f"Zabbix error: {err}") from err
+    except ZabbixError as err:
+        raise HTTPException(status_code=502, detail=f"Zabbix error: {err}") from err
+    if isinstance(result, (dict, list)):
+        return result  # type: ignore[return-value]
+    return {}
 
 
 def _zbx_expand_groupids(base_group_ids: list[int]) -> list[int]:
@@ -2560,6 +2559,7 @@ def home_aggregate(
 
     # Zabbix: active (problems) and historical (events)
     try:
+        client = _zabbix_client()
         hostids: list[int] = []
         try:
             # Fuzzy host search on both 'name' and 'host', allow partial matches and wildcards
@@ -2573,6 +2573,7 @@ def home_aggregate(
                     "searchWildcardsEnabled": 1,
                     "limit": 200,
                 },
+                client=client,
             )
             for h in (res or []):
                 try:
@@ -2586,6 +2587,7 @@ def home_aggregate(
                     intfs = _zbx_rpc(
                         "hostinterface.get",
                         {"output": ["interfaceid", "hostid", "ip"], "search": {"ip": q.strip()}, "limit": 200},
+                        client=client,
                     )
                     for itf in (intfs or []):
                         try:
@@ -2599,7 +2601,7 @@ def home_aggregate(
         except Exception:
             hostids = []
         zbx = {"active": [], "historical": []}
-        base_web = _zbx_web_base() or ""
+        base_web = client.web_base or _zbx_web_base() or ""
         # Active problems (prefer hostids; fallback to name search)
         p_params = {
             "output": ["eventid", "name", "severity", "clock", "acknowledged", "r_eventid"],
@@ -2613,7 +2615,7 @@ def home_aggregate(
             p_params["searchWildcardsEnabled"] = 1
         # Also request hosts to allow client-side fallback filtering
         p_params["selectHosts"] = ["host", "name", "hostid"]
-        p = _zbx_rpc("problem.get", p_params)
+        p = _zbx_rpc("problem.get", p_params, client=client)
         items = []
         try:
             p = sorted(p or [], key=lambda x: int(x.get("clock") or 0), reverse=True)
@@ -2647,6 +2649,7 @@ def home_aggregate(
                         "sortfield": ["clock"],
                         "sortorder": "DESC",
                     },
+                    client=client,
                 )
                 ql = q.lower().strip()
                 for it in (alt or []):
@@ -2681,7 +2684,7 @@ def home_aggregate(
         else:
             ev_params["search"] = {"name": f"*{q}*"}
             ev_params["searchWildcardsEnabled"] = 1
-        ev = _zbx_rpc("event.get", ev_params)
+        ev = _zbx_rpc("event.get", ev_params, client=client)
         ev_items = []
         try:
             ev = sorted(ev or [], key=lambda x: int(x.get("clock") or 0), reverse=True)

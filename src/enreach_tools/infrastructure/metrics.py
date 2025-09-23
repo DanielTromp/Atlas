@@ -4,9 +4,9 @@ from __future__ import annotations
 import threading
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, Tuple
+from typing import Any
 
-_LabelKey = Tuple[Tuple[str, str], ...]
+_LabelKey = tuple[tuple[str, str], ...]
 
 
 def _freeze_labels(**labels: str) -> _LabelKey:
@@ -15,10 +15,10 @@ def _freeze_labels(**labels: str) -> _LabelKey:
 
 @dataclass
 class CounterMetric:
-    values: Dict[_LabelKey, float]
+    values: dict[_LabelKey, float]
     lock: threading.Lock
 
-    def inc(self, *, labels: Dict[str, str], amount: float = 1.0) -> None:
+    def inc(self, *, labels: dict[str, str], amount: float = 1.0) -> None:
         key = _freeze_labels(**labels)
         with self.lock:
             self.values[key] = self.values.get(key, 0.0) + amount
@@ -26,17 +26,17 @@ class CounterMetric:
 
 @dataclass
 class HistogramMetric:
-    observations: Dict[_LabelKey, list[float]]
+    observations: dict[_LabelKey, list[float]]
     lock: threading.Lock
 
-    def observe(self, *, labels: Dict[str, str], value: float) -> None:
+    def observe(self, *, labels: dict[str, str], value: float) -> None:
         key = _freeze_labels(**labels)
         with self.lock:
             self.observations.setdefault(key, []).append(value)
 
 
-    def summary(self) -> Dict[_LabelKey, Dict[str, float]]:
-        snapshot: Dict[_LabelKey, Dict[str, float]] = {}
+    def summary(self) -> dict[_LabelKey, dict[str, float]]:
+        snapshot: dict[_LabelKey, dict[str, float]] = {}
         with self.lock:
             for key, values in self.observations.items():
                 if not values:
@@ -47,8 +47,8 @@ class HistogramMetric:
 
 class MetricsRegistry:
     def __init__(self) -> None:
-        self.counters: Dict[str, CounterMetric] = {}
-        self.histograms: Dict[str, HistogramMetric] = {}
+        self.counters: dict[str, CounterMetric] = {}
+        self.histograms: dict[str, HistogramMetric] = {}
         self._lock = threading.Lock()
 
     def counter(self, name: str) -> CounterMetric:
@@ -67,7 +67,7 @@ class MetricsRegistry:
                 self.histograms[name] = metric
             return metric
 
-    def snapshot(self) -> Dict[str, Any]:
+    def snapshot(self) -> dict[str, Any]:
         with self._lock:
             counters = {
                 name: [
@@ -111,7 +111,7 @@ def record_http_request(duration_seconds: float, *, method: str, path_template: 
     )
 
 
-def get_metrics_snapshot() -> Dict[str, Any]:
+def get_metrics_snapshot() -> dict[str, Any]:
     return _REGISTRY.snapshot()
 
 
@@ -124,7 +124,7 @@ def reset_metrics() -> None:
     _REGISTRY = MetricsRegistry()
 
 
-def _format_labels(labels: Dict[str, str]) -> str:
+def _format_labels(labels: dict[str, str]) -> str:
     if not labels:
         return ""
     parts: list[str] = []
@@ -134,7 +134,7 @@ def _format_labels(labels: Dict[str, str]) -> str:
     return "{" + ",".join(parts) + "}"
 
 
-def snapshot_to_prometheus(snapshot: Dict[str, Any] | None = None) -> str:
+def snapshot_to_prometheus(snapshot: dict[str, Any] | None = None) -> str:
     data = snapshot or get_metrics_snapshot()
     lines: list[str] = []
 

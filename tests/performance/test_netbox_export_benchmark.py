@@ -1,16 +1,15 @@
 """Performance regression benchmarks for NetBox export flows."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from collections.abc import Iterable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Iterable
 
 import pytest
 
 from enreach_tools.application.exporter.netbox import ExportPaths
 from enreach_tools.application.services.netbox import NetboxExportService
 from enreach_tools.domain.integrations.netbox import NetboxDeviceRecord, NetboxVMRecord
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -43,7 +42,7 @@ class FakeNetboxClient:
 
 
 def _make_device_records(count: int) -> list[NetboxDeviceRecord]:
-    base_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    base_time = datetime(2024, 1, 1, tzinfo=UTC)
     records: list[NetboxDeviceRecord] = []
     for idx in range(count):
         updated = base_time + timedelta(seconds=idx)
@@ -92,7 +91,7 @@ def _make_device_records(count: int) -> list[NetboxDeviceRecord]:
 
 
 def _make_vm_records(count: int) -> list[NetboxVMRecord]:
-    base_time = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    base_time = datetime(2024, 1, 1, tzinfo=UTC)
     records: list[NetboxVMRecord] = []
     for idx in range(count):
         updated = base_time + timedelta(seconds=idx)
