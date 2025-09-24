@@ -6,8 +6,10 @@ import os
 import subprocess
 import sys
 from collections.abc import Iterable
+from contextlib import ExitStack
 from dataclasses import asdict
 from time import monotonic
+from getpass import getuser
 
 import typer
 from rich import print
@@ -45,7 +47,26 @@ def _run_script(relpath: str, *args: str) -> int:
         print(f"[red]Script not found:[/red] {script}")
         return 1
     cmd = [sys.executable, str(script), *args]
-    return subprocess.call(cmd, cwd=root, env=os.environ.copy())
+    args_display = " ".join(args)
+    with logging_context(script=relpath, script_args=args_display or None):
+        logger.info(
+            "Invoking legacy script %s",
+            relpath,
+            extra={
+                "event": "legacy_script_start",
+            },
+        )
+        rc = subprocess.call(cmd, cwd=root, env=os.environ.copy())
+        logger.info(
+            "Legacy script finished %s (rc=%s)",
+            relpath,
+            rc,
+            extra={
+                "event": "legacy_script_complete",
+                "return_code": rc,
+            },
+        )
+    return rc
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -54,10 +75,50 @@ def _env_flag(name: str, default: bool = False) -> bool:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
+
+def _resolve_actor() -> str:
+    candidates = [
+        os.getenv("ENREACH_LOG_ACTOR"),
+        os.getenv("LOGNAME"),
+        os.getenv("USER"),
+        os.getenv("USERNAME"),
+    ]
+    for candidate in candidates:
+        if candidate:
+            return candidate
+    try:
+        return getuser()
+    except Exception:
+        return "unknown"
+
+
 @app.callback()
-def _common(override_env: bool = typer.Option(False, "--override-env", help="Override existing env vars from .env")):
+def _common(
+    ctx: typer.Context,
+    override_env: bool = typer.Option(False, "--override-env", help="Override existing env vars from .env"),
+):
     env_path = load_env(override=override_env)
     print(f"[dim]Using .env: {env_path}[/dim]")
+    command = " ".join(sys.argv[1:]) if len(sys.argv) > 1 else "<root>"
+    actor = _resolve_actor()
+    stack = ExitStack()
+    stack.enter_context(
+        logging_context(
+            actor=actor,
+            raw_command=command,
+            command_path=ctx.command_path or "<root>",
+            cwd=os.getcwd(),
+        )
+    )
+    ctx.call_on_close(stack.close)
+    logger.info(
+        "CLI command invoked: %s",
+        command,
+        extra={
+            "event": "cli_invocation",
+            "invoked_command": ctx.command_path or "enreach",
+        },
+    )
 
 
 export = typer.Typer(help="Export helpers", context_settings=HELP_CTX)
@@ -963,6 +1024,17 @@ def search_run(
     Defaults: unlimited (zlimit/jlimit/climit = 0). Use --json for full details.
     """
     load_env()
+    logger.info(
+        "Search CLI invoked",
+        extra={
+            "query": q,
+            "zlimit": zlimit,
+            "jlimit": jlimit,
+            "climit": climit,
+            "json": json_out,
+            "out": out or None,
+        },
+    )
     from enreach_tools.api.app import home_aggregate as _agg
     res = _agg(q=q, zlimit=zlimit, jlimit=jlimit, climit=climit)
     # Save to file when requested (pretty JSON)

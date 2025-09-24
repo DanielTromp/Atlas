@@ -29,12 +29,16 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         start = time.perf_counter()
         request.state.request_id = request_id  # type: ignore[attr-defined]
         path_template = self._resolve_path_template(request)
+        actor = self._resolve_actor(request)
+        skip_log = self._should_skip_logging(request.url.path)
 
         with logging_context(
             request_id=request_id,
             http_method=request.method,
             http_path=request.url.path,
             path_template=path_template,
+            actor=actor,
+            client_ip=(request.client.host if request.client else None),
         ), span(
             "http.request",
             method=request.method,
@@ -73,15 +77,32 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
                 )
 
             response.headers.setdefault("X-Request-ID", request_id)
-            self._logger.info(
-                "Request completed",
-                extra={
-                    "status_code": status_code,
-                    "duration_ms": int(duration * 1000),
-                    "path_template": path_template,
-                },
-            )
+            if not skip_log:
+                self._logger.info(
+                    "Request completed",
+                    extra={
+                        "event": "request_completed",
+                        "status_code": status_code,
+                        "duration_ms": int(duration * 1000),
+                    },
+                )
             return response
+
+    @staticmethod
+    def _resolve_actor(request: Request) -> str | None:
+        user = getattr(request.state, "user", None)
+        username = getattr(user, "username", None)
+        if isinstance(username, str) and username:
+            return username
+        session = getattr(request, "session", None)
+        if session and hasattr(session, "get"):
+            username = session.get("username")  # type: ignore[arg-type]
+            if isinstance(username, str) and username:
+                return username
+        header_actor = request.headers.get("x-actor")
+        if header_actor:
+            return header_actor.strip() or None
+        return None
 
     @staticmethod
     def _resolve_path_template(request: Request) -> str:
@@ -90,6 +111,11 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             return request.url.path
         template = getattr(route, "path", None) or getattr(route, "path_format", None)
         return template or request.url.path
+
+    @staticmethod
+    def _should_skip_logging(path: str) -> bool:
+        noisy_paths = {"/logs/tail"}
+        return path in noisy_paths
 
 
 __all__ = ["ObservabilityMiddleware"]

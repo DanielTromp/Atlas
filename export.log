@@ -3002,3 +3002,51 @@
 [2025-09-21 15:20:34] Open: https://enreach-services.atlassian.net/wiki/pages/viewpageattachments.action?pageId=981794840&preview=%2F981794840%2F981893145%2Fnetbox_vms_export.csv
 [2025-09-21 15:20:34] Confluence page updated with NetBox VMs table
 [2025-09-21 15:20:34] [exit 0]
+[2025-09-25 00:25:59] $ uv run enreach export update
+[2025-09-25 00:26:01] Using .env: /Users/daniel/Documents/code/enreach-tools/.env
+[2025-09-25 00:26:01] 2025-09-25 00:26:01,046 | INFO | enreach_tools.cli | CLI command invoked: export update actor=daniel raw_command=export update command_path=enreach cwd=/Users/daniel/Documents/code/enreach-tools
+[2025-09-25 00:26:01] 2025-09-25 00:26:01,046 | INFO | enreach_tools.cli | NetBox export command invoked actor=daniel raw_command=export update command_path=enreach cwd=/Users/daniel/Documents/code/enreach-tools command=export.update mode=legacy force=False verbose=False
+[2025-09-25 00:26:01] 2025-09-25 00:26:01,047 | INFO | enreach_tools.cli | Invoking legacy script netbox-export/bin/netbox_update.py actor=daniel raw_command=export update command_path=enreach cwd=/Users/daniel/Documents/code/enreach-tools command=export.update mode=legacy force=False verbose=False script=netbox-export/bin/netbox_update.py
+[2025-09-25 00:26:02] 2025-09-25 00:26:02,221 | INFO | enreach_tools.application.services.netbox | NetBox export started job=netbox.export.update force=False verbose=False
+[2025-09-25 00:26:09] 2025-09-25 00:26:09,298 | INFO | enreach_tools.application.services.netbox | Device diff computed job=netbox.export.update force=False verbose=False
+[2025-09-25 00:26:23] 2025-09-25 00:26:23,981 | INFO | enreach_tools.application.services.netbox | VM diff computed job=netbox.export.update force=False verbose=False
+[2025-09-25 00:26:24] 2025-09-25 00:26:24,004 | INFO | enreach_tools.application.services.netbox | Merging NetBox CSVs job=netbox.export.update force=False verbose=False
+[2025-09-25 00:26:24] 2025-09-25 00:26:24,049 | INFO | enreach_tools.application.services.netbox | NetBox CSV merge completed job=netbox.export.update force=False verbose=False
+[2025-09-25 00:26:24] 2025-09-25 00:26:24,067 | INFO | enreach_tools.application.services.netbox | Creating Excel export job=netbox.export.update force=False verbose=False
+[2025-09-25 00:26:24] 2025-09-25 00:26:24,093 | INFO | enreach_tools.application.services.netbox | Applying column order job=netbox.export.update force=False verbose=False
+[2025-09-25 00:26:26] 2025-09-25 00:26:26,234 | INFO | enreach_tools.application.services.netbox | Excel export completed job=netbox.export.update force=False verbose=False
+[2025-09-25 00:26:26] 2025-09-25 00:26:26,274 | INFO | enreach_tools.application.services.netbox | NetBox export completed job=netbox.export.update force=False verbose=False
+[2025-09-25 00:26:26] [bold]Running NetBox export service...[/bold]
+[2025-09-25 00:26:26] [green]Update complete: devices + vms + merge[/green]
+[2025-09-25 00:26:26] 2025-09-25 00:26:26,452 | INFO | enreach_tools.cli | Legacy script finished netbox-export/bin/netbox_update.py (rc=0) actor=daniel raw_command=export update command_path=enreach cwd=/Users/daniel/Documents/code/enreach-tools command=export.update mode=legacy force=False verbose=False script=netbox-export/bin/netbox_update.py
+[2025-09-25 00:26:26] 2025-09-25 00:26:26,453 | INFO | enreach_tools.cli | Legacy NetBox export completed actor=daniel raw_command=export update command_path=enreach cwd=/Users/daniel/Documents/code/enreach-tools command=export.update mode=legacy force=False verbose=False
+[2025-09-25 00:26:26] 2025-09-25 00:26:26,453 | INFO | enreach_tools.cli | Checking Confluence auto-publish configuration actor=daniel raw_command=export update command_path=enreach cwd=/Users/daniel/Documents/code/enreach-tools command=export.update mode=legacy force=False verbose=False
+[2025-09-25 00:26:26] 2025-09-25 00:26:26,453 | INFO | enreach_tools.cli | Publishing CMDB export to Confluence actor=daniel raw_command=export update command_path=enreach cwd=/Users/daniel/Documents/code/enreach-tools command=export.update mode=legacy force=False verbose=False
+[2025-09-25 00:26:26] 2025-09-25 00:26:26,454 | INFO | enreach_tools.cli | Invoking legacy script netbox-export/bin/confluence_publish_cmdb.py actor=daniel raw_command=export update command_path=enreach cwd=/Users/daniel/Documents/code/enreach-tools command=export.update mode=legacy force=False verbose=False script=netbox-export/bin/confluence_publish_cmdb.py script_args=--page-id 981533033
+[2025-09-25 00:26:27] Publishing CMDB to Confluence...
+[2025-09-25 00:26:28] Uploading: /Users/daniel/Documents/code/enreach-tools/data/Systems CMDB.xlsx -> page 981533033 as Systems CMDB.xlsx
+[2025-09-25 00:26:29] Attachment exists (id att981434769); uploading new version
+[2025-09-25 00:26:30] Attachment upload complete
+[2025-09-25 00:26:30] Name: Systems CMDB.xlsx
+[2025-09-25 00:26:30] Version: 81
+[2025-09-25 00:26:30] Open: https://enreach-services.atlassian.net/wiki/pages/viewpageattachments.action?pageId=981533033&preview=%2F981533033%2F981434769%2FSystems+CMDB.xlsx
+[2025-09-25 00:26:30] 2025-09-25 00:26:30,458 | INFO | enreach_tools.cli | Legacy script finished netbox-export/bin/confluence_publish_cmdb.py (rc=0) actor=daniel raw_command=export update command_path=enreach cwd=/Users/daniel/Documents/code/enreach-tools command=export.update mode=legacy force=False verbose=False script=netbox-export/bin/confluence_publish_cmdb.py script_args=--page-id 981533033
+[2025-09-25 00:26:30] 2025-09-25 00:26:30,459 | INFO | enreach_tools.cli | Invoking legacy script netbox-export/bin/confluence_publish_devices_table.py actor=daniel raw_command=export update command_path=enreach cwd=/Users/daniel/Documents/code/enreach-tools command=export.update mode=legacy force=False verbose=False script=netbox-export/bin/confluence_publish_devices_table.py script_args=--page-id 981533060
+[2025-09-25 00:26:34] Uploading: /Users/daniel/Documents/code/enreach-tools/data/netbox_devices_export.csv -> page 981533060 as netbox_devices_export.csv
+[2025-09-25 00:26:34] Attachment exists (id att981762088); uploading new version
+[2025-09-25 00:26:35] Attachment upload complete
+[2025-09-25 00:26:35] Name: netbox_devices_export.csv
+[2025-09-25 00:26:35] Version: 78
+[2025-09-25 00:26:35] Open: https://enreach-services.atlassian.net/wiki/pages/viewpageattachments.action?pageId=981533060&preview=%2F981533060%2F981762088%2Fnetbox_devices_export.csv
+[2025-09-25 00:26:35] Confluence page updated with NetBox devices table
+[2025-09-25 00:26:35] 2025-09-25 00:26:35,756 | INFO | enreach_tools.cli | Legacy script finished netbox-export/bin/confluence_publish_devices_table.py (rc=0) actor=daniel raw_command=export update command_path=enreach cwd=/Users/daniel/Documents/code/enreach-tools command=export.update mode=legacy force=False verbose=False script=netbox-export/bin/confluence_publish_devices_table.py script_args=--page-id 981533060
+[2025-09-25 00:26:35] 2025-09-25 00:26:35,756 | INFO | enreach_tools.cli | Invoking legacy script netbox-export/bin/confluence_publish_vms_table.py actor=daniel raw_command=export update command_path=enreach cwd=/Users/daniel/Documents/code/enreach-tools command=export.update mode=legacy force=False verbose=False script=netbox-export/bin/confluence_publish_vms_table.py script_args=--page-id 981794840
+[2025-09-25 00:26:39] Uploading: /Users/daniel/Documents/code/enreach-tools/data/netbox_vms_export.csv -> page 981794840 as netbox_vms_export.csv
+[2025-09-25 00:26:39] Attachment exists (id att981893145); uploading new version
+[2025-09-25 00:26:40] Attachment upload complete
+[2025-09-25 00:26:40] Name: netbox_vms_export.csv
+[2025-09-25 00:26:40] Version: 78
+[2025-09-25 00:26:40] Open: https://enreach-services.atlassian.net/wiki/pages/viewpageattachments.action?pageId=981794840&preview=%2F981794840%2F981893145%2Fnetbox_vms_export.csv
+[2025-09-25 00:26:40] Confluence page updated with NetBox VMs table
+[2025-09-25 00:26:40] 2025-09-25 00:26:40,611 | INFO | enreach_tools.cli | Legacy script finished netbox-export/bin/confluence_publish_vms_table.py (rc=0) actor=daniel raw_command=export update command_path=enreach cwd=/Users/daniel/Documents/code/enreach-tools command=export.update mode=legacy force=False verbose=False script=netbox-export/bin/confluence_publish_vms_table.py script_args=--page-id 981794840
+[2025-09-25 00:26:40] [exit 0]

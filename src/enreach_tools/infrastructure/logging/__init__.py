@@ -7,6 +7,9 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, Dict
 
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
+
 _LOGGING_INITIALISED = False
 _LOG_CONTEXT: ContextVar[dict[str, Any]] = ContextVar("enreach_log_context", default={})
 _CONTEXT_FILTER: _ContextFilter | None = None
@@ -18,24 +21,26 @@ def setup_logging(level: str | int | None = None, *, structured: bool | None = N
 
     global _LOGGING_INITIALISED
 
-    if _LOGGING_INITIALISED:
-        return
-
     resolved_level = _resolve_level(level)
     resolved_structured = _resolve_structured(structured)
 
-    logging.basicConfig(
-        level=resolved_level,
-        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s%(log_context)s",
-    )
+    root = logging.getLogger()
 
-    _install_log_record_factory()
-    _install_context_filter()
+    if not _LOGGING_INITIALISED:
+        logging.basicConfig(
+            level=resolved_level,
+            format="%(asctime)s | %(levelname)s | %(name)s | %(message)s%(log_context)s",
+        )
+        _install_log_record_factory()
+        _LOGGING_INITIALISED = True
+
+    root.setLevel(resolved_level)
+
+    _install_context_filter(force=True)
+    _install_file_handler(resolved_level)
 
     if resolved_structured:
         _configure_structlog(resolved_level)
-
-    _LOGGING_INITIALISED = True
 
 
 def _install_log_record_factory() -> None:
@@ -52,15 +57,77 @@ def _install_log_record_factory() -> None:
     logging.setLogRecordFactory(factory)
 
 
-def _install_context_filter() -> None:
+def _install_context_filter(*, force: bool = False) -> None:
     global _CONTEXT_FILTER
-    if _CONTEXT_FILTER is not None:
-        return
-    _CONTEXT_FILTER = _ContextFilter()
+    if _CONTEXT_FILTER is None:
+        _CONTEXT_FILTER = _ContextFilter()
+
     root = logging.getLogger()
-    root.addFilter(_CONTEXT_FILTER)
+    if force or _CONTEXT_FILTER not in getattr(root, "filters", []):
+        root.addFilter(_CONTEXT_FILTER)
+
     for handler in root.handlers:
+        filters = getattr(handler, "filters", [])
+        if force or _CONTEXT_FILTER not in filters:
+            handler.addFilter(_CONTEXT_FILTER)
+
+
+def _install_file_handler(level: int) -> None:
+    root = logging.getLogger()
+    target_path = _resolve_log_path()
+    target_str = str(target_path)
+    existing = [
+        handler
+        for handler in root.handlers
+        if getattr(handler, "baseFilename", None) == target_str
+    ]
+
+    if existing:
+        primary = existing[0]
+        primary.setLevel(level)
+        primary.setFormatter(
+            logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s%(log_context)s")
+        )
+        if _CONTEXT_FILTER is not None and _CONTEXT_FILTER not in getattr(primary, "filters", []):
+            primary.addFilter(_CONTEXT_FILTER)
+        for duplicate in existing[1:]:
+            root.removeHandler(duplicate)
+            try:
+                duplicate.close()
+            except Exception:
+                pass
+        return
+
+    handler = RotatingFileHandler(
+        target_str,
+        maxBytes=_resolve_int_env("ENREACH_LOG_MAX_BYTES", 5 * 1024 * 1024),
+        backupCount=_resolve_int_env("ENREACH_LOG_BACKUP_COUNT", 5),
+    )
+    handler.setLevel(level)
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s%(log_context)s")
+    )
+    if _CONTEXT_FILTER is not None:
         handler.addFilter(_CONTEXT_FILTER)
+
+    root.addHandler(handler)
+
+
+def _resolve_log_path() -> Path:
+    directory = Path(os.getenv("ENREACH_LOG_DIR", "logs")).expanduser()
+    directory.mkdir(parents=True, exist_ok=True)
+    filename = os.getenv("ENREACH_LOG_FILE", "enreach.log").strip() or "enreach.log"
+    return (directory / filename).resolve()
+
+
+def _resolve_int_env(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
 
 
 def _resolve_level(level: str | int | None) -> int:
@@ -112,7 +179,9 @@ def _configure_structlog(level: int) -> None:
 def get_logger(name: str | None = None) -> logging.Logger:
     if not _LOGGING_INITIALISED:
         setup_logging()
-    return logging.getLogger(name or "enreach")
+    logger = logging.getLogger(name or "enreach")
+    logger.disabled = False
+    return logger
 
 
 @contextmanager

@@ -8,10 +8,13 @@ import re
 import secrets
 import shutil
 import sys
+import time
 import uuid
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
+from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 
 import duckdb
@@ -60,7 +63,7 @@ from enreach_tools.infrastructure.external import (
     ZabbixConfigError,
     ZabbixError,
 )
-from enreach_tools.infrastructure.logging import get_logger
+from enreach_tools.infrastructure.logging import get_logger, logging_context, setup_logging
 from enreach_tools.infrastructure.metrics import get_metrics_snapshot, snapshot_to_prometheus
 from enreach_tools.infrastructure.tracing import init_tracing, tracing_enabled
 from enreach_tools.interfaces.api import bootstrap_api
@@ -89,8 +92,90 @@ try:
 except Exception as exc:  # pragma: no cover - surfaces during boot
     logger.exception("Failed to initialise database during API startup", extra={"error": str(exc)})
     raise
+else:
+    # Alembic can override logging handlers; ensure our configuration is still active.
+    setup_logging()
+    logger.disabled = False
 
 SessionLocal = get_sessionmaker()
+
+
+@dataclass(slots=True)
+class ChatProviderResult:
+    text: str
+    usage: dict[str, int] | None = None
+
+
+class _TaskLogger:
+    """Mutable container passed into task_logging for success metadata."""
+
+    __slots__ = ("_success_extra",)
+
+    def __init__(self) -> None:
+        self._success_extra: dict[str, Any] = {}
+
+    def add_success(self, **kwargs: Any) -> None:
+        for key, value in kwargs.items():
+            if value is not None:
+                self._success_extra[key] = value
+
+    @property
+    def success_extra(self) -> dict[str, Any]:
+        return self._success_extra
+
+
+@contextmanager
+def task_logging(task: str, **context: Any):
+    """Log lifecycle events around long-running UI-triggered tasks."""
+
+    start = time.perf_counter()
+    tracker = _TaskLogger()
+    safe_context = {k: v for k, v in context.items() if v not in (None, "")}
+
+    with logging_context(task=task, **safe_context):
+        logger.info("Task started", extra={"event": "task_started"})
+        try:
+            yield tracker
+        except Exception:
+            duration_ms = int((time.perf_counter() - start) * 1000)
+            with logging_context(duration_ms=duration_ms, **tracker.success_extra):
+                logger.exception("Task failed", extra={"event": "task_failed"})
+            raise
+        else:
+            duration_ms = int((time.perf_counter() - start) * 1000)
+            with logging_context(duration_ms=duration_ms, **tracker.success_extra):
+                logger.info("Task completed", extra={"event": "task_completed"})
+
+
+_USAGE_FIELD_ALIASES: dict[str, str] = {
+    "prompt_tokens": "prompt_tokens",
+    "completion_tokens": "completion_tokens",
+    "total_tokens": "total_tokens",
+    "input_tokens": "prompt_tokens",
+    "output_tokens": "completion_tokens",
+    "usage_tokens": "total_tokens",
+    "input_token_count": "prompt_tokens",
+    "output_token_count": "completion_tokens",
+    "total_token_count": "total_tokens",
+    "promptTokenCount": "prompt_tokens",
+    "candidatesTokenCount": "completion_tokens",
+    "totalTokens": "total_tokens",
+}
+
+
+def _normalise_usage(raw: Any) -> dict[str, int] | None:
+    if raw is None:
+        return None
+    usage: dict[str, int] = {}
+    for source, target in _USAGE_FIELD_ALIASES.items():
+        value = None
+        if isinstance(raw, dict):
+            value = raw.get(source)
+        else:
+            value = getattr(raw, source, None)
+        if isinstance(value, (int, float)):
+            usage[target] = int(value)
+    return usage or None
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -1146,12 +1231,29 @@ def admin_env_reset(req: EnvResetRequest):
 
 
 @app.post("/admin/backup-sync")
-def admin_backup_sync():
-    try:
-        result = backup_sync.sync_data_dir(note="manual-ui")
+def admin_backup_sync(user: OptionalUserDep = None):
+    actor = getattr(user, "username", None)
+    with task_logging("admin.backup_sync", actor=actor, trigger="ui") as task_log:
+        try:
+            result = backup_sync.sync_data_dir(note="manual-ui")
+        except Exception as exc:  # pragma: no cover
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        status = (result or {}).get("status")
+        count = (result or {}).get("count")
+        method = (result or {}).get("method")
+        task_log.add_success(status=status, method=method, file_count=count)
+
+        if status and status not in {"ok", "skipped"}:
+            logger.warning(
+                "Backup sync finished with non-OK status",
+                extra={
+                    "event": "task_warning",
+                    "status": status,
+                },
+            )
+
         return result
-    except Exception as exc:  # pragma: no cover
-        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.get("/config/ui")
@@ -1349,12 +1451,28 @@ def _update_session_title_from_message(db: Session, session: ChatSession, messag
         db.commit()
 
 
-def _add_chat_message(db: Session, session: ChatSession, role: str, content: str) -> ChatMessage:
+def _add_chat_message(
+    db: Session,
+    session: ChatSession,
+    role: str,
+    content: str,
+    *,
+    usage: dict[str, int] | None = None,
+) -> ChatMessage:
     """Add a message to a chat session."""
+    if usage:
+        try:
+            import json as _json
+
+            content_with_usage = content.rstrip() + "\n[[TOKENS " + _json.dumps(usage) + "]]"
+        except Exception:
+            content_with_usage = content
+    else:
+        content_with_usage = content
     message = ChatMessage(
         session_id=session.id,
         role=role,
-        content=content,
+        content=content_with_usage,
     )
     db.add(message)
     
@@ -1379,11 +1497,29 @@ def _serialize_chat_session(session: ChatSession) -> dict[str, Any]:
 
 def _serialize_chat_message(message: ChatMessage) -> dict[str, Any]:
     """Serialize chat message for API response."""
-    return {
+    content = message.content or ""
+    usage = None
+    if "[[TOKENS" in content:
+        try:
+            marker_start = content.rfind("[[TOKENS ")
+            marker_end = content.rfind("]]", marker_start)
+            if marker_start >= 0 and marker_end > marker_start:
+                import json as _json
+
+                payload = content[marker_start + len("[[TOKENS "): marker_end]
+                usage = _json.loads(payload)
+                content = content[:marker_start].rstrip()
+        except Exception:
+            usage = None
+
+    data = {
         "role": message.role,
-        "content": message.content,
+        "content": content,
         "created_at": message.created_at.isoformat() + "Z",
     }
+    if usage:
+        data["usage"] = usage
+    return data
 
 
 class ChatRequest(BaseModel):
@@ -1455,7 +1591,12 @@ def _iter_chunks(text: str, size: int = 128):
         yield text[i : i + size]
 
 
-def _call_openai(model: str, messages: list[dict[str, str]], api_key: str, temperature: float = 0.2) -> str:
+def _call_openai(
+    model: str,
+    messages: list[dict[str, str]],
+    api_key: str,
+    temperature: float = 0.2,
+) -> ChatProviderResult:
     # Prefer the official SDK when available for reliability
     if OpenAI is not None:
         client = OpenAI(api_key=api_key)
@@ -1464,27 +1605,29 @@ def _call_openai(model: str, messages: list[dict[str, str]], api_key: str, tempe
             if _responses_supports_temperature(model) and temperature is not None:
                 _kwargs["temperature"] = temperature
             resp = client.responses.create(**_kwargs)
+            usage = _normalise_usage(getattr(resp, "usage", None))
             try:
                 text = getattr(resp, "output_text", None)
                 if text:
-                    return str(text).strip()
+                    return ChatProviderResult(str(text).strip(), usage)
                 # Fallback: collect text parts
                 chunks = []
                 for item in getattr(resp, "output", []) or []:
                     for part in getattr(item, "content", []) or []:
                         if getattr(part, "type", "") == "output_text":
                             chunks.append(getattr(part, "text", ""))
-                return "".join(chunks).strip()
+                return ChatProviderResult("".join(chunks).strip(), usage)
             except Exception:
-                return ""
+                return ChatProviderResult("", usage)
         else:
             resp = client.chat.completions.create(model=model, messages=messages, temperature=temperature)
+            usage = _normalise_usage(getattr(resp, "usage", None))
             try:
                 choice = (resp.choices or [None])[0]
                 msg = getattr(choice, "message", None)
-                return (getattr(msg, "content", "") or "").strip()
+                return ChatProviderResult((getattr(msg, "content", "") or "").strip(), usage)
             except Exception:
-                return ""
+                return ChatProviderResult("", usage)
     # SDK not available — fall back to HTTP
     if _use_openai_responses(model):
         url = "https://api.openai.com/v1/responses"
@@ -1495,9 +1638,10 @@ def _call_openai(model: str, messages: list[dict[str, str]], api_key: str, tempe
         r = requests.post(url, headers=headers, json=payload, timeout=90)
         r.raise_for_status()
         data = r.json()
+        usage = _normalise_usage(data.get("usage"))
         text = (data.get("output_text") or "").strip()
         if text:
-            return text
+            return ChatProviderResult(text, usage)
         try:
             outs = data.get("output", [])
             chunks = []
@@ -1507,10 +1651,10 @@ def _call_openai(model: str, messages: list[dict[str, str]], api_key: str, tempe
                     if isinstance(p, dict) and p.get("type") == "output_text":
                         chunks.append(p.get("text") or "")
             if chunks:
-                return "".join(chunks).strip()
+                return ChatProviderResult("".join(chunks).strip(), usage)
         except Exception:
             pass
-        return ""
+        return ChatProviderResult("", usage)
     else:
         url = "https://api.openai.com/v1/chat/completions"
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
@@ -1522,10 +1666,17 @@ def _call_openai(model: str, messages: list[dict[str, str]], api_key: str, tempe
         r = requests.post(url, headers=headers, json=payload, timeout=60)
         r.raise_for_status()
         data = r.json()
-        return (data.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
+        usage = _normalise_usage(data.get("usage"))
+        text = (data.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
+        return ChatProviderResult(text, usage)
 
 
-def _call_openrouter(model: str, messages: list[dict[str, str]], api_key: str, temperature: float = 0.2) -> str:
+def _call_openrouter(
+    model: str,
+    messages: list[dict[str, str]],
+    api_key: str,
+    temperature: float = 0.2,
+) -> ChatProviderResult:
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -1542,10 +1693,17 @@ def _call_openrouter(model: str, messages: list[dict[str, str]], api_key: str, t
     r = requests.post(url, headers=headers, json=payload, timeout=60)
     r.raise_for_status()
     data = r.json()
-    return (data.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
+    usage = _normalise_usage(data.get("usage"))
+    text = (data.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
+    return ChatProviderResult(text, usage)
 
 
-def _call_claude(model: str, messages: list[dict[str, str]], api_key: str, temperature: float = 0.2) -> str:
+def _call_claude(
+    model: str,
+    messages: list[dict[str, str]],
+    api_key: str,
+    temperature: float = 0.2,
+) -> ChatProviderResult:
     url = "https://api.anthropic.com/v1/messages"
     headers = {
         "x-api-key": api_key,
@@ -1568,17 +1726,23 @@ def _call_claude(model: str, messages: list[dict[str, str]], api_key: str, tempe
     r = requests.post(url, headers=headers, json=payload, timeout=60)
     r.raise_for_status()
     data = r.json()
+    usage = _normalise_usage(data.get("usage"))
     # content is a list of blocks; take first text
     blocks = data.get("content", [])
     if isinstance(blocks, list) and blocks:
         part = blocks[0]
         if isinstance(part, dict) and part.get("type") == "text":
-            return (part.get("text") or "").strip()
+            return ChatProviderResult((part.get("text") or "").strip(), usage)
     # Fallback: try candidates
-    return (data.get("output_text") or "").strip()
+    return ChatProviderResult((data.get("output_text") or "").strip(), usage)
 
 
-def _call_gemini(model: str, messages: list[dict[str, str]], api_key: str, temperature: float = 0.2) -> str:
+def _call_gemini(
+    model: str,
+    messages: list[dict[str, str]],
+    api_key: str,
+    temperature: float = 0.2,
+) -> ChatProviderResult:
     # Convert to Gemini content format
     def to_parts(msgs: list[dict[str, str]]):
         parts = []
@@ -1605,10 +1769,12 @@ def _call_gemini(model: str, messages: list[dict[str, str]], api_key: str, tempe
     r = requests.post(base, json=payload, timeout=60)
     r.raise_for_status()
     data = r.json()
+    usage_meta = data.get("usageMetadata")
     try:
-        return (data["candidates"][0]["content"]["parts"][0]["text"] or "").strip()
+        text = (data["candidates"][0]["content"]["parts"][0]["text"] or "").strip()
+        return ChatProviderResult(text, _normalise_usage(usage_meta))
     except Exception:
-        return (data.get("text") or "").strip()
+        return ChatProviderResult((data.get("text") or "").strip(), _normalise_usage(usage_meta))
 
 
 def _csv_for_dataset(dataset: str) -> Path | None:
@@ -1909,33 +2075,66 @@ def chat_complete(
 
     temperature = req.temperature if req.temperature is not None else _chat_default_temperature()
 
-    try:
-        if pid == "openai":
-            text = _call_openai(model, clipped, api_key, temperature=temperature)
-        elif pid == "openrouter":
-            text = _call_openrouter(model, clipped, api_key, temperature=temperature)
-        elif pid == "claude":
-            text = _call_claude(model, clipped, api_key, temperature=temperature)
-        elif pid == "gemini":
-            text = _call_gemini(model, clipped, api_key, temperature=temperature)
-        else:
-            raise ValueError(f"Unsupported provider: {pid}")
-    except requests.HTTPError as ex:
-        # Add error message to database
-        err = f"Provider error: {ex.response.status_code if ex.response else ''} {ex!s}"
-        _add_chat_message(db, session, "assistant", err)
-        return {"session_id": req.session_id, "provider": pid, "model": model, "reply": err}
-    except Exception as ex:
-        err = f"Error: {ex}"
-        _add_chat_message(db, session, "assistant", err)
-        return {"session_id": req.session_id, "provider": pid, "model": model, "reply": err}
+    actor = getattr(user, "username", None)
+    with task_logging(
+        "chat.complete",
+        actor=actor,
+        provider=pid,
+        model=model,
+        session_id=req.session_id,
+    ) as task_log:
+        try:
+            if pid == "openai":
+                result = _call_openai(model, clipped, api_key, temperature=temperature)
+            elif pid == "openrouter":
+                result = _call_openrouter(model, clipped, api_key, temperature=temperature)
+            elif pid == "claude":
+                result = _call_claude(model, clipped, api_key, temperature=temperature)
+            elif pid == "gemini":
+                result = _call_gemini(model, clipped, api_key, temperature=temperature)
+            else:
+                raise ValueError(f"Unsupported provider: {pid}")
+        except requests.HTTPError as ex:
+            status_code = ex.response.status_code if ex.response else None
+            err = f"Provider error: {status_code if status_code is not None else ''} {ex!s}"
+            _add_chat_message(db, session, "assistant", err)
+            task_log.add_success(status="provider_error", status_code=status_code)
+            return {"session_id": req.session_id, "provider": pid, "model": model, "reply": err}
+        except Exception as ex:
+            err = f"Error: {ex}"
+            _add_chat_message(db, session, "assistant", err)
+            task_log.add_success(status="error")
+            return {"session_id": req.session_id, "provider": pid, "model": model, "reply": err}
 
-    # Add assistant reply to database
-    _add_chat_message(db, session, "assistant", text)
-    return {"session_id": req.session_id, "provider": pid, "model": model, "reply": text}
+        # Add assistant reply to database
+        _add_chat_message(db, session, "assistant", result.text, usage=result.usage)
+
+        if result.usage:
+            task_log.add_success(
+                prompt_tokens=result.usage.get("prompt_tokens"),
+                completion_tokens=result.usage.get("completion_tokens"),
+                total_tokens=result.usage.get("total_tokens"),
+            )
+        task_log.add_success(reply_chars=len(result.text))
+
+        response: dict[str, Any] = {
+            "session_id": req.session_id,
+            "provider": pid,
+            "model": model,
+            "reply": result.text,
+        }
+        if result.usage:
+            response["usage"] = result.usage
+        return response
 
 
-def _stream_openai_text(model: str, messages: list[dict[str, str]], api_key: str, temperature: float = 0.2):
+def _stream_openai_text(
+    model: str,
+    messages: list[dict[str, str]],
+    api_key: str,
+    temperature: float = 0.2,
+    usage_target: list[dict[str, int]] | None = None,
+):
     # Prefer SDK streaming
     if OpenAI is not None:
         client = OpenAI(api_key=api_key)
@@ -1954,10 +2153,20 @@ def _stream_openai_text(model: str, messages: list[dict[str, str]], api_key: str
                                 delta = getattr(event, "delta", "")
                                 if delta:
                                     yield delta
+                            if usage_target is not None:
+                                usage = _normalise_usage(getattr(event, "usage", None))
+                                if usage:
+                                    usage_target.clear()
+                                    usage_target.append(usage)
                         except Exception:
                             continue
-                    _ = stream.get_final_response()
-                return
+                    final_response = stream.get_final_response()
+                    if usage_target is not None:
+                        usage = _normalise_usage(getattr(final_response, "usage", None))
+                        if usage:
+                            usage_target.clear()
+                            usage_target.append(usage)
+                    return
             except Exception:
                 # bubble up to caller; do not fall back to raw HTTP when SDK is present
                 raise
@@ -1976,6 +2185,11 @@ def _stream_openai_text(model: str, messages: list[dict[str, str]], api_key: str
                             txt = getattr(delta.delta, "content", None)
                             if txt:
                                 yield txt
+                        if usage_target is not None:
+                            usage = _normalise_usage(getattr(chunk, "usage", None))
+                            if usage:
+                                usage_target.clear()
+                                usage_target.append(usage)
                     except Exception:
                         continue
                 return
@@ -2018,6 +2232,11 @@ def _stream_openai_text(model: str, messages: list[dict[str, str]], api_key: str
                         delta = obj.get("delta") or ""
                         if delta:
                             yield delta
+                    if usage_target is not None:
+                        usage = _normalise_usage(obj.get("usage"))
+                        if usage:
+                            usage_target.clear()
+                            usage_target.append(usage)
                 except Exception:
                     continue
     else:
@@ -2054,11 +2273,22 @@ def _stream_openai_text(model: str, messages: list[dict[str, str]], api_key: str
                     delta = obj.get("choices", [{}])[0].get("delta", {}).get("content")
                     if delta:
                         yield delta
+                    if usage_target is not None:
+                        usage = _normalise_usage(obj.get("usage"))
+                        if usage:
+                            usage_target.clear()
+                            usage_target.append(usage)
                 except Exception:
                     continue
 
 
-def _stream_openrouter_text(model: str, messages: list[dict[str, str]], api_key: str, temperature: float = 0.2):
+def _stream_openrouter_text(
+    model: str,
+    messages: list[dict[str, str]],
+    api_key: str,
+    temperature: float = 0.2,
+    usage_target: list[dict[str, int]] | None = None,
+):
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -2095,6 +2325,11 @@ def _stream_openrouter_text(model: str, messages: list[dict[str, str]], api_key:
                 delta = obj.get("choices", [{}])[0].get("delta", {}).get("content")
                 if delta:
                     yield delta
+                if usage_target is not None:
+                    usage = _normalise_usage(obj.get("usage"))
+                    if usage:
+                        usage_target.clear()
+                        usage_target.append(usage)
             except Exception:
                 continue
 
@@ -2150,18 +2385,36 @@ def chat_stream(
     clipped = _messages_for_provider(history)
     temperature = req.temperature if req.temperature is not None else _chat_default_temperature()
 
+    actor = getattr(user, "username", None)
+
     def generator():
-        full_text = []
-        try:
+        usage: dict[str, int] | None = None
+        full_text: list[str] = []
+        with task_logging(
+            "chat.stream",
+            actor=actor,
+            provider=pid,
+            model=model,
+            session_id=req.session_id,
+        ) as task_log:
             if pid == "openai":
+                usage_holder: list[dict[str, int]] = []
                 try:
-                    for chunk in _stream_openai_text(model, clipped, api_key, temperature=temperature):
+                    for chunk in _stream_openai_text(
+                        model,
+                        clipped,
+                        api_key,
+                        temperature=temperature,
+                        usage_target=usage_holder,
+                    ):
                         full_text.append(chunk)
                         yield chunk
                 except Exception as ex:  # smart fallback when streaming is not allowed
                     if _is_openai_streaming_unsupported(ex):
                         try:
-                            text = _call_openai(model, clipped, api_key, temperature=temperature)
+                            call_result = _call_openai(model, clipped, api_key, temperature=temperature)
+                            usage = call_result.usage
+                            text = call_result.text
                         except Exception as ex2:
                             text = f"[error] {getattr(getattr(ex2, 'response', None), 'status_code', '')} {ex2}"
                         for part in _iter_chunks(text or ""):
@@ -2171,30 +2424,55 @@ def chat_stream(
                         msg = f"\n[error] {getattr(getattr(ex, 'response', None), 'status_code', '')} {ex}"
                         full_text.append(msg)
                         yield msg
+                else:
+                    if usage_holder:
+                        usage = usage_holder[0]
             elif pid == "openrouter":
+                usage_holder = []
                 try:
-                    for chunk in _stream_openrouter_text(model, clipped, api_key, temperature=temperature):
+                    for chunk in _stream_openrouter_text(
+                        model,
+                        clipped,
+                        api_key,
+                        temperature=temperature,
+                        usage_target=usage_holder,
+                    ):
                         full_text.append(chunk)
                         yield chunk
                 except Exception as ex:
                     msg = f"\n[error] {getattr(getattr(ex, 'response', None), 'status_code', '')} {ex}"
                     full_text.append(msg)
                     yield msg
+                else:
+                    if usage_holder:
+                        usage = usage_holder[0]
             else:
                 if pid == "claude":
-                    text = _call_claude(model, clipped, api_key, temperature=temperature)
+                    call_result = _call_claude(model, clipped, api_key, temperature=temperature)
                 elif pid == "gemini":
-                    text = _call_gemini(model, clipped, api_key, temperature=temperature)
+                    call_result = _call_gemini(model, clipped, api_key, temperature=temperature)
                 else:
-                    text = ""
+                    call_result = ChatProviderResult("", None)
+                usage = call_result.usage
+                text = call_result.text
                 for i in range(0, len(text), 64):
                     part = text[i : i + 64]
                     full_text.append(part)
                     yield part
-        finally:
-            # Add assistant response to database
+
             out = "".join(full_text).strip()
-            _add_chat_message(db, session, "assistant", out)
+            _add_chat_message(db, session, "assistant", out, usage=usage)
+            task_log.add_success(reply_chars=len(out))
+            if usage:
+                task_log.add_success(
+                    prompt_tokens=usage.get("prompt_tokens"),
+                    completion_tokens=usage.get("completion_tokens"),
+                    total_tokens=usage.get("total_tokens"),
+                )
+                import json as _json
+
+                usage_payload = _json.dumps(usage)
+                yield f"\n[[TOKENS {usage_payload}]]"
 
     return StreamingResponse(generator(), media_type="text/plain; charset=utf-8")
 
@@ -2484,6 +2762,7 @@ def logs_tail(n: int = Query(200, ge=1, le=5000)) -> dict:
 @app.get("/export/stream")
 async def export_stream(
     dataset: Literal["devices", "vms", "all"] = "devices",
+    user: OptionalUserDep = None,
 ):
     """
     Stream the output of an export run for the given dataset.
@@ -2503,33 +2782,52 @@ async def export_stream(
         # Fallback to Python module invocation if uv isn't available
         cmd = [sys.executable, "-m", "enreach_tools.cli", *sub]
 
+    command_str = " ".join(cmd)
+    actor = getattr(user, "username", None)
+
     async def runner():
-        start_cmd = f"$ {' '.join(cmd)}"
-        yield start_cmd + "\n"
-        _write_log(start_cmd)
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            cwd=str(project_root()),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        try:
-            assert proc.stdout is not None
-            while True:
-                line = await proc.stdout.readline()
-                if not line:
-                    break
-                try:
-                    txt = line.decode(errors="ignore")
-                except Exception:
-                    txt = str(line)
-                yield txt
-                _write_log(txt)
-        finally:
-            rc = await proc.wait()
-            exit_line = f"[exit {rc}]"
-            yield f"\n{exit_line}\n"
-            _write_log(exit_line)
+        with task_logging(
+            "export.stream",
+            dataset=dataset,
+            command=command_str,
+            actor=actor,
+        ) as task_log:
+            start_cmd = f"$ {command_str}"
+            yield start_cmd + "\n"
+            _write_log(start_cmd)
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                cwd=str(project_root()),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                assert proc.stdout is not None
+                while True:
+                    line = await proc.stdout.readline()
+                    if not line:
+                        break
+                    try:
+                        txt = line.decode(errors="ignore")
+                    except Exception:
+                        txt = str(line)
+                    yield txt
+                    _write_log(txt)
+            finally:
+                rc = await proc.wait()
+                exit_line = f"[exit {rc}]"
+                yield f"\n{exit_line}\n"
+                _write_log(exit_line)
+                task_log.add_success(return_code=rc)
+                if rc != 0:
+                    logger.warning(
+                        "Export stream finished with non-zero exit code",
+                        extra={
+                            "event": "task_warning",
+                            "return_code": rc,
+                            "dataset": dataset,
+                        },
+                    )
 
     return StreamingResponse(runner(), media_type="text/plain")
 

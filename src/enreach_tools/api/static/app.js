@@ -3369,7 +3369,27 @@
       if ($chatModel && !$chatModel.value && cfg && cfg.default_model) $chatModel.value = cfg.default_model;
     } catch {}
   }
-  function appendChat(role, text) {
+  function formatTokenSummary(usage) {
+    if (!usage || typeof usage !== 'object') return '';
+    const parts = [];
+    const prompt = usage.prompt_tokens ?? usage.promptTokens;
+    const completion = usage.completion_tokens ?? usage.completionTokens;
+    const total = usage.total_tokens ?? usage.totalTokens;
+    const toNumber = (value) => {
+      const num = Number(value);
+      return Number.isFinite(num) ? num : null;
+    };
+    const promptNum = toNumber(prompt);
+    const completionNum = toNumber(completion);
+    const totalNum = toNumber(total);
+    if (promptNum !== null) parts.push(`prompt: ${promptNum}`);
+    if (completionNum !== null) parts.push(`completion: ${completionNum}`);
+    if (totalNum !== null) parts.push(`total: ${totalNum}`);
+    if (!parts.length) return '';
+    return `Tokens — ${parts.join(', ')}`;
+  }
+
+  function appendChat(role, text, meta = null) {
     if (!$chatMessages) return;
     
     // Hide empty state if present
@@ -3397,6 +3417,16 @@
     
     messageDiv.appendChild(bubble);
     messageDiv.appendChild(time);
+
+    if (role === 'assistant') {
+      const usageText = meta && meta.prompt_tokens !== undefined ? formatTokenSummary(meta) : formatTokenSummary(meta?.usage ?? meta);
+      if (usageText) {
+        const metaDiv = document.createElement('div');
+        metaDiv.className = 'chat-message-meta';
+        metaDiv.textContent = usageText;
+        messageDiv.appendChild(metaDiv);
+      }
+    }
     
     $chatMessages.appendChild(messageDiv);
     $chatMessages.scrollTop = $chatMessages.scrollHeight;
@@ -3412,7 +3442,7 @@
       const msgs = Array.isArray(data?.messages) ? data.messages : [];
       clearChatLog();
       for (const m of msgs) {
-        if (m && typeof m.content === 'string' && typeof m.role === 'string') appendChat(m.role, m.content);
+        if (m && typeof m.content === 'string' && typeof m.role === 'string') appendChat(m.role, m.content, m.usage || null);
       }
     } catch (err) {
       console.error('Failed to load chat history', err);
@@ -3691,7 +3721,7 @@
         if (!res2.ok) {
           appendChat('assistant', data2?.detail || `Error: ${res2.status} ${res2.statusText}`);
         } else {
-          appendChat('assistant', data2?.reply || '(empty response)');
+          appendChat('assistant', data2?.reply || '(empty response)', data2?.usage || null);
         }
         await fetchChatSessions();
         return;
@@ -3715,18 +3745,29 @@
       const td = new TextDecoder();
       let gotAny = false;
       let fullText = '';
+      let usageMeta = null;
+      let metaDiv = null;
       
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         const text = td.decode(value, { stream: true });
-        if (text) {
-          gotAny = true;
-          fullText += text;
-          // Update the bubble with markdown-rendered content
-          bubble.innerHTML = parseMarkdown(fullText);
-          $chatMessages?.scrollTo(0, $chatMessages.scrollHeight);
+        if (!text) continue;
+        gotAny = true;
+        fullText += text;
+
+        const match = fullText.match(/\[\[TOKENS (\{.*?\})\]\]/);
+        if (match) {
+          try {
+            usageMeta = JSON.parse(match[1]);
+          } catch (_) {
+            usageMeta = null;
+          }
+          fullText = fullText.replace(match[0], '').trimEnd();
         }
+
+        bubble.innerHTML = parseMarkdown(fullText);
+        $chatMessages?.scrollTo(0, $chatMessages.scrollHeight);
       }
       // No chunks? Fallback to complete
       if (!gotAny) {
@@ -3740,7 +3781,22 @@
           bubble.innerHTML = parseMarkdown(data3?.detail || `Error: ${res3.status} ${res3.statusText}`);
         } else {
           bubble.innerHTML = parseMarkdown(data3?.reply || '');
+          const usageText = formatTokenSummary(data3?.usage);
+          if (usageText && messageDiv) {
+            const metaDiv = document.createElement('div');
+            metaDiv.className = 'chat-message-meta';
+            metaDiv.textContent = usageText;
+            messageDiv.appendChild(metaDiv);
+          }
         }
+      }
+      if (usageMeta) {
+        if (!metaDiv) {
+          metaDiv = document.createElement('div');
+          metaDiv.className = 'chat-message-meta';
+          messageDiv.appendChild(metaDiv);
+        }
+        metaDiv.textContent = formatTokenSummary(usageMeta);
       }
       await fetchChatSessions();
     } catch (e) {
