@@ -10,11 +10,12 @@ import shutil
 import sys
 import time
 import uuid
+from collections.abc import Mapping
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Lock
-from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 
 import duckdb
@@ -40,6 +41,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from enreach_tools import backup_sync
+from enreach_tools.application.chat_agents import AgentRuntime, AgentRuntimeError
 from enreach_tools.application.dto import (
     AdminEnvResponseDTO,
     BackupInfoDTO,
@@ -73,6 +75,8 @@ from enreach_tools.interfaces.api.dependencies import (
     OptionalUserDep,
 )
 from enreach_tools.interfaces.api.middleware import ObservabilityMiddleware
+from enreach_tools.interfaces.api.routes import tools as tools_router
+from enreach_tools.interfaces.api.schemas import ToolDefinition
 
 try:
     from openai import OpenAI  # type: ignore
@@ -104,6 +108,7 @@ SessionLocal = get_sessionmaker()
 class ChatProviderResult:
     text: str
     usage: dict[str, int] | None = None
+    metadata: dict[str, Any] | None = None
 
 
 class _TaskLogger:
@@ -173,7 +178,7 @@ def _normalise_usage(raw: Any) -> dict[str, int] | None:
             value = raw.get(source)
         else:
             value = getattr(raw, source, None)
-        if isinstance(value, (int, float)):
+        if isinstance(value, int | float):
             usage[target] = int(value)
     return usage or None
 
@@ -319,6 +324,13 @@ app.add_middleware(
 
 app.include_router(bootstrap_api())
 
+# Include monitoring routes
+try:
+    from enreach_tools.interfaces.api.routes.monitoring import router as monitoring_router
+    app.include_router(monitoring_router)
+except ImportError:
+    logger.warning("Monitoring routes not available - optional dependencies missing")
+
 
 def _require_metrics_token(request: Request) -> None:
     if not METRICS_TOKEN:
@@ -332,6 +344,7 @@ def _require_metrics_token(request: Request) -> None:
 
 
 if METRICS_ENABLED:
+
     @app.get("/metrics", response_class=PlainTextResponse)
     def metrics_endpoint(request: Request) -> PlainTextResponse:
         _require_metrics_token(request)
@@ -363,6 +376,7 @@ UI_PASSWORD = os.getenv("ENREACH_UI_PASSWORD", "").strip()  # legacy fallback
 UI_SECRET = os.getenv("ENREACH_UI_SECRET", "").strip() or secrets.token_hex(32)
 SESSION_COOKIE_NAME = "enreach_ui"
 SESSION_USER_KEY = "user_id"
+
 
 class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -450,7 +464,7 @@ app.add_middleware(
 
 
 def _login_html(next_url: str, error: str | None = None) -> HTMLResponse:
-    err_html = f"<div class=\"error\">{error}</div>" if error else ""
+    err_html = f'<div class="error">{error}</div>' if error else ""
     logo_svg = ""
     try:
         raw_logo = (Path(__file__).parent / "static" / "enreach.svg").read_text(encoding="utf-8")
@@ -461,7 +475,7 @@ def _login_html(next_url: str, error: str | None = None) -> HTMLResponse:
             logo_svg = raw_logo
     except OSError:
         logo_svg = ""
-    logo_html = logo_svg or "<span class=\"brand-logo__fallback\">Enreach</span>"
+    logo_html = logo_svg or '<span class="brand-logo__fallback">Enreach</span>'
     return HTMLResponse(
         f"""
         <!doctype html>
@@ -520,8 +534,8 @@ def _login_html(next_url: str, error: str | None = None) -> HTMLResponse:
 
 
 @app.get("/auth/login")
-def auth_login_form(request: Request, next: str | None = None):
-    n = next or "/app/"
+def auth_login_form(request: Request, next_url: str | None = None):
+    n = next_url or "/app/"
     # If already logged in, hop to target
     if _has_ui_session(request):
         return RedirectResponse(url=n)
@@ -568,24 +582,7 @@ def auth_logout(request: Request):
     return RedirectResponse(url="/auth/login")
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 @app.get("/admin/users")
-
-
 def _data_dir() -> Path:
     root = project_root()
     raw = os.getenv("NETBOX_DATA_DIR", "data")
@@ -596,6 +593,7 @@ def _data_dir() -> Path:
 
 def _csv_path(name: str) -> Path:
     return _data_dir() / name
+
 
 # Simple export log file (appends)
 LOG_PATH = project_root() / "export.log"
@@ -624,65 +622,318 @@ _suggestions_lock = Lock()
 
 ENV_SETTING_FIELDS: list[dict[str, Any]] = [
     # Zabbix
-    {"key": "ZABBIX_API_URL", "label": "Zabbix API URL", "secret": False, "placeholder": "https://zabbix.example.com/api_jsonrpc.php", "category": "zabbix"},
-    {"key": "ZABBIX_HOST", "label": "Zabbix Host", "secret": False, "placeholder": "https://zabbix.example.com", "category": "zabbix"},
-    {"key": "ZABBIX_WEB_URL", "label": "Zabbix Web URL", "secret": False, "placeholder": "https://zabbix.example.com", "category": "zabbix"},
-    {"key": "ZABBIX_API_TOKEN", "label": "Zabbix API Token", "secret": True, "placeholder": "paste-token-here", "category": "zabbix"},
-    {"key": "ZABBIX_SEVERITIES", "label": "Zabbix Severities", "secret": False, "placeholder": "2,3,4", "category": "zabbix"},
-    {"key": "ZABBIX_GROUP_ID", "label": "Zabbix Group ID", "secret": False, "placeholder": "optional", "category": "zabbix"},
-
+    {
+        "key": "ZABBIX_API_URL",
+        "label": "Zabbix API URL",
+        "secret": False,
+        "placeholder": "https://zabbix.example.com/api_jsonrpc.php",
+        "category": "zabbix",
+    },
+    {
+        "key": "ZABBIX_HOST",
+        "label": "Zabbix Host",
+        "secret": False,
+        "placeholder": "https://zabbix.example.com",
+        "category": "zabbix",
+    },
+    {
+        "key": "ZABBIX_WEB_URL",
+        "label": "Zabbix Web URL",
+        "secret": False,
+        "placeholder": "https://zabbix.example.com",
+        "category": "zabbix",
+    },
+    {
+        "key": "ZABBIX_API_TOKEN",
+        "label": "Zabbix API Token",
+        "secret": True,
+        "placeholder": "paste-token-here",
+        "category": "zabbix",
+    },
+    {
+        "key": "ZABBIX_SEVERITIES",
+        "label": "Zabbix Severities",
+        "secret": False,
+        "placeholder": "2,3,4",
+        "category": "zabbix",
+    },
+    {
+        "key": "ZABBIX_GROUP_ID",
+        "label": "Zabbix Group ID",
+        "secret": False,
+        "placeholder": "optional",
+        "category": "zabbix",
+    },
     # NetBox & Atlassian
-    {"key": "NETBOX_URL", "label": "NetBox URL", "secret": False, "placeholder": "https://netbox.example.com", "category": "net-atlassian"},
-    {"key": "NETBOX_TOKEN", "label": "NetBox API Token", "secret": True, "placeholder": "paste-token-here", "category": "net-atlassian"},
-    {"key": "NETBOX_DEBUG", "label": "NetBox Debug Logging", "secret": False, "placeholder": "0", "category": "net-atlassian"},
-    {"key": "NETBOX_EXTRA_HEADERS", "label": "NetBox Extra Headers", "secret": False, "placeholder": "Key=Value;Other=Value", "category": "net-atlassian"},
-    {"key": "NETBOX_DATA_DIR", "label": "NetBox Data Directory", "secret": False, "placeholder": "data", "category": "net-atlassian"},
-    {"key": "ATLASSIAN_BASE_URL", "label": "Atlassian Base URL", "secret": False, "placeholder": "https://your-domain.atlassian.net", "category": "net-atlassian"},
-    {"key": "ATLASSIAN_EMAIL", "label": "Atlassian Email", "secret": False, "placeholder": "user@example.com", "category": "net-atlassian"},
-    {"key": "ATLASSIAN_API_TOKEN", "label": "Atlassian API Token", "secret": True, "placeholder": "paste-token-here", "category": "net-atlassian"},
-    {"key": "CONFLUENCE_CMDB_PAGE_ID", "label": "Confluence CMDB Page ID", "secret": False, "placeholder": "981533033", "category": "net-atlassian"},
-    {"key": "CONFLUENCE_DEVICES_PAGE_ID", "label": "Confluence Devices Page ID", "secret": False, "placeholder": "optional", "category": "net-atlassian"},
-    {"key": "CONFLUENCE_VMS_PAGE_ID", "label": "Confluence VMs Page ID", "secret": False, "placeholder": "optional", "category": "net-atlassian"},
-    {"key": "CONFLUENCE_ENABLE_TABLE_FILTER", "label": "Enable Table Filter Macro", "secret": False, "placeholder": "0 or 1", "category": "net-atlassian"},
-    {"key": "CONFLUENCE_ENABLE_TABLE_SORT", "label": "Enable Table Sort Macro", "secret": False, "placeholder": "0 or 1", "category": "net-atlassian"},
-
+    {
+        "key": "NETBOX_URL",
+        "label": "NetBox URL",
+        "secret": False,
+        "placeholder": "https://netbox.example.com",
+        "category": "net-atlassian",
+    },
+    {
+        "key": "NETBOX_TOKEN",
+        "label": "NetBox API Token",
+        "secret": True,
+        "placeholder": "paste-token-here",
+        "category": "net-atlassian",
+    },
+    {
+        "key": "NETBOX_DEBUG",
+        "label": "NetBox Debug Logging",
+        "secret": False,
+        "placeholder": "0",
+        "category": "net-atlassian",
+    },
+    {
+        "key": "NETBOX_EXTRA_HEADERS",
+        "label": "NetBox Extra Headers",
+        "secret": False,
+        "placeholder": "Key=Value;Other=Value",
+        "category": "net-atlassian",
+    },
+    {
+        "key": "NETBOX_DATA_DIR",
+        "label": "NetBox Data Directory",
+        "secret": False,
+        "placeholder": "data",
+        "category": "net-atlassian",
+    },
+    {
+        "key": "ATLASSIAN_BASE_URL",
+        "label": "Atlassian Base URL",
+        "secret": False,
+        "placeholder": "https://your-domain.atlassian.net",
+        "category": "net-atlassian",
+    },
+    {
+        "key": "ATLASSIAN_EMAIL",
+        "label": "Atlassian Email",
+        "secret": False,
+        "placeholder": "user@example.com",
+        "category": "net-atlassian",
+    },
+    {
+        "key": "ATLASSIAN_API_TOKEN",
+        "label": "Atlassian API Token",
+        "secret": True,
+        "placeholder": "paste-token-here",
+        "category": "net-atlassian",
+    },
+    {
+        "key": "CONFLUENCE_CMDB_PAGE_ID",
+        "label": "Confluence CMDB Page ID",
+        "secret": False,
+        "placeholder": "981533033",
+        "category": "net-atlassian",
+    },
+    {
+        "key": "CONFLUENCE_DEVICES_PAGE_ID",
+        "label": "Confluence Devices Page ID",
+        "secret": False,
+        "placeholder": "optional",
+        "category": "net-atlassian",
+    },
+    {
+        "key": "CONFLUENCE_VMS_PAGE_ID",
+        "label": "Confluence VMs Page ID",
+        "secret": False,
+        "placeholder": "optional",
+        "category": "net-atlassian",
+    },
+    {
+        "key": "CONFLUENCE_ENABLE_TABLE_FILTER",
+        "label": "Enable Table Filter Macro",
+        "secret": False,
+        "placeholder": "0 or 1",
+        "category": "net-atlassian",
+    },
+    {
+        "key": "CONFLUENCE_ENABLE_TABLE_SORT",
+        "label": "Enable Table Sort Macro",
+        "secret": False,
+        "placeholder": "0 or 1",
+        "category": "net-atlassian",
+    },
     # Chat providers
     {"key": "OPENAI_API_KEY", "label": "OpenAI API Key", "secret": True, "placeholder": "sk-...", "category": "chat"},
-    {"key": "CHAT_DEFAULT_MODEL_OPENAI", "label": "OpenAI Default Model", "secret": False, "placeholder": "gpt-4o-mini", "category": "chat"},
-    {"key": "OPENROUTER_API_KEY", "label": "OpenRouter API Key", "secret": True, "placeholder": "or-...", "category": "chat"},
-    {"key": "CHAT_DEFAULT_MODEL_OPENROUTER", "label": "OpenRouter Default Model", "secret": False, "placeholder": "openrouter/auto", "category": "chat"},
-    {"key": "ANTHROPIC_API_KEY", "label": "Anthropic API Key", "secret": True, "placeholder": "api-key", "category": "chat"},
-    {"key": "CHAT_DEFAULT_MODEL_CLAUDE", "label": "Anthropic Default Model", "secret": False, "placeholder": "claude-3-5-sonnet", "category": "chat"},
-    {"key": "GOOGLE_API_KEY", "label": "Google (Gemini) API Key", "secret": True, "placeholder": "AIza...", "category": "chat"},
-    {"key": "CHAT_DEFAULT_MODEL_GEMINI", "label": "Gemini Default Model", "secret": False, "placeholder": "gemini-1.5-flash", "category": "chat"},
-    {"key": "CHAT_DEFAULT_PROVIDER", "label": "Default Chat Provider", "secret": False, "placeholder": "openai", "category": "chat"},
-    {"key": "CHAT_DEFAULT_TEMPERATURE", "label": "Default Temperature", "secret": False, "placeholder": "0.2", "category": "chat"},
-    {"key": "CHAT_SYSTEM_PROMPT", "label": "System Instructions", "secret": False, "placeholder": "Optional system prompt", "category": "chat"},
-
+    {
+        "key": "CHAT_DEFAULT_MODEL_OPENAI",
+        "label": "OpenAI Default Model",
+        "secret": False,
+        "placeholder": "gpt-4o-mini",
+        "category": "chat",
+    },
+    {
+        "key": "OPENROUTER_API_KEY",
+        "label": "OpenRouter API Key",
+        "secret": True,
+        "placeholder": "or-...",
+        "category": "chat",
+    },
+    {
+        "key": "CHAT_DEFAULT_MODEL_OPENROUTER",
+        "label": "OpenRouter Default Model",
+        "secret": False,
+        "placeholder": "openrouter/auto",
+        "category": "chat",
+    },
+    {
+        "key": "ANTHROPIC_API_KEY",
+        "label": "Anthropic API Key",
+        "secret": True,
+        "placeholder": "api-key",
+        "category": "chat",
+    },
+    {
+        "key": "CHAT_DEFAULT_MODEL_CLAUDE",
+        "label": "Anthropic Default Model",
+        "secret": False,
+        "placeholder": "claude-3-5-sonnet",
+        "category": "chat",
+    },
+    {
+        "key": "GOOGLE_API_KEY",
+        "label": "Google (Gemini) API Key",
+        "secret": True,
+        "placeholder": "AIza...",
+        "category": "chat",
+    },
+    {
+        "key": "CHAT_DEFAULT_MODEL_GEMINI",
+        "label": "Gemini Default Model",
+        "secret": False,
+        "placeholder": "gemini-1.5-flash",
+        "category": "chat",
+    },
+    {
+        "key": "CHAT_DEFAULT_PROVIDER",
+        "label": "Default Chat Provider",
+        "secret": False,
+        "placeholder": "openai",
+        "category": "chat",
+    },
+    {
+        "key": "CHAT_DEFAULT_TEMPERATURE",
+        "label": "Default Temperature",
+        "secret": False,
+        "placeholder": "0.2",
+        "category": "chat",
+    },
+    {
+        "key": "CHAT_SYSTEM_PROMPT",
+        "label": "System Instructions",
+        "secret": False,
+        "placeholder": "Optional system prompt",
+        "category": "chat",
+    },
     # Export & reporting
-    {"key": "NETBOX_XLSX_ORDER_FILE", "label": "Column Order Template", "secret": False, "placeholder": "path/to/column_order.xlsx", "category": "export"},
-
+    {
+        "key": "NETBOX_XLSX_ORDER_FILE",
+        "label": "Column Order Template",
+        "secret": False,
+        "placeholder": "path/to/column_order.xlsx",
+        "category": "export",
+    },
     # API & Web UI
     {"key": "LOG_LEVEL", "label": "Log Level", "secret": False, "placeholder": "INFO", "category": "api"},
-    {"key": "ENREACH_API_TOKEN", "label": "Enreach API Token", "secret": True, "placeholder": "optional", "category": "api"},
-    {"key": "ENREACH_UI_PASSWORD", "label": "UI Password", "secret": True, "placeholder": "optional", "category": "api"},
-    {"key": "ENREACH_UI_SECRET", "label": "UI Session Secret", "secret": True, "placeholder": "auto-generated if empty", "category": "api"},
-    {"key": "ENREACH_SSL_CERTFILE", "label": "SSL Certificate File", "secret": False, "placeholder": "certs/localhost.pem", "category": "api"},
-    {"key": "ENREACH_SSL_KEYFILE", "label": "SSL Key File", "secret": False, "placeholder": "certs/localhost-key.pem", "category": "api"},
-    {"key": "ENREACH_SSL_KEY_PASSWORD", "label": "SSL Key Password", "secret": True, "placeholder": "optional", "category": "api"},
+    {
+        "key": "ENREACH_API_TOKEN",
+        "label": "Enreach API Token",
+        "secret": True,
+        "placeholder": "optional",
+        "category": "api",
+    },
+    {
+        "key": "ENREACH_UI_PASSWORD",
+        "label": "UI Password",
+        "secret": True,
+        "placeholder": "optional",
+        "category": "api",
+    },
+    {
+        "key": "ENREACH_UI_SECRET",
+        "label": "UI Session Secret",
+        "secret": True,
+        "placeholder": "auto-generated if empty",
+        "category": "api",
+    },
+    {
+        "key": "ENREACH_SSL_CERTFILE",
+        "label": "SSL Certificate File",
+        "secret": False,
+        "placeholder": "certs/localhost.pem",
+        "category": "api",
+    },
+    {
+        "key": "ENREACH_SSL_KEYFILE",
+        "label": "SSL Key File",
+        "secret": False,
+        "placeholder": "certs/localhost-key.pem",
+        "category": "api",
+    },
+    {
+        "key": "ENREACH_SSL_KEY_PASSWORD",
+        "label": "SSL Key Password",
+        "secret": True,
+        "placeholder": "optional",
+        "category": "api",
+    },
     {"key": "UI_THEME_DEFAULT", "label": "Default Theme", "secret": False, "placeholder": "nebula", "category": "api"},
-
     # Backup
     {"key": "BACKUP_ENABLE", "label": "Backup Enabled", "secret": False, "placeholder": "1", "category": "backup"},
     {"key": "BACKUP_TYPE", "label": "Backup Type", "secret": False, "placeholder": "local", "category": "backup"},
-    {"key": "BACKUP_HOST", "label": "Backup Host", "secret": False, "placeholder": "backup.example.com", "category": "backup"},
+    {
+        "key": "BACKUP_HOST",
+        "label": "Backup Host",
+        "secret": False,
+        "placeholder": "backup.example.com",
+        "category": "backup",
+    },
     {"key": "BACKUP_PORT", "label": "Backup Port", "secret": False, "placeholder": "22", "category": "backup"},
-    {"key": "BACKUP_USERNAME", "label": "Backup Username", "secret": False, "placeholder": "backup_user", "category": "backup"},
-    {"key": "BACKUP_PASSWORD", "label": "Backup Password", "secret": True, "placeholder": "password", "category": "backup"},
-    {"key": "BACKUP_PRIVATE_KEY_PATH", "label": "Private Key Path", "secret": False, "placeholder": "~/.ssh/id_rsa", "category": "backup"},
-    {"key": "BACKUP_REMOTE_PATH", "label": "Remote Path", "secret": False, "placeholder": "/backups/enreach-tools", "category": "backup"},
-    {"key": "BACKUP_LOCAL_PATH", "label": "Local Backup Path", "secret": False, "placeholder": "backups", "category": "backup"},
-    {"key": "BACKUP_CREATE_TIMESTAMPED_DIRS", "label": "Create Timestamped Directories", "secret": False, "placeholder": "false", "category": "backup"},
+    {
+        "key": "BACKUP_USERNAME",
+        "label": "Backup Username",
+        "secret": False,
+        "placeholder": "backup_user",
+        "category": "backup",
+    },
+    {
+        "key": "BACKUP_PASSWORD",
+        "label": "Backup Password",
+        "secret": True,
+        "placeholder": "password",
+        "category": "backup",
+    },
+    {
+        "key": "BACKUP_PRIVATE_KEY_PATH",
+        "label": "Private Key Path",
+        "secret": False,
+        "placeholder": "~/.ssh/id_rsa",
+        "category": "backup",
+    },
+    {
+        "key": "BACKUP_REMOTE_PATH",
+        "label": "Remote Path",
+        "secret": False,
+        "placeholder": "/backups/enreach-tools",
+        "category": "backup",
+    },
+    {
+        "key": "BACKUP_LOCAL_PATH",
+        "label": "Local Backup Path",
+        "secret": False,
+        "placeholder": "backups",
+        "category": "backup",
+    },
+    {
+        "key": "BACKUP_CREATE_TIMESTAMPED_DIRS",
+        "label": "Create Timestamped Directories",
+        "secret": False,
+        "placeholder": "false",
+        "category": "backup",
+    },
 ]
 
 
@@ -778,8 +1029,8 @@ def _decorate_suggestion(item: dict[str, Any]) -> dict[str, Any]:
 def _load_suggestions() -> list[dict[str, Any]]:
     path = _suggestions_path()
     try:
-        sql = f"SELECT * FROM read_csv_auto('{path.as_posix()}', header=True)"
-        df = duckdb.query(sql).df()
+        sql = "SELECT * FROM read_csv_auto(?, header=True)"
+        df = duckdb.query(sql, params=[path.as_posix()]).df()
     except Exception:
         df = pd.DataFrame(columns=SUGGESTION_FIELDS)
     if df.empty:
@@ -793,6 +1044,7 @@ def _load_suggestions() -> list[dict[str, Any]]:
     for _, row in df.iterrows():
         item = {k: row.get(k) for k in SUGGESTION_FIELDS}
         out.append(_decorate_suggestion(item))
+
     # Newest first
     def _sort_key(it: dict[str, Any]):
         try:
@@ -879,12 +1131,14 @@ def _write_env_value(key: str, value: str | None) -> None:
     load_env(override=True)
 
 
-def _chat_default_temperature() -> float:
-    raw = os.getenv("CHAT_DEFAULT_TEMPERATURE", "0.2").strip()
+def _chat_default_temperature() -> float | None:
+    raw = os.getenv("CHAT_DEFAULT_TEMPERATURE", "").strip().lower()
+    if raw in {"", "default", "auto"}:
+        return None
     try:
         return float(raw)
     except Exception:
-        return 0.2
+        return None
 
 
 class SuggestionCreate(BaseModel):
@@ -1154,18 +1408,20 @@ def _build_admin_settings() -> list[dict[str, Any]]:
             placeholder_effective = "•••••• (hidden)"
         elif not placeholder_effective and not has_value:
             placeholder_effective = defaults.get(key, "")
-        settings.append({
-            "key": key,
-            "label": field.get("label", key),
-            "secret": secret,
-            "value": value,
-            "has_value": has_value,
-            "placeholder": placeholder,
-            "placeholder_effective": placeholder_effective,
-            "source": "file" if key in env_values else "env",
-            "default": defaults.get(key, ""),
-            "category": category,
-        })
+        settings.append(
+            {
+                "key": key,
+                "label": field.get("label", key),
+                "secret": secret,
+                "value": value,
+                "has_value": has_value,
+                "placeholder": placeholder,
+                "placeholder_effective": placeholder_effective,
+                "source": "file" if key in env_values else "env",
+                "default": defaults.get(key, ""),
+                "category": category,
+            }
+        )
     return settings
 
 
@@ -1174,11 +1430,11 @@ def admin_env_settings():
     settings = _build_admin_settings()
     backup_enabled = os.getenv("BACKUP_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off"}
     backup_type = os.getenv("BACKUP_TYPE", "local").strip().lower()
-    
+
     # Determine if backup is properly configured based on type
     backup_configured = False
     backup_target = ""
-    
+
     if backup_type == "local":
         backup_path = os.getenv("BACKUP_LOCAL_PATH", "backups").strip()
         backup_configured = bool(backup_path)
@@ -1189,10 +1445,16 @@ def admin_env_settings():
         password = os.getenv("BACKUP_PASSWORD", "").strip()
         private_key = os.getenv("BACKUP_PRIVATE_KEY_PATH", "").strip()
         remote_path = os.getenv("BACKUP_REMOTE_PATH", "").strip()
-        
+
         backup_configured = bool(host and username and (password or private_key))
-        backup_target = f"{username}@{host}:{remote_path}" if host and username and remote_path else f"{username}@{host}" if host and username else ""
-    
+        backup_target = (
+            f"{username}@{host}:{remote_path}"
+            if host and username and remote_path
+            else f"{username}@{host}"
+            if host and username
+            else ""
+        )
+
     settings_dto = [EnvSettingDTO.model_validate(setting) for setting in settings]
     backup_dto = BackupInfoDTO(
         enabled=backup_enabled,
@@ -1288,13 +1550,15 @@ def _list_records(
         raise HTTPException(status_code=400, detail=f"Invalid order_by: {order_by}")
 
     ident = f'"{order_by}" {order_dir.upper()}' if order_by else None
-    base = f"SELECT * FROM read_csv_auto('{path.as_posix()}', header=True)"
+    sql = "SELECT * FROM read_csv_auto(?, header=True)"
+    params: list[Any] = [path.as_posix()]
     if ident:
-        base += f" ORDER BY {ident}"
+        sql += f" ORDER BY {ident}"
     if limit is not None:
-        base += f" LIMIT {int(limit)} OFFSET {int(offset)}"
+        sql += " LIMIT ? OFFSET ?"
+        params.extend([int(limit), int(offset)])
 
-    df = duckdb.query(base).df()
+    df = duckdb.query(sql, params=params).df()
     # Normalize to JSON‑safe values: NaN/NaT/±Inf -> None
     if not df.empty:
         df = df.replace([np.inf, -np.inf], np.nan)
@@ -1413,29 +1677,98 @@ def _format_responses_messages(messages: list[dict[str, str]]) -> list[dict[str,
         text = str(msg.get("content", ""))
         # OpenAI Responses API requires input_text for prompts and output_text for responses
         content_type = "output_text" if role == "assistant" else "input_text"
-        formatted.append({
-            "role": role,
-            "content": [{"type": content_type, "text": text}],
-        })
+        formatted.append(
+            {
+                "role": role,
+                "content": [{"type": content_type, "text": text}],
+            }
+        )
     return formatted
 
 
 def _get_chat_session(db: Session, session_id: str) -> ChatSession | None:
     """Get chat session by session_id."""
     from sqlalchemy import select
+
     stmt = select(ChatSession).where(ChatSession.session_id == session_id)
     return db.execute(stmt).scalar_one_or_none()
 
 
-def _create_chat_session(db: Session, session_id: str | None = None, title: str | None = None, user_id: str | None = None) -> ChatSession:
+def _safe_to_str(value: Any) -> str | None:
+    try:
+        return str(value)
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.debug("Skipping chat variable with non-stringable key", extra={"error": str(exc)})
+        return None
+
+
+def _safe_json_loads(data: str) -> Any | None:
+    try:
+        return json.loads(data)
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.debug("Skipping streaming event with invalid JSON", extra={"error": str(exc)})
+        return None
+
+
+def _normalise_chat_variables(payload: Mapping[str, Any] | None) -> dict[str, Any]:
+    if not payload:
+        return {}
+    normalised: dict[str, Any] = {}
+    for raw_key, raw_value in payload.items():
+        key = _safe_to_str(raw_key)
+        if key is None:
+            continue
+        if raw_value is None:
+            # Explicit None is treated as removal; skip during normalisation.
+            normalised[key] = None
+            continue
+        if isinstance(raw_value, str | int | float | bool):
+            normalised[key] = raw_value
+            continue
+        try:
+            json.dumps(raw_value)
+            normalised[key] = raw_value
+        except TypeError:
+            normalised[key] = str(raw_value)
+    return normalised
+
+
+def _apply_chat_variables(
+    session: ChatSession,
+    updates: Mapping[str, Any] | None,
+    *,
+    merge: bool = True,
+) -> dict[str, Any]:
+    if updates is None:
+        return dict(session.context_variables or {})
+    sanitised = _normalise_chat_variables(updates)
+    base = dict(session.context_variables or {}) if merge else {}
+    for key, value in sanitised.items():
+        if value is None:
+            base.pop(key, None)
+        else:
+            base[key] = value
+    session.context_variables = base
+    return dict(base)
+
+
+def _create_chat_session(
+    db: Session,
+    session_id: str | None = None,
+    title: str | None = None,
+    user_id: str | None = None,
+    variables: Mapping[str, Any] | None = None,
+) -> ChatSession:
     """Create a new chat session."""
     if not session_id:
         session_id = "c_" + secrets.token_hex(8)
-    
+
+    context_vars = {key: value for key, value in _normalise_chat_variables(variables).items() if value is not None}
     session = ChatSession(
         session_id=session_id,
         title=title or "New chat",
         user_id=user_id,
+        context_variables=context_vars,
     )
     db.add(session)
     db.commit()
@@ -1475,11 +1808,11 @@ def _add_chat_message(
         content=content_with_usage,
     )
     db.add(message)
-    
+
     # Update session timestamp
     session.updated_at = datetime.now(UTC)
     db.add(session)
-    
+
     db.commit()
     db.refresh(message)
     return message
@@ -1492,6 +1825,7 @@ def _serialize_chat_session(session: ChatSession) -> dict[str, Any]:
         "title": session.title,
         "created_at": session.created_at.isoformat() + "Z",
         "updated_at": session.updated_at.isoformat() + "Z",
+        "variables": dict(session.context_variables or {}),
     }
 
 
@@ -1506,7 +1840,7 @@ def _serialize_chat_message(message: ChatMessage) -> dict[str, Any]:
             if marker_start >= 0 and marker_end > marker_start:
                 import json as _json
 
-                payload = content[marker_start + len("[[TOKENS "): marker_end]
+                payload = content[marker_start + len("[[TOKENS ") : marker_end]
                 usage = _json.loads(payload)
                 content = content[:marker_start].rstrip()
         except Exception:
@@ -1531,15 +1865,18 @@ class ChatRequest(BaseModel):
     system: str | None = None
     include_context: bool | None = False
     dataset: Literal["devices", "vms", "all", "merged"] | None = "merged"
+    variables: dict[str, Any] | None = None
+    tool: str | None = None
 
 
 class ChatSessionCreate(BaseModel):
     name: str | None = None
-
-
+    variables: dict[str, Any] | None = None
 
 
 ChatRequestBody = Annotated[ChatRequest, Body(...)]
+ChatSessionCreateBody = Annotated[ChatSessionCreate | None, Body()]
+ToolSamplePayloadBody = Annotated[dict[str, Any] | None, Body()]
 
 
 def _messages_for_provider(messages: list[dict[str, str]], max_turns: int = 16) -> list[dict[str, str]]:
@@ -1577,9 +1914,12 @@ def _is_openai_streaming_unsupported(ex: Exception) -> bool:
             if isinstance(data, dict):
                 err = data.get("error") or {}
                 if isinstance(err, dict):
-                    if (err.get("param") == "stream" and err.get("code") == "unsupported_value"):
+                    if err.get("param") == "stream" and err.get("code") == "unsupported_value":
                         return True
-                    if isinstance(err.get("message"), str) and "must be verified to stream" in err.get("message", "").lower():
+                    if (
+                        isinstance(err.get("message"), str)
+                        and "must be verified to stream" in err.get("message", "").lower()
+                    ):
                         return True
     except Exception:
         pass
@@ -1842,28 +2182,28 @@ def _build_data_context(dataset: str, query: str, max_rows: int = 6, max_chars: 
         if keywords:
             for kw in keywords[:5]:
                 safe_kw = kw.replace("'", "''")
-                ors = [
-                    f"lower(CAST(\"{h}\" AS VARCHAR)) LIKE '%{safe_kw}%'"
-                    for h in headers
-                ]
+                ors = [f"lower(CAST(\"{h}\" AS VARCHAR)) LIKE '%{safe_kw}%'" for h in headers]
                 where_clauses.append("(" + " OR ".join(ors) + ")")
 
-        base_sql = f"SELECT * FROM read_csv_auto('{p.as_posix()}', header=True)"
-        limit_sql = f" LIMIT {int(limit)}"
-
-        def _run(sql: str):
-            return duckdb.query(sql + limit_sql).df()
+        def _run(where_clause: str | None = None) -> pd.DataFrame:
+            sql = "SELECT * FROM read_csv_auto(?, header=True)"
+            params: list[Any] = [p.as_posix()]
+            if where_clause:
+                sql += f" WHERE {where_clause}"
+            sql += " LIMIT ?"
+            params.append(int(limit))
+            return duckdb.query(sql, params=params).df()
 
         if where_clauses:
-            df = _run(base_sql + " WHERE " + " OR ".join(where_clauses))
+            df = _run(" OR ".join(where_clauses))
         elif query.strip():
             safe = query.replace("'", "''")
             ors = [f"lower(CAST(\"{h}\" AS VARCHAR)) LIKE lower('%{safe}%')" for h in headers]
-            df = _run(base_sql + " WHERE " + " OR ".join(ors))
+            df = _run(" OR ".join(ors))
             if df.empty:
-                df = _run(base_sql)
+                df = _run()
         else:
-            df = _run(base_sql)
+            df = _run()
         # Render context text
         parts: list[str] = []
         parts.append(f"Source file: {p.name}")
@@ -1907,14 +2247,14 @@ def _build_data_context(dataset: str, query: str, max_rows: int = 6, max_chars: 
                     return None
                 if isinstance(value, pd.Timestamp):
                     return value.isoformat()
-                if hasattr(value, "isoformat") and not isinstance(value, (str, int, float, bool)):
+                if hasattr(value, "isoformat") and not isinstance(value, str | int | float | bool):
                     try:
                         return value.isoformat()
                     except Exception:
                         return str(value)
                 if isinstance(value, float) and np.isnan(value):
                     return None
-                if isinstance(value, (str, int, float, bool)):
+                if isinstance(value, str | int | float | bool):
                     return value
                 return str(value)
 
@@ -1958,13 +2298,15 @@ def chat_providers(user: CurrentUserDep, db: DbSessionDep):
     out = []
     for pid in ["openai", "openrouter", "claude", "gemini"]:
         cfg = env.get(pid, {})
-        out.append({
-            "id": pid,
-            "configured": bool(cfg.get("api_key")),
-            "default_model": cfg.get("default_model"),
-            "key_source": cfg.get("key_source"),
-            "label": cfg.get("label"),
-        })
+        out.append(
+            {
+                "id": pid,
+                "configured": bool(cfg.get("api_key")),
+                "default_model": cfg.get("default_model"),
+                "key_source": cfg.get("key_source"),
+                "label": cfg.get("label"),
+            }
+        )
     return {"providers": out, "default_provider": env.get("default_provider", "openai")}
 
 
@@ -1973,32 +2315,39 @@ def chat_history(db: DbSessionDep, session_id: str = Query(...)):
     session = _get_chat_session(db, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Chat session not found")
-    
+
     messages = [_serialize_chat_message(msg) for msg in session.messages]
     return {
         "session_id": session_id,
         "messages": messages,
+        "variables": dict(session.context_variables or {}),
     }
 
 
 @app.get("/chat/sessions")
 def chat_sessions(db: DbSessionDep, user: OptionalUserDep, limit: int | None = Query(None, ge=1, le=200)):
     from sqlalchemy import select
-    
+
     stmt = select(ChatSession).order_by(ChatSession.updated_at.desc())
     if user:
         stmt = stmt.where(ChatSession.user_id == user.id)
     if limit:
         stmt = stmt.limit(limit)
-    
+
     sessions = db.execute(stmt).scalars().all()
     return {"sessions": [_serialize_chat_session(session) for session in sessions]}
 
 
 @app.post("/chat/session")
-def chat_session_create(db: DbSessionDep, user: OptionalUserDep, req: ChatSessionCreate = Body(default=None)):
+def chat_session_create(db: DbSessionDep, user: OptionalUserDep, req: ChatSessionCreateBody = None):
     title = (req.name if req else "") or "New chat"
-    session = _create_chat_session(db, title=title, user_id=user.id if user else None)
+    variables = req.variables if req else None
+    session = _create_chat_session(
+        db,
+        title=title,
+        user_id=user.id if user else None,
+        variables=variables or None,
+    )
     return _serialize_chat_session(session)
 
 
@@ -2008,15 +2357,15 @@ def chat_session_delete(session_id: str, db: DbSessionDep, user: OptionalUserDep
     session = _get_chat_session(db, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Chat session not found")
-    
+
     # Optional: Only allow users to delete their own sessions
     if user and session.user_id and session.user_id != user.id:
         raise HTTPException(status_code=403, detail="You can only delete your own chat sessions")
-    
+
     # Delete the session (messages will be deleted automatically due to cascade)
     db.delete(session)
     db.commit()
-    
+
     return {"status": "deleted", "session_id": session_id}
 
 
@@ -2042,40 +2391,44 @@ def chat_complete(
     if not session:
         session = _create_chat_session(db, req.session_id, user_id=user.id if user else None)
 
-    # Build message history from database
     history = [_serialize_chat_message(msg) for msg in session.messages]
-    
-    # Optional: include a system instruction
+
     system_prompt = (req.system or os.getenv("CHAT_SYSTEM_PROMPT", "")).strip()
     if system_prompt:
         if history and history[0].get("role") == "system":
             history[0]["content"] = system_prompt[:4000]
         else:
             history.insert(0, {"role": "system", "content": system_prompt[:4000]})
-    
-    # Optionally include data context
+
     if req.include_context:
         ctx_text = _build_data_context(req.dataset or "all", req.message)
         if ctx_text:
-            history.append({
-                "role": "system",
-                "content": f"Data context from {req.dataset or 'all'}: \n" + ctx_text,
-            })
-    
-    # Add user message to database
+            history.append(
+                {
+                    "role": "system",
+                    "content": f"Data context from {req.dataset or 'all'}:\n" + ctx_text,
+                }
+            )
+
+    merged_variables = _apply_chat_variables(session, req.variables or None)
+    db.add(session)
+
     user_message = str(req.message)[:8000]
     _add_chat_message(db, session, "user", user_message)
-    
-    # Update session title if it's the first user message
     _update_session_title_from_message(db, session, user_message)
-    
-    # Add user message to history for API call
+
     history.append({"role": "user", "content": user_message})
-    clipped = _messages_for_provider(history)
+    agent_history = history[:-1]
+    agent_input = history[-1]["content"] if history else user_message
 
     temperature = req.temperature if req.temperature is not None else _chat_default_temperature()
 
     actor = getattr(user, "username", None)
+    try:
+        runtime = AgentRuntime(provider=pid, model=model, api_key=api_key, temperature=temperature)
+    except AgentRuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     with task_logging(
         "chat.complete",
         actor=actor,
@@ -2084,47 +2437,67 @@ def chat_complete(
         session_id=req.session_id,
     ) as task_log:
         try:
-            if pid == "openai":
-                result = _call_openai(model, clipped, api_key, temperature=temperature)
-            elif pid == "openrouter":
-                result = _call_openrouter(model, clipped, api_key, temperature=temperature)
-            elif pid == "claude":
-                result = _call_claude(model, clipped, api_key, temperature=temperature)
-            elif pid == "gemini":
-                result = _call_gemini(model, clipped, api_key, temperature=temperature)
-            else:
-                raise ValueError(f"Unsupported provider: {pid}")
-        except requests.HTTPError as ex:
-            status_code = ex.response.status_code if ex.response else None
-            err = f"Provider error: {status_code if status_code is not None else ''} {ex!s}"
+            run_result = runtime.run(
+                session_id=session.session_id,
+                user_label=actor,
+                variables=merged_variables,
+                history=agent_history,
+                message=agent_input,
+                tool_hint=req.tool,
+            )
+        except AgentRuntimeError as exc:
+            err = f"Agent error: {exc}"
             _add_chat_message(db, session, "assistant", err)
-            task_log.add_success(status="provider_error", status_code=status_code)
+            task_log.add_success(status="agent_error")
             return {"session_id": req.session_id, "provider": pid, "model": model, "reply": err}
-        except Exception as ex:
-            err = f"Error: {ex}"
+        except Exception as exc:
+            err = f"Error: {exc}"
             _add_chat_message(db, session, "assistant", err)
             task_log.add_success(status="error")
             return {"session_id": req.session_id, "provider": pid, "model": model, "reply": err}
 
-        # Add assistant reply to database
-        _add_chat_message(db, session, "assistant", result.text, usage=result.usage)
+        assistant_text = (run_result.text or "").strip() or "(no response)"
+        usage = run_result.usage or None
+        _add_chat_message(db, session, "assistant", assistant_text, usage=usage)
 
-        if result.usage:
+        task_log.add_success(
+            reply_chars=len(assistant_text),
+            agent_domain=run_result.decision.domain,
+            agent_tool=run_result.decision.tool_key,
+            agent_steps=len(run_result.intermediate_steps),
+        )
+        if usage:
             task_log.add_success(
-                prompt_tokens=result.usage.get("prompt_tokens"),
-                completion_tokens=result.usage.get("completion_tokens"),
-                total_tokens=result.usage.get("total_tokens"),
+                prompt_tokens=usage.get("prompt_tokens"),
+                completion_tokens=usage.get("completion_tokens"),
+                total_tokens=usage.get("total_tokens"),
             )
-        task_log.add_success(reply_chars=len(result.text))
+
+        logger.info(
+            "Agent completed turn",
+            extra={
+                "event": "chat_agent_completed",
+                "agent_domain": run_result.decision.domain,
+                "agent_tool": run_result.decision.tool_key,
+                "agent_reason": run_result.decision.reason,
+            },
+        )
 
         response: dict[str, Any] = {
             "session_id": req.session_id,
             "provider": pid,
             "model": model,
-            "reply": result.text,
+            "reply": assistant_text,
+            "agent": {
+                "domain": run_result.decision.domain,
+                "tool": run_result.decision.tool_key,
+                "reason": run_result.decision.reason,
+            },
         }
-        if result.usage:
-            response["usage"] = result.usage
+        if run_result.tool_outputs:
+            response["tool_outputs"] = run_result.tool_outputs
+        if usage:
+            response["usage"] = usage
         return response
 
 
@@ -2148,18 +2521,16 @@ def _stream_openai_text(
                     kwargs["temperature"] = temperature
                 with client.responses.stream(**kwargs) as stream:
                     for event in stream:
-                        try:
-                            if getattr(event, "type", "") == "response.output_text.delta":
-                                delta = getattr(event, "delta", "")
-                                if delta:
-                                    yield delta
-                            if usage_target is not None:
-                                usage = _normalise_usage(getattr(event, "usage", None))
-                                if usage:
-                                    usage_target.clear()
-                                    usage_target.append(usage)
-                        except Exception:
-                            continue
+                        event_type = getattr(event, "type", "")
+                        if event_type == "response.output_text.delta":
+                            delta = getattr(event, "delta", "")
+                            if delta:
+                                yield delta
+                        if usage_target is not None:
+                            usage = _normalise_usage(getattr(event, "usage", None))
+                            if usage:
+                                usage_target.clear()
+                                usage_target.append(usage)
                     final_response = stream.get_final_response()
                     if usage_target is not None:
                         usage = _normalise_usage(getattr(final_response, "usage", None))
@@ -2179,19 +2550,17 @@ def _stream_openai_text(
                     stream=True,
                 )
                 for chunk in gen:
-                    try:
-                        delta = (chunk.choices or [None])[0]
-                        if delta and getattr(delta, "delta", None):
-                            txt = getattr(delta.delta, "content", None)
-                            if txt:
-                                yield txt
-                        if usage_target is not None:
-                            usage = _normalise_usage(getattr(chunk, "usage", None))
-                            if usage:
-                                usage_target.clear()
-                                usage_target.append(usage)
-                    except Exception:
-                        continue
+                    choice = (chunk.choices or [None])[0]
+                    delta = getattr(choice, "delta", None)
+                    if delta is not None:
+                        text = getattr(delta, "content", None)
+                        if text:
+                            yield text
+                    if usage_target is not None:
+                        usage = _normalise_usage(getattr(chunk, "usage", None))
+                        if usage:
+                            usage_target.clear()
+                            usage_target.append(usage)
                 return
             except Exception:
                 raise
@@ -2212,33 +2581,34 @@ def _stream_openai_text(
             payload["temperature"] = temperature
         with requests.post(url, headers=headers, json=payload, stream=True, timeout=300) as r:
             r.raise_for_status()
-            for raw in r.iter_lines(decode_unicode=True):
-                if not raw:
+            for raw_line in r.iter_lines(decode_unicode=True):
+                if not raw_line:
                     continue
-                if isinstance(raw, bytes):
+                line = raw_line
+                if isinstance(line, bytes):
                     try:
-                        raw = raw.decode("utf-8", errors="ignore")
+                        line = line.decode("utf-8", errors="ignore")
                     except Exception:
-                        raw = str(raw)
-                if not raw.startswith("data:"):
+                        line = str(line)
+                if not isinstance(line, str):
+                    line = str(line)
+                if not line.startswith("data:"):
                     continue
-                data = raw[5:].strip()
+                data = line[5:].strip()
                 if data == "[DONE]":
                     break
-                try:
-                    import json as _json
-                    obj = _json.loads(data)
-                    if obj.get("type") == "response.output_text.delta":
-                        delta = obj.get("delta") or ""
-                        if delta:
-                            yield delta
-                    if usage_target is not None:
-                        usage = _normalise_usage(obj.get("usage"))
-                        if usage:
-                            usage_target.clear()
-                            usage_target.append(usage)
-                except Exception:
+                obj = _safe_json_loads(data)
+                if not isinstance(obj, dict):
                     continue
+                if obj.get("type") == "response.output_text.delta":
+                    delta = obj.get("delta") or ""
+                    if delta:
+                        yield delta
+                if usage_target is not None:
+                    usage = _normalise_usage(obj.get("usage"))
+                    if usage:
+                        usage_target.clear()
+                        usage_target.append(usage)
     else:
         url = "https://api.openai.com/v1/chat/completions"
         headers = {
@@ -2254,32 +2624,33 @@ def _stream_openai_text(
         }
         with requests.post(url, headers=headers, json=payload, stream=True, timeout=300) as r:
             r.raise_for_status()
-            for raw in r.iter_lines(decode_unicode=True):
-                if not raw:
+            for raw_line in r.iter_lines(decode_unicode=True):
+                if not raw_line:
                     continue
-                if isinstance(raw, bytes):
+                line = raw_line
+                if isinstance(line, bytes):
                     try:
-                        raw = raw.decode("utf-8", errors="ignore")
+                        line = line.decode("utf-8", errors="ignore")
                     except Exception:
-                        raw = str(raw)
-                if not raw.startswith("data:"):
+                        line = str(line)
+                if not isinstance(line, str):
+                    line = str(line)
+                if not line.startswith("data:"):
                     continue
-                data = raw[5:].strip()
+                data = line[5:].strip()
                 if data == "[DONE]":
                     break
-                try:
-                    import json as _json
-                    obj = _json.loads(data)
-                    delta = obj.get("choices", [{}])[0].get("delta", {}).get("content")
-                    if delta:
-                        yield delta
-                    if usage_target is not None:
-                        usage = _normalise_usage(obj.get("usage"))
-                        if usage:
-                            usage_target.clear()
-                            usage_target.append(usage)
-                except Exception:
+                obj = _safe_json_loads(data)
+                if not isinstance(obj, dict):
                     continue
+                delta = obj.get("choices", [{}])[0].get("delta", {}).get("content")
+                if delta:
+                    yield delta
+                if usage_target is not None:
+                    usage = _normalise_usage(obj.get("usage"))
+                    if usage:
+                        usage_target.clear()
+                        usage_target.append(usage)
 
 
 def _stream_openrouter_text(
@@ -2305,33 +2676,33 @@ def _stream_openrouter_text(
     }
     with requests.post(url, headers=headers, json=payload, stream=True, timeout=300) as r:
         r.raise_for_status()
-        for raw in r.iter_lines(decode_unicode=True):
-            if not raw:
+        for raw_line in r.iter_lines(decode_unicode=True):
+            if not raw_line:
                 continue
-            if isinstance(raw, bytes):
+            line = raw_line
+            if isinstance(line, bytes):
                 try:
-                    raw = raw.decode("utf-8", errors="ignore")
+                    line = line.decode("utf-8", errors="ignore")
                 except Exception:
-                    raw = str(raw)
-            if not raw.startswith("data:"):
+                    line = str(line)
+            if not isinstance(line, str):
+                line = str(line)
+            if not line.startswith("data:"):
                 continue
-            data = raw[5:].strip()
+            data = line[5:].strip()
             if data == "[DONE]":
                 break
-            try:
-                import json as _json
-
-                obj = _json.loads(data)
-                delta = obj.get("choices", [{}])[0].get("delta", {}).get("content")
-                if delta:
-                    yield delta
-                if usage_target is not None:
-                    usage = _normalise_usage(obj.get("usage"))
-                    if usage:
-                        usage_target.clear()
-                        usage_target.append(usage)
-            except Exception:
+            obj = _safe_json_loads(data)
+            if not isinstance(obj, dict):
                 continue
+            delta = obj.get("choices", [{}])[0].get("delta", {}).get("content")
+            if delta:
+                yield delta
+            if usage_target is not None:
+                usage = _normalise_usage(obj.get("usage"))
+                if usage:
+                    usage_target.clear()
+                    usage_target.append(usage)
 
 
 @app.post("/chat/stream")
@@ -2340,141 +2711,122 @@ def chat_stream(
     user: OptionalUserDep,
     db: DbSessionDep,
 ):
-    env = _chat_env(db=db, user=user)
-    pid = req.provider
-    if pid not in env:
-        raise HTTPException(status_code=400, detail=f"Unknown provider: {pid}")
-    api_key = env[pid].get("api_key")
-    if not api_key:
-        raise HTTPException(status_code=400, detail=f"Provider '{pid}' not configured (missing API key)")
-    model = (req.model or env[pid].get("default_model") or "").strip()
-    if not model:
-        raise HTTPException(status_code=400, detail=f"No model specified for provider '{pid}'")
+    try:
+        result = chat_complete(req, user, db)
+    except HTTPException:
+        raise
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    # Get or create chat session
-    session = _get_chat_session(db, req.session_id)
-    if not session:
-        session = _create_chat_session(db, req.session_id, user_id=user.id if user else None)
+    reply_text = str(result.get("reply") or "")
 
-    # Build message history from database
-    history = [_serialize_chat_message(msg) for msg in session.messages]
-    
-    # Optional: include a system instruction
-    system_prompt = (req.system or os.getenv("CHAT_SYSTEM_PROMPT", "")).strip()
-    if system_prompt:
-        if history and history[0].get("role") == "system":
-            history[0]["content"] = system_prompt[:4000]
-        else:
-            history.insert(0, {"role": "system", "content": system_prompt[:4000]})
-    
-    # Optionally include data context
-    if req.include_context:
-        ctx_text = _build_data_context(req.dataset or "all", req.message)
-        if ctx_text:
-            history.append({"role": "system", "content": f"Data context from {req.dataset or 'all'}:\n" + ctx_text})
-    
-    # Add user message to database
-    user_message = str(req.message)[:8000]
-    _add_chat_message(db, session, "user", user_message)
-    
-    # Update session title if it's the first user message
-    _update_session_title_from_message(db, session, user_message)
-    
-    # Add user message to history for API call
-    history.append({"role": "user", "content": user_message})
-    clipped = _messages_for_provider(history)
-    temperature = req.temperature if req.temperature is not None else _chat_default_temperature()
-
-    actor = getattr(user, "username", None)
-
-    def generator():
-        usage: dict[str, int] | None = None
-        full_text: list[str] = []
-        with task_logging(
-            "chat.stream",
-            actor=actor,
-            provider=pid,
-            model=model,
-            session_id=req.session_id,
-        ) as task_log:
-            if pid == "openai":
-                usage_holder: list[dict[str, int]] = []
-                try:
-                    for chunk in _stream_openai_text(
-                        model,
-                        clipped,
-                        api_key,
-                        temperature=temperature,
-                        usage_target=usage_holder,
-                    ):
-                        full_text.append(chunk)
-                        yield chunk
-                except Exception as ex:  # smart fallback when streaming is not allowed
-                    if _is_openai_streaming_unsupported(ex):
-                        try:
-                            call_result = _call_openai(model, clipped, api_key, temperature=temperature)
-                            usage = call_result.usage
-                            text = call_result.text
-                        except Exception as ex2:
-                            text = f"[error] {getattr(getattr(ex2, 'response', None), 'status_code', '')} {ex2}"
-                        for part in _iter_chunks(text or ""):
-                            full_text.append(part)
-                            yield part
-                    else:
-                        msg = f"\n[error] {getattr(getattr(ex, 'response', None), 'status_code', '')} {ex}"
-                        full_text.append(msg)
-                        yield msg
-                else:
-                    if usage_holder:
-                        usage = usage_holder[0]
-            elif pid == "openrouter":
-                usage_holder = []
-                try:
-                    for chunk in _stream_openrouter_text(
-                        model,
-                        clipped,
-                        api_key,
-                        temperature=temperature,
-                        usage_target=usage_holder,
-                    ):
-                        full_text.append(chunk)
-                        yield chunk
-                except Exception as ex:
-                    msg = f"\n[error] {getattr(getattr(ex, 'response', None), 'status_code', '')} {ex}"
-                    full_text.append(msg)
-                    yield msg
-                else:
-                    if usage_holder:
-                        usage = usage_holder[0]
-            else:
-                if pid == "claude":
-                    call_result = _call_claude(model, clipped, api_key, temperature=temperature)
-                elif pid == "gemini":
-                    call_result = _call_gemini(model, clipped, api_key, temperature=temperature)
-                else:
-                    call_result = ChatProviderResult("", None)
-                usage = call_result.usage
-                text = call_result.text
-                for i in range(0, len(text), 64):
-                    part = text[i : i + 64]
-                    full_text.append(part)
-                    yield part
-
-            out = "".join(full_text).strip()
-            _add_chat_message(db, session, "assistant", out, usage=usage)
-            task_log.add_success(reply_chars=len(out))
-            if usage:
-                task_log.add_success(
-                    prompt_tokens=usage.get("prompt_tokens"),
-                    completion_tokens=usage.get("completion_tokens"),
-                    total_tokens=usage.get("total_tokens"),
-                )
-                import json as _json
-
-                usage_payload = _json.dumps(usage)
-                yield f"\n[[TOKENS {usage_payload}]]"
+    async def generator():
+        yield reply_text
 
     return StreamingResponse(generator(), media_type="text/plain; charset=utf-8")
+
+
+def _build_sample_prompt(definition: ToolDefinition, args: Mapping[str, Any]) -> str:
+    rendered_args = json.dumps(dict(args), indent=2, ensure_ascii=False, default=str) if args else "{}"
+    return (
+        f"Use the {definition.agent} agent's `{definition.key}` tool with these arguments:\n"
+        f"{rendered_args}\n"
+        "Provide a concise operational summary highlighting key metrics."
+    )
+
+
+@app.post("/tools/{tool_key}/sample")
+def tools_run_sample(
+    tool_key: str,
+    user: OptionalUserDep,
+    db: DbSessionDep,
+    payload: ToolSamplePayloadBody = None,
+    provider: str | None = Query(None, description="Override the provider used for the sample run."),
+    model: str | None = Query(None, description="Override the model used for the sample run."),
+):
+    catalog = tools_router._catalog_index()
+    definition = catalog.get(tool_key)
+    if definition is None:
+        raise HTTPException(status_code=404, detail="Tool not found")
+
+    if payload is not None and not isinstance(payload, Mapping):
+        raise HTTPException(status_code=400, detail="Sample payload must be a JSON object")
+    args: dict[str, Any] = {}
+    if payload:
+        args = dict(payload)
+    elif definition.sample:
+        args = dict(definition.sample)
+
+    env = _chat_env(db=db, user=user)
+    provider_id = (provider or env.get("default_provider") or "openai").strip()
+    if provider_id not in env:
+        raise HTTPException(status_code=400, detail=f"Unknown provider: {provider_id}")
+    provider_cfg = env[provider_id]
+    api_key = provider_cfg.get("api_key")
+    if not api_key:
+        raise HTTPException(status_code=400, detail=f"Provider '{provider_id}' not configured (missing API key)")
+    model_name = (model or provider_cfg.get("default_model") or "").strip()
+    if not model_name:
+        raise HTTPException(status_code=400, detail=f"No model configured for provider '{provider_id}'")
+
+    try:
+        runtime = AgentRuntime(
+            provider=provider_id,
+            model=model_name,
+            api_key=api_key,
+            temperature=_chat_default_temperature(),
+        )
+    except AgentRuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    message = _build_sample_prompt(definition, args)
+    actor = getattr(user, "username", None)
+
+    with task_logging(
+        "tools.sample",
+        actor=actor,
+        provider=provider_id,
+        model=model_name,
+        tool_key=tool_key,
+    ) as task_log:
+        try:
+            run_result = runtime.run(
+                session_id=None,
+                user_label=actor,
+                variables={},
+                history=[],
+                message=message,
+                tool_hint=tool_key,
+            )
+        except AgentRuntimeError as exc:
+            task_log.add_success(status="agent_error")
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except Exception as exc:
+            task_log.add_success(status="error")
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        summary_text = (run_result.text or "").strip()
+        task_log.add_success(
+            agent_domain=run_result.decision.domain,
+            agent_tool=run_result.decision.tool_key,
+            summary_chars=len(summary_text),
+        )
+
+    response: dict[str, Any] = {
+        "summary": summary_text,
+        "agent": {
+            "domain": run_result.decision.domain,
+            "tool": run_result.decision.tool_key,
+            "reason": run_result.decision.reason,
+        },
+        "inputs": args,
+    }
+    if run_result.tool_outputs:
+        response["tool_outputs"] = run_result.tool_outputs
+        primary = run_result.tool_outputs[0].get("output")
+        if primary is not None:
+            response["data"] = primary
+    return response
 
 
 # ---------------------------
@@ -2520,6 +2872,7 @@ def _zabbix_client() -> ZabbixClient:
     except ZabbixConfigError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+
 def _zbx_rpc(method: str, params: dict, *, client: ZabbixClient | None = None) -> dict:
     client = client or _zabbix_client()
     try:
@@ -2528,7 +2881,7 @@ def _zbx_rpc(method: str, params: dict, *, client: ZabbixClient | None = None) -
         raise HTTPException(status_code=401, detail=f"Zabbix error: {err}") from err
     except ZabbixError as err:
         raise HTTPException(status_code=502, detail=f"Zabbix error: {err}") from err
-    if isinstance(result, (dict, list)):
+    if isinstance(result, dict | list):
         return result  # type: ignore[return-value]
     return {}
 
@@ -2623,7 +2976,6 @@ def zabbix_problems(
     return {"items": rows, "count": len(rows)}
 
 
-
 @app.get("/zabbix/host")
 def zabbix_host(hostid: int = Query(..., description="Host ID")):
     """Return extended information about a single host for debugging/analysis."""
@@ -2660,6 +3012,124 @@ def zabbix_ack(req: ZabbixAckRequest):
         raise HTTPException(status_code=502, detail=f"Zabbix error: {err}") from err
     return {"ok": True, "eventids": list(result.succeeded), "result": result.response}
 
+
+@app.get("/zabbix/history")
+def zabbix_history(
+    q: str | None = Query(None, description="Optional keyword matched against the problem or host name"),
+    severities: str | None = Query(None, description="Comma-separated severities 0..5"),
+    groupids: str | None = Query(None, description="Comma-separated group IDs"),
+    hostids: str | None = Query(None, description="Comma-separated host IDs"),
+    include_subgroups: int = Query(0, ge=0, le=1, description="Include subgroup IDs when filtering by group IDs"),
+    hours: int = Query(168, ge=1, le=24 * 90, description="Number of hours to look back"),
+    limit: int = Query(100, ge=1, le=500, description="Maximum number of results"),
+):
+    """Search recent Zabbix problems (including resolved ones) for analysis or AI tooling."""
+
+    try:
+        sev_list = [int(s) for s in (severities.split(",") if severities else []) if str(s).strip() != ""]
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid severities")
+    try:
+        grp_list = [int(s) for s in (groupids.split(",") if groupids else []) if str(s).strip() != ""]
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid groupids")
+    try:
+        host_list = [int(s) for s in (hostids.split(",") if hostids else []) if str(s).strip() != ""]
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid hostids")
+
+    if not sev_list:
+        env_sev = os.getenv("ZABBIX_SEVERITIES", "2,3,4").strip()
+        if env_sev:
+            try:
+                sev_list = [int(x) for x in env_sev.split(",") if x.strip()]
+            except Exception:
+                sev_list = [2, 3, 4]
+        else:
+            sev_list = [2, 3, 4]
+    if not grp_list:
+        gid = os.getenv("ZABBIX_GROUP_ID", "").strip()
+        if gid.isdigit():
+            grp_list = [int(gid)]
+
+    lookback = datetime.now(UTC) - timedelta(hours=hours)
+    time_from = int(lookback.timestamp()) if hours else None
+    client = _zabbix_client()
+    if grp_list and include_subgroups == 1:
+        grp_list = list(client.expand_groupids(grp_list))
+
+    # Gebruik API-zoekopdracht op naam; val terug op host-match als niets wordt gevonden.
+    search_term = (q or "").strip()
+    primary_search = search_term or None
+    try:
+        problem_list = client.get_problems(
+            severities=sev_list,
+            groupids=grp_list,
+            hostids=host_list,
+            limit=limit,
+            recent=True,
+            search=primary_search,
+            time_from=time_from,
+        )
+    except ZabbixAuthError as err:
+        raise HTTPException(status_code=401, detail=f"Zabbix error: {err}") from err
+    except ZabbixError as err:
+        raise HTTPException(status_code=502, detail=f"Zabbix error: {err}") from err
+
+    items = list(problem_list.items)
+    if search_term:
+        term_lower = search_term.lower()
+        filtered = [
+            it for it in items if term_lower in (it.name or "").lower() or term_lower in (it.host_name or "").lower()
+        ]
+        if filtered:
+            items = filtered
+        else:
+            try:
+                alt = client.get_problems(
+                    severities=sev_list,
+                    groupids=grp_list,
+                    hostids=host_list,
+                    limit=limit,
+                    recent=True,
+                    time_from=time_from,
+                )
+                items = [
+                    it
+                    for it in alt.items
+                    if term_lower in (it.name or "").lower() or term_lower in (it.host_name or "").lower()
+                ]
+            except ZabbixError:
+                items = []
+
+    rows = []
+    for problem in items:
+        rows.append(
+            {
+                "eventid": problem.event_id,
+                "name": problem.name,
+                "opdata": problem.opdata,
+                "severity": problem.severity,
+                "acknowledged": int(problem.acknowledged),
+                "clock": problem.clock,
+                "clock_iso": problem.clock_iso,
+                "tags": list(problem.tags),
+                "suppressed": int(problem.suppressed),
+                "status": problem.status,
+                "host": problem.host_name,
+                "hostid": problem.host_id,
+                "host_url": problem.host_url,
+                "problem_url": problem.problem_url,
+            }
+        )
+
+    return {
+        "items": rows,
+        "count": len(rows),
+        "hours": hours,
+        "query": search_term,
+        "limit": limit,
+    }
 
 
 # Serve favicon from project package location (png) as /favicon.ico
@@ -2759,6 +3229,7 @@ def logs_tail(n: int = Query(200, ge=1, le=5000)) -> dict:
     except Exception:
         return {"lines": []}
 
+
 @app.get("/export/stream")
 async def export_stream(
     dataset: Literal["devices", "vms", "all"] = "devices",
@@ -2802,7 +3273,8 @@ async def export_stream(
                 stderr=asyncio.subprocess.STDOUT,
             )
             try:
-                assert proc.stdout is not None
+                if proc.stdout is None:
+                    raise RuntimeError("export runner missing stdout pipe")
                 while True:
                     line = await proc.stdout.readline()
                     if not line:
@@ -2833,8 +3305,9 @@ async def export_stream(
 
 
 # ---------------------------
-# Home aggregator (Zabbix, Jira, Confluence, NetBox)
+# Search aggregator (Zabbix, Jira, Confluence, NetBox)
 # ---------------------------
+
 
 def _ts_iso(ts: int | str | None) -> str:
     try:
@@ -2846,8 +3319,8 @@ def _ts_iso(ts: int | str | None) -> str:
         return ""
 
 
-@app.get("/home/aggregate")
-def home_aggregate(
+@app.get("/search/aggregate")
+def search_aggregate(
     q: str = Query(..., description="Object name to search across systems"),
     zlimit: int = Query(10, ge=0, le=500, description="Max Zabbix items per list (0 = no limit)"),
     jlimit: int = Query(10, ge=0, le=200, description="Max Jira issues (0 = no limit, capped upstream)"),
@@ -2873,13 +3346,14 @@ def home_aggregate(
                 },
                 client=client,
             )
-            for h in (res or []):
+            for h in res or []:
                 try:
                     hostids.append(int(h.get("hostid")))
                 except Exception:
                     pass
             # If q looks like an IP, match host interfaces by IP as well
             import re as _re
+
             if _re.match(r"^\d{1,3}(?:\.\d{1,3}){3}$", q.strip()):
                 try:
                     intfs = _zbx_rpc(
@@ -2887,7 +3361,7 @@ def home_aggregate(
                         {"output": ["interfaceid", "hostid", "ip"], "search": {"ip": q.strip()}, "limit": 200},
                         client=client,
                     )
-                    for itf in (intfs or []):
+                    for itf in intfs or []:
                         try:
                             hostids.append(int(itf.get("hostid")))
                         except Exception:
@@ -2931,8 +3405,16 @@ def home_aggregate(
                     "acknowledged": it.get("acknowledged"),
                     "resolved": 1 if (str(it.get("r_eventid") or "") not in ("", "0")) else 0,
                     "status": ("ACTIVE" if str(it.get("r_eventid") or "").strip() in ("", "0") else "RESOLVED"),
-                    "problem_url": (f"{base_web}/zabbix.php?action=problem.view&eventid={it.get('eventid')}" if base_web and it.get("eventid") else None),
-                    "host_url": (f"{base_web}/zabbix.php?action=host.view&hostid={(it.get('hosts') or [{}])[0].get('hostid')}" if base_web and (it.get('hosts') or [{}])[0].get('hostid') else None),
+                    "problem_url": (
+                        f"{base_web}/zabbix.php?action=problem.view&eventid={it.get('eventid')}"
+                        if base_web and it.get("eventid")
+                        else None
+                    ),
+                    "host_url": (
+                        f"{base_web}/zabbix.php?action=host.view&hostid={(it.get('hosts') or [{}])[0].get('hostid')}"
+                        if base_web and (it.get("hosts") or [{}])[0].get("hostid")
+                        else None
+                    ),
                 }
             )
         # Extra fallback: if still empty and we didn't have hostids, try a broader recent scan and filter locally
@@ -2950,7 +3432,7 @@ def home_aggregate(
                     client=client,
                 )
                 ql = q.lower().strip()
-                for it in (alt or []):
+                for it in alt or []:
                     host_list = it.get("hosts", []) or []
                     host_match = any(
                         (str(h.get("host") or "") + " " + str(h.get("name") or "")).lower().find(ql) >= 0
@@ -2997,8 +3479,16 @@ def home_aggregate(
                     "clock": _ts_iso(it.get("clock")),
                     "value": it.get("value"),
                     "status": ("PROBLEM" if str(it.get("value") or "").strip() == "1" else "OK"),
-                    "event_url": (f"{base_web}/zabbix.php?action=event.view&eventid={it.get('eventid')}" if base_web and it.get("eventid") else None),
-                    "host_url": (f"{base_web}/zabbix.php?action=host.view&hostid={(it.get('hosts') or [{}])[0].get('hostid')}" if base_web and (it.get('hosts') or [{}])[0].get('hostid') else None),
+                    "event_url": (
+                        f"{base_web}/zabbix.php?action=event.view&eventid={it.get('eventid')}"
+                        if base_web and it.get("eventid")
+                        else None
+                    ),
+                    "host_url": (
+                        f"{base_web}/zabbix.php?action=host.view&hostid={(it.get('hosts') or [{}])[0].get('hostid')}"
+                        if base_web and (it.get("hosts") or [{}])[0].get("hostid")
+                        else None
+                    ),
                 }
             )
         zbx["historical"] = ev_items
@@ -3011,7 +3501,19 @@ def home_aggregate(
     # Jira: tickets containing text (last 365d to be practical)
     try:
         mr = int(jlimit) if int(jlimit) > 0 else 50
-        res = jira_search(q=q, jql=None, project=None, status=None, assignee=None, priority=None, issuetype=None, updated="-365d", team=None, only_open=0, max_results=mr)
+        res = jira_search(
+            q=q,
+            jql=None,
+            project=None,
+            status=None,
+            assignee=None,
+            priority=None,
+            issuetype=None,
+            updated="-365d",
+            team=None,
+            only_open=0,
+            max_results=mr,
+        )
         out["jira"] = {"total": res.get("total", 0), "issues": res.get("issues", [])}
     except HTTPException as ex:
         out["jira"] = {"error": ex.detail}
@@ -3045,6 +3547,7 @@ def home_aggregate(
 # Jira integration (search)
 # ---------------------------
 
+
 def _jira_cfg() -> dict[str, str]:
     """Return Atlassian (Jira) credentials.
 
@@ -3065,7 +3568,10 @@ def _jira_configured() -> bool:
 def _jira_session() -> tuple[requests.Session, str]:
     cfg = _jira_cfg()
     if not (cfg["base"] and cfg["email"] and cfg["token"]):
-        raise HTTPException(status_code=400, detail="Jira not configured: set ATLASSIAN_BASE_URL, ATLASSIAN_EMAIL, ATLASSIAN_API_TOKEN in .env")
+        raise HTTPException(
+            status_code=400,
+            detail="Jira not configured: set ATLASSIAN_BASE_URL, ATLASSIAN_EMAIL, ATLASSIAN_API_TOKEN in .env",
+        )
     sess = requests.Session()
     sess.auth = (cfg["email"], cfg["token"])  # Basic auth for Jira Cloud
     sess.headers.update({"Accept": "application/json"})
@@ -3087,7 +3593,7 @@ def _jira_build_jql(
     parts: list[str] = []
     # Only open maps better via statusCategory != Done (workflow agnostic)
     if only_open:
-        parts.append('statusCategory != Done')
+        parts.append("statusCategory != Done")
     if project:
         # Accept both key and name
         p = project.strip()
@@ -3140,7 +3646,9 @@ def _jira_build_jql(
             parts.append(f"updated >= {up}")
     # Jira /search/jql requires bounded queries; if user provided no limiting filters,
     # apply a safe default of last 30 days to avoid 400 errors.
-    if not any([project, status, assignee, priority, issuetype, team, (updated and updated.strip()), (q and q.strip())]):
+    if not any(
+        [project, status, assignee, priority, issuetype, team, (updated and updated.strip()), (q and q.strip())]
+    ):
         parts.append("updated >= -30d")
     if q and q.strip():
         # text ~ search across summary, description, comments (Cloud behavior)
@@ -3175,16 +3683,20 @@ def jira_search(
 ):
     sess, base = _jira_session()
     # Build JQL
-    jql_str = jql.strip() if jql and jql.strip() else _jira_build_jql(
-        q=q,
-        project=project,
-        status=status,
-        assignee=assignee,
-        priority=priority,
-        issuetype=issuetype,
-        updated=updated,
-        team=team,
-        only_open=bool(only_open),
+    jql_str = (
+        jql.strip()
+        if jql and jql.strip()
+        else _jira_build_jql(
+            q=q,
+            project=project,
+            status=status,
+            assignee=assignee,
+            priority=priority,
+            issuetype=issuetype,
+            updated=updated,
+            team=team,
+            only_open=bool(only_open),
+        )
     )
     fields = [
         "key",
@@ -3237,30 +3749,40 @@ def jira_search(
             issues = data["results"][0].get("issues", [])
     out: list[dict[str, Any]] = []
     for it in issues:
-        try:
-            k = it.get("key") or ""
-            f = it.get("fields", {}) or {}
-            out.append({
-                "key": k,
-                "summary": f.get("summary") or "",
-                "status": ((f.get("status") or {}).get("name") or ""),
-                "assignee": ((f.get("assignee") or {}).get("displayName") or ""),
-                "priority": ((f.get("priority") or {}).get("name") or ""),
-                "issuetype": ((f.get("issuetype") or {}).get("name") or ""),
-                "project": ((f.get("project") or {}).get("key") or ((f.get("project") or {}).get("name") or "")),
-                "updated": (f.get("updated") or ""),
-                "created": (f.get("created") or ""),
-                "url": f"{base}/browse/{k}" if k else "",
-            })
-        except Exception:
+        if not isinstance(it, Mapping):
             continue
+        k = str(it.get("key") or "")
+        fields = it.get("fields")
+        f = fields if isinstance(fields, Mapping) else {}
+        out.append(
+            {
+                "key": k,
+                "summary": str(f.get("summary") or ""),
+                "status": str((f.get("status") or {}).get("name") or ""),
+                "assignee": str((f.get("assignee") or {}).get("displayName") or ""),
+                "priority": str((f.get("priority") or {}).get("name") or ""),
+                "issuetype": str((f.get("issuetype") or {}).get("name") or ""),
+                "project": (
+                    str((f.get("project") or {}).get("key") or "")
+                    or str((f.get("project") or {}).get("name") or "")
+                ),
+                "updated": str(f.get("updated") or ""),
+                "created": str(f.get("created") or ""),
+                "url": f"{base}/browse/{k}" if k else "",
+            }
+        )
     total = 0
     if isinstance(data, dict):
         # New endpoint may not return 'total'; compute from page or use provided
         total = int(data.get("total", 0) or 0)
         if not total and isinstance(data.get("isLast"), bool):
             total = len(out)
-        if not total and isinstance(data.get("results"), list) and data["results"] and isinstance(data["results"][0], dict):
+        if (
+            not total
+            and isinstance(data.get("results"), list)
+            and data["results"]
+            and isinstance(data["results"][0], dict)
+        ):
             total = int(data["results"][0].get("total", 0) or 0)
         if not total:
             total = len(out)
@@ -3316,7 +3838,7 @@ def _cql_build(
             parts.append(f"lastmodified >= '{up}'")
     # Add text query last to help relevance
     if q and q.strip():
-        qq = q.replace("\"", "\\\"")
+        qq = q.replace('"', '\\"')
         parts.append(f'text ~ "{qq}"')
     # Bound the query if still empty (avoid unbounded errors/pagination surprises)
     if not parts:
@@ -3348,12 +3870,11 @@ def confluence_search(
 
     # Resolve space names to keys when needed (names often contain spaces; CQL expects keys)
     def _resolve_space_keys(raw: str) -> list[str]:
-        toks = [t.strip() for t in (raw or '')
-                .split(',') if t.strip()]
+        toks = [t.strip() for t in (raw or "").split(",") if t.strip()]
         keys: list[str] = []
         for t in toks:
             # Likely a key if no spaces and matches typical key charset
-            if t and all((ch.isalnum() or ch in ('_', '-')) for ch in t) and (not any(ch.isspace() for ch in t)):
+            if t and all((ch.isalnum() or ch in ("_", "-")) for ch in t) and (not any(ch.isspace() for ch in t)):
                 keys.append(t)
                 continue
             # 1) Lookup by name using CQL; then keep only exact title/name matches
@@ -3366,7 +3887,11 @@ def confluence_search(
                     data_s = r_s.json()
                     for it in data_s.get("results", []) or []:
                         sp = it.get("space", {}) if isinstance(it, dict) else {}
-                        name = (sp.get("name") or it.get("title") or "") if isinstance(sp, dict) else (it.get("title") or "")
+                        name = (
+                            (sp.get("name") or it.get("title") or "")
+                            if isinstance(sp, dict)
+                            else (it.get("title") or "")
+                        )
                         if isinstance(name, str) and name.strip().lower() == t.strip().lower():
                             k = sp.get("key") if isinstance(sp, dict) else None
                             if k and (k not in exact_keys):
@@ -3421,54 +3946,60 @@ def confluence_search(
 
     items = data.get("results", []) if isinstance(data, dict) else []
     out: list[dict[str, Any]] = []
-    for it in (items or []):
-        try:
-            content = it.get("content", {}) if isinstance(it, dict) else {}
-            title = content.get("title") or it.get("title") or ""
-            ctype_val = content.get("type") or it.get("type") or ""
-            space_obj = content.get("space", {}) if isinstance(content, dict) else {}
-            space_key = space_obj.get("key") if isinstance(space_obj, dict) else None
-            space_name = space_obj.get("name") if isinstance(space_obj, dict) else None
-            # Fallbacks for space: resultGlobalContainer title/displayUrl
-            if not space_name:
-                rgc = it.get("resultGlobalContainer", {}) if isinstance(it, dict) else {}
-                if isinstance(rgc, dict):
-                    space_name = space_name or rgc.get("title")
-                    disp = rgc.get("displayUrl") or ""
-                    if (not space_key) and isinstance(disp, str) and "/spaces/" in disp:
-                        try:
-                            space_key = disp.split("/spaces/")[1].split("/")[0]
-                        except Exception:
-                            pass
-            links = (content.get("_links") or it.get("_links") or {})
-            webui = links.get("webui") or links.get("base")
-            link = wiki + webui if (isinstance(webui, str) and webui.startswith("/")) else (wiki + "/" + webui if webui else "")
-            # last modified
-            lastmod = None
-            hist = content.get("history") if isinstance(content, dict) else None
-            if isinstance(hist, dict):
-                last = hist.get("lastUpdated")
-                if isinstance(last, dict):
-                    lastmod = last.get("when")
-            # Fallbacks for updated
-            if not lastmod:
-                lastmod = it.get("lastModified") or it.get("friendlyLastModified") or ""
-            out.append({
+    for it in items or []:
+        if not isinstance(it, Mapping):
+            continue
+        content_raw = it.get("content")
+        content = content_raw if isinstance(content_raw, Mapping) else {}
+        title = str(content.get("title") or it.get("title") or "")
+        ctype_val = str(content.get("type") or it.get("type") or "")
+        space_obj_raw = content.get("space")
+        space_obj = space_obj_raw if isinstance(space_obj_raw, Mapping) else {}
+        space_key = space_obj.get("key") if isinstance(space_obj, Mapping) else None
+        space_name = space_obj.get("name") if isinstance(space_obj, Mapping) else None
+        if not space_name:
+            rgc_raw = it.get("resultGlobalContainer")
+            rgc = rgc_raw if isinstance(rgc_raw, Mapping) else {}
+            if rgc:
+                space_name = space_name or rgc.get("title")
+                disp = rgc.get("displayUrl") or ""
+                if (not space_key) and isinstance(disp, str) and "/spaces/" in disp:
+                    parts = disp.split("/spaces/")
+                    if len(parts) > 1:
+                        tail = parts[1]
+                        space_key = tail.split("/")[0]
+        links_raw = content.get("_links") or it.get("_links")
+        links = links_raw if isinstance(links_raw, Mapping) else {}
+        webui = links.get("webui") or links.get("base")
+        link = (
+            wiki + webui
+            if isinstance(webui, str) and webui.startswith("/")
+            else (wiki + "/" + webui if isinstance(webui, str) and webui else "")
+        )
+        lastmod = None
+        hist_raw = content.get("history")
+        hist = hist_raw if isinstance(hist_raw, Mapping) else {}
+        last = hist.get("lastUpdated") if isinstance(hist, Mapping) else None
+        if isinstance(last, Mapping):
+            lastmod = last.get("when")
+        if not lastmod:
+            lastmod = it.get("lastModified") or it.get("friendlyLastModified") or ""
+        out.append(
+            {
                 "title": title,
                 "type": ctype_val,
-                # Prefer human-friendly space name; fall back to key
                 "space": (space_name or space_key or ""),
                 "space_key": (space_key or ""),
                 "space_name": (space_name or ""),
                 "updated": lastmod or "",
                 "url": link,
-            })
-        except Exception:
-            continue
+            }
+        )
     total = int(data.get("size", 0) or 0) if isinstance(data, dict) else len(out)
     if not total:
         total = len(out)
     return {"total": total, "cql": cql, "results": out}
+
 
 @app.get("/devices")
 def devices(
@@ -3488,6 +4019,7 @@ def vms(
     order_dir: Literal["asc", "desc"] = Query("asc"),
 ):
     return _list_records("netbox_vms_export.csv", limit, offset, order_by, order_dir)
+
 
 @app.get("/all")
 def all_merged(
@@ -3515,6 +4047,7 @@ def _nb_session() -> tuple[requests.Session, str]:
     sess.headers.update({"Authorization": f"Token {token}", "Accept": "application/json"})
     try:
         from .env import apply_extra_headers as _apply
+
         _apply(sess)
     except Exception:
         pass
@@ -3525,7 +4058,7 @@ def _nb_session() -> tuple[requests.Session, str]:
 def netbox_search(
     dataset: Literal["devices", "vms", "all"] = Query("all"),
     q: str = Query("", description="Full-text query passed to NetBox ?q="),
-    limit: int = Query(50, ge=0, le=5000, description="0 = no limit (fetch all pages)")
+    limit: int = Query(50, ge=0, le=5000, description="0 = no limit (fetch all pages)"),
 ):
     """Search NetBox live (no CSV) using the built-in ?q= filter.
 
@@ -3542,7 +4075,7 @@ def netbox_search(
 
     def _get(addr):
         r = sess.get(addr, timeout=30)
-        if r.status_code == 401 or r.status_code == 403:
+        if r.status_code in {401, 403}:
             raise HTTPException(status_code=r.status_code, detail=f"NetBox auth failed: {r.text[:200]}")
         r.raise_for_status()
         return r.json()
@@ -3581,12 +4114,18 @@ def netbox_search(
             if isinstance(cf, dict):
                 # Common variants people use for OOB/IPMI management
                 for key in [
-                    "oob_ip", "oob_ip4", "oob_ip6",
-                    "out_of_band_ip", "out_of_band",
-                    "management_ip", "mgmt_ip", "mgmt_ip4", "mgmt_ip6",
+                    "oob_ip",
+                    "oob_ip4",
+                    "oob_ip6",
+                    "out_of_band_ip",
+                    "out_of_band",
+                    "management_ip",
+                    "mgmt_ip",
+                    "mgmt_ip4",
+                    "mgmt_ip6",
                 ]:
                     val = cf.get(key)
-                    if isinstance(val, (str, int, float)) and str(val).strip():
+                    if isinstance(val, str | int | float) and str(val).strip():
                         oob = str(val).strip()
                         break
         except Exception:
@@ -3651,14 +4190,15 @@ def netbox_search(
                 rows.append(v)
         # Always include IP addresses when searching 'all'
         if dataset == "all":
+
             def _map_ip(it: dict) -> dict[str, Any]:
                 addr = it.get("address") or ""
                 status = _status_label(it.get("status"))
-                vrf = ((it.get("vrf") or {}).get("name") or "")
+                vrf = (it.get("vrf") or {}).get("name") or ""
                 assigned = ""
                 ao = it.get("assigned_object") or {}
                 if isinstance(ao, dict):
-                    assigned = (ao.get("display") or ao.get("name") or "")
+                    assigned = ao.get("display") or ao.get("name") or ""
                 ui_path = f"/ipam/ip-addresses/{it.get('id')}/" if it.get("id") is not None else ""
                 updated = it.get("last_updated") or ""
                 return {
@@ -3672,6 +4212,7 @@ def netbox_search(
                     "Updated": updated,
                     "ui_path": ui_path,
                 }
+
             ip_results = _collect("/api/ipam/ip-addresses/", q, max_items)
             for it in ip_results:
                 rows.append(_map_ip(it))

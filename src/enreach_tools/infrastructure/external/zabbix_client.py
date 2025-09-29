@@ -19,6 +19,13 @@ from enreach_tools.domain.integrations import (
 from enreach_tools.domain.integrations.zabbix import JSONValue
 
 
+def _safe_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
 class ZabbixError(Exception):
     """Base class for Zabbix-related errors."""
 
@@ -85,7 +92,7 @@ class ZabbixClient:
 
     def expand_groupids(self, group_ids: Iterable[int]) -> tuple[int, ...]:
         """Return group_ids plus subgroup IDs based on name prefixes."""
-        result = tuple(int(gid) for gid in group_ids if isinstance(gid, (int, str)))
+        result = tuple(int(gid) for gid in group_ids if isinstance(gid, int | str))
         if not result:
             return result
         try:
@@ -99,11 +106,8 @@ class ZabbixClient:
             return result
         id_to_name: dict[int, str] = {}
         for g in groups:
-            try:
-                gid = int(_val(g, "groupid") or 0)
-                nm = str(_val(g, "name") or "").strip()
-            except Exception:
-                continue
+            gid = _safe_int(_val(g, "groupid") or 0)
+            nm = str(_val(g, "name") or "").strip()
             if gid:
                 id_to_name[gid] = nm
         prefixes = [id_to_name.get(int(g), "").strip() for g in result]
@@ -111,11 +115,8 @@ class ZabbixClient:
         expanded: set[int] = set(int(g) for g in result)
         if prefixes:
             for g in groups:
-                try:
-                    gid = int(_val(g, "groupid") or 0)
-                    nm = str(_val(g, "name") or "").strip()
-                except Exception:
-                    continue
+                gid = _safe_int(_val(g, "groupid") or 0)
+                nm = str(_val(g, "name") or "").strip()
                 for prefix in prefixes:
                     if nm == prefix or nm.startswith(prefix + "/"):
                         expanded.add(gid)
@@ -131,6 +132,10 @@ class ZabbixClient:
         unacknowledged: bool = False,
         suppressed: bool | None = None,
         limit: int = 300,
+        recent: bool = False,
+        search: str | None = None,
+        time_from: int | None = None,
+        time_till: int | None = None,
     ) -> ZabbixProblemList:
         params: dict[str, Any] = {
             "output": [
@@ -160,6 +165,15 @@ class ZabbixClient:
             params["acknowledged"] = 0
         if suppressed is not None:
             params["suppressed"] = 1 if suppressed else 0
+        if recent:
+            params["recent"] = True
+        if search:
+            params["search"] = {"name": search}
+            params["searchWildcardsEnabled"] = "true"
+        if time_from:
+            params["time_from"] = int(time_from)
+        if time_till:
+            params["time_till"] = int(time_till)
 
         res = self.rpc("problem.get", params)
         problems = []

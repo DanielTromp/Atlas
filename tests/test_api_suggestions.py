@@ -4,7 +4,6 @@ import importlib
 import os
 from tempfile import TemporaryDirectory
 
-app_module = importlib.import_module("enreach_tools.api.app")
 from enreach_tools.api.app import (
     SuggestionCommentCreate,
     SuggestionCreate,
@@ -16,6 +15,8 @@ from enreach_tools.api.app import (
     suggestions_like,
     suggestions_list,
 )
+
+app_module = importlib.import_module("enreach_tools.api.app")
 
 
 def test_suggestions_crud_flow():

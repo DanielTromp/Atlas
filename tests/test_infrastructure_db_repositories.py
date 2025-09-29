@@ -78,7 +78,8 @@ def test_user_api_key_repository_filters_by_user():
 
         repo = SqlAlchemyUserAPIKeyRepository(session)
         keys = repo.list_for_user("user-1")
-        assert len(keys) == 1 and keys[0].provider == "netbox"
+        assert len(keys) == 1
+        assert keys[0].provider == "netbox"
         assert repo.get("user-1", "netbox") is not None
         assert repo.get("user-1", "missing") is None
 
@@ -134,4 +135,5 @@ def test_chat_session_repository_message_order():
         messages = repo.get_messages("session-db-1")
         assert [m.id for m in messages] == ["msg-1", "msg-2"]
         session_entity = repo.get_session("session-1")
-        assert session_entity and session_entity.title == "Chat"
+        assert session_entity is not None
+        assert session_entity.title == "Chat"

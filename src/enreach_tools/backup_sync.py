@@ -99,6 +99,8 @@ def _iter_paths(paths: Iterable[Path], data_dir: Path) -> list[tuple[Path, str]]
         try:
             path = Path(p).resolve()
         except Exception:
+            path = None
+        if path is None:
             continue
         
         if not path.exists() or not path.is_file():
@@ -232,7 +234,7 @@ def _backup_scp(config: BackupConfig, file_paths: list[tuple[Path, str]]) -> dic
         
         # Execute SCP
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            subprocess.run(cmd, capture_output=True, text=True, check=True)
             uploads.append({
                 "local_path": str(local_path),
                 "remote_path": remote_file,

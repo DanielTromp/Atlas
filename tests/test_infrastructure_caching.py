@@ -48,7 +48,7 @@ def test_cache_registry_invalidate_all() -> None:
 
 
 def test_global_registry_registers_named_caches() -> None:
-    cache = TTLCache[int, int](ttl_seconds=10, name="global.cache")
+    _ = TTLCache[int, int](ttl_seconds=10, name="global.cache")
     registry = get_cache_registry()
     assert "global.cache" in registry.list_caches()
     registry.invalidate("global.cache")

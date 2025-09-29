@@ -14,7 +14,7 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     trace = None  # type: ignore
 
-_TRACER: Any | None = None
+_TRACING_STATE: dict[str, Any | None] = {"tracer": None}
 
 
 def tracing_enabled() -> bool:
@@ -23,8 +23,7 @@ def tracing_enabled() -> bool:
 
 
 def init_tracing(service_name: str = "enreach-tools") -> None:
-    global _TRACER
-    if _TRACER is not None or not tracing_enabled() or trace is None:
+    if _TRACING_STATE["tracer"] is not None or not tracing_enabled() or trace is None:
         return
 
     endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "").strip() or "http://localhost:4318"
@@ -33,13 +32,14 @@ def init_tracing(service_name: str = "enreach-tools") -> None:
     processor = BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint))
     provider.add_span_processor(processor)
     trace.set_tracer_provider(provider)
-    _TRACER = trace.get_tracer(service_name)
+    _TRACING_STATE["tracer"] = trace.get_tracer(service_name)
 
 
 def span(name: str, **attributes: Any):
-    if _TRACER is None:
+    tracer = _TRACING_STATE.get("tracer")
+    if tracer is None:
         return _null_context()
-    span = _TRACER.start_span(name)
+    span = tracer.start_span(name)
     for key, value in attributes.items():
         span.set_attribute(key, value)
     return _SpanContext(span)

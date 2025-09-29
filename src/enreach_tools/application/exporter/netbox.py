@@ -16,6 +16,13 @@ from enreach_tools import backup_sync
 from enreach_tools.domain.integrations import NetboxDeviceRecord, NetboxVMRecord
 
 
+def _coerce_int(value: object) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 @dataclass(slots=True)
 class ExportPaths:
     data_dir: Path
@@ -313,9 +320,8 @@ def _load_existing_vm_csv(path: Path) -> dict[int, dict[str, object]]:
         for row in reader:
             if not row.get("ID"):
                 continue
-            try:
-                vm_id = int(row["ID"])
-            except Exception:
+            vm_id = _coerce_int(row.get("ID"))
+            if vm_id is None:
                 continue
             data[vm_id] = {"last_updated": row.get("Last updated"), "row_data": row}
     return data
@@ -453,7 +459,7 @@ def _write_vm_csv(path: Path, existing: Mapping[int, dict[str, object]]) -> None
     with path.open("w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=headers)
         writer.writeheader()
-        for vm_id, payload in existing.items():
+        for _vm_id, payload in existing.items():
             row_data = payload.get("row_data")
             if isinstance(row_data, dict):
                 writer.writerow(row_data)
@@ -630,14 +636,14 @@ def _get_device_contacts(nb, device) -> str:
     for params in filter_attempts:
         try:
             result_iter = ca_ep.filter(**params)
-            result: list[object] = []
-            for item in result_iter:
-                result.append(item)
-            if result:
-                assignments = result
-                break
         except Exception:
+            result_iter = None
+        if result_iter is None:
             continue
+        result: list[object] = list(result_iter)
+        if result:
+            assignments = result
+            break
 
     return _render_assignments(nb, assignments)
 
@@ -667,14 +673,14 @@ def _get_vm_contacts(nb, vm) -> str:
     for params in filter_attempts:
         try:
             result_iter = ca_ep.filter(**params)
-            result: list[object] = []
-            for item in result_iter:
-                result.append(item)
-            if result:
-                assignments = result
-                break
         except Exception:
+            result_iter = None
+        if result_iter is None:
             continue
+        result: list[object] = list(result_iter)
+        if result:
+            assignments = result
+            break
 
     contacts = []
     for assignment in assignments:
@@ -770,10 +776,10 @@ def _prefetch_contact_assignments(
         identifier = getattr(record, "id", None)
         if identifier is None:
             continue
-        try:
-            normalized_ids.append(int(identifier))
-        except Exception:
+        coerced = _coerce_int(identifier)
+        if coerced is None:
             continue
+        normalized_ids.append(coerced)
 
     if not normalized_ids:
         return {}

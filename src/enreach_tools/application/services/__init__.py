@@ -11,6 +11,11 @@ from enreach_tools.domain.entities import (
     UserEntity,
 )
 
+from .admin import AdminService, create_admin_service
+from .chat import DefaultChatHistoryService, create_chat_history_service
+from .netbox import NetboxExportService
+from .users import DefaultUserService, create_user_service
+
 
 class UserService(Protocol):
     """High-level operations for user management."""
@@ -43,11 +48,6 @@ class ChatHistoryService(Protocol):
     def get_session(self, session_slug: str) -> ChatSessionEntity | None:
         ...
 
-
-from .admin import AdminService, create_admin_service
-from .chat import DefaultChatHistoryService, create_chat_history_service
-from .netbox import NetboxExportService
-from .users import DefaultUserService, create_user_service
 
 __all__ = [
     "AdminService",

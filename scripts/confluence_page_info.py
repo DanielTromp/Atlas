@@ -3,8 +3,9 @@ import html
 import json
 import os
 import re
-import urllib.request
-from urllib.error import HTTPError, URLError
+import urllib.parse
+
+import requests
 
 
 def extract_page_id(s: str) -> str | None:
@@ -31,11 +32,19 @@ def strip_html(text: str, limit: int = 300) -> str:
 
 def confluence_request(path: str, base_url: str, auth_header: str):
     url = base_url.rstrip("/") + path
-    req = urllib.request.Request(url)
-    req.add_header("Authorization", auth_header)
-    req.add_header("Accept", "application/json")
-    with urllib.request.urlopen(req, timeout=30) as r:
-        return json.loads(r.read().decode("utf-8"))
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError(f"Unsupported URL scheme: {parsed.scheme}")
+    response = requests.get(
+        url,
+        headers={
+            "Authorization": auth_header,
+            "Accept": "application/json",
+        },
+        timeout=30,
+    )
+    response.raise_for_status()
+    return response.json()
 
 
 def main() -> int:
@@ -102,7 +111,7 @@ def main() -> int:
                 "by": (version.get("by") or {}).get("displayName"),
                 "when": version.get("when"),
             },
-            "labels": [l.get("name") for l in labels if isinstance(l, dict)],
+            "labels": [label.get("name") for label in labels if isinstance(label, dict)],
             "attachments_count": attachments_count,
             "children_count": children_count,
             "excerpt": strip_html(body_view_html, 400),
@@ -112,14 +121,16 @@ def main() -> int:
         }
 
         print(json.dumps({"ok": True, "summary": summary}, ensure_ascii=False))
-    except HTTPError as e:
-        body = e.read().decode("utf-8", "ignore") if hasattr(e, "read") else ""
-        print(json.dumps({"ok": False, "status": getattr(e, "code", None), "reason": getattr(e, "reason", None), "body": body[:2000]}))
-    except URLError as e:
+    except requests.HTTPError as e:
+        response = e.response
+        body = response.text if response is not None else ""
+        status = response.status_code if response is not None else None
+        reason = response.reason if response is not None else None
+        print(json.dumps({"ok": False, "status": status, "reason": reason, "body": body[:2000]}))
+    except requests.RequestException as e:
         print(json.dumps({"ok": False, "error": str(e)}))
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

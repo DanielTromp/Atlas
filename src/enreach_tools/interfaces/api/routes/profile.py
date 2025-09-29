@@ -1,6 +1,8 @@
 """Profile management endpoints."""
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from enreach_tools.application.dto.profile import (
@@ -15,12 +17,14 @@ from enreach_tools.interfaces.api.schemas import APIKeyPayload, PasswordChange, 
 
 router = APIRouter(prefix="/profile")
 
+ProfileServiceDep = Annotated[ProfileService, Depends(get_profile_service)]
+
 
 @router.patch("")
 def update_profile(
     payload: ProfileUpdate,
     current_user: CurrentUserDep,
-    service: ProfileService = Depends(get_profile_service),
+    service: ProfileServiceDep,
 ):
     if payload.email and "@" not in payload.email:
         raise HTTPException(status_code=400, detail="Invalid email address")
@@ -37,7 +41,7 @@ def update_profile(
 def change_password(
     payload: PasswordChange,
     current_user: CurrentUserDep,
-    service: ProfileService = Depends(get_profile_service),
+    service: ProfileServiceDep,
 ):
     new_password = (payload.new_password or "").strip()
     current_password = (payload.current_password or "").strip() if payload.current_password else ""
@@ -56,7 +60,7 @@ def change_password(
 @router.get("/api-keys")
 def list_api_keys(
     current_user: CurrentUserDep,
-    service: ProfileService = Depends(get_profile_service),
+    service: ProfileServiceDep,
 ):
     entities = service.list_api_keys(current_user.id)
     return [dto.dict_clean() for dto in api_keys_to_dto(entities)]
@@ -67,7 +71,7 @@ def upsert_api_key(
     provider: str,
     payload: APIKeyPayload,
     current_user: CurrentUserDep,
-    service: ProfileService = Depends(get_profile_service),
+    service: ProfileServiceDep,
 ):
     provider_norm = (provider or "").strip().lower()
     if not provider_norm:
@@ -85,7 +89,7 @@ def upsert_api_key(
 def delete_api_key(
     provider: str,
     current_user: CurrentUserDep,
-    service: ProfileService = Depends(get_profile_service),
+    service: ProfileServiceDep,
 ):
     provider_norm = (provider or "").strip().lower()
     try:

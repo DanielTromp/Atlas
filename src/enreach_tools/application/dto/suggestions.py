@@ -4,6 +4,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from datetime import datetime
 
+from pydantic import Field
+
 from .base import DomainModel
 
 
@@ -25,7 +27,7 @@ class SuggestionDTO(DomainModel):
     classification_color: str | None = None
     classification_letter: str | None = None
     status_label: str | None = None
-    comments: list[SuggestionCommentDTO] = []
+    comments: list[SuggestionCommentDTO] = Field(default_factory=list)
 
 
 class SuggestionMetaClassification(DomainModel):

@@ -5,34 +5,33 @@ import logging
 import os
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Any, Dict
-
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from typing import Any
 
-_LOGGING_INITIALISED = False
-_LOG_CONTEXT: ContextVar[dict[str, Any]] = ContextVar("enreach_log_context", default={})
-_CONTEXT_FILTER: _ContextFilter | None = None
+_LOGGING_STATE: dict[str, Any] = {"initialised": False, "context_filter": None}
+_LOG_CONTEXT: ContextVar[dict[str, Any] | None] = ContextVar("enreach_log_context", default=None)
 _ORIGINAL_FACTORY = logging.getLogRecordFactory()
 
 
 def setup_logging(level: str | int | None = None, *, structured: bool | None = None) -> None:
     """Initialise application logging with safe defaults."""
 
-    global _LOGGING_INITIALISED
-
     resolved_level = _resolve_level(level)
     resolved_structured = _resolve_structured(structured)
 
     root = logging.getLogger()
 
-    if not _LOGGING_INITIALISED:
+    if not _LOGGING_STATE["initialised"]:
         logging.basicConfig(
             level=resolved_level,
             format="%(asctime)s | %(levelname)s | %(name)s | %(message)s%(log_context)s",
         )
         _install_log_record_factory()
-        _LOGGING_INITIALISED = True
+        _LOGGING_STATE["initialised"] = True
+
+    if _LOG_CONTEXT.get() is None:
+        _LOG_CONTEXT.set({})
 
     root.setLevel(resolved_level)
 
@@ -48,7 +47,7 @@ def _install_log_record_factory() -> None:
         record = _ORIGINAL_FACTORY(*args, **kwargs)
         if "log_context" not in record.__dict__:
             record.log_context = ""
-        context = _LOG_CONTEXT.get()
+        context = _LOG_CONTEXT.get() or {}
         for key, value in context.items():
             if key not in record.__dict__:
                 setattr(record, key, value)
@@ -58,18 +57,19 @@ def _install_log_record_factory() -> None:
 
 
 def _install_context_filter(*, force: bool = False) -> None:
-    global _CONTEXT_FILTER
-    if _CONTEXT_FILTER is None:
-        _CONTEXT_FILTER = _ContextFilter()
+    context_filter = _LOGGING_STATE.get("context_filter")
+    if context_filter is None:
+        context_filter = _ContextFilter()
+        _LOGGING_STATE["context_filter"] = context_filter
 
     root = logging.getLogger()
-    if force or _CONTEXT_FILTER not in getattr(root, "filters", []):
-        root.addFilter(_CONTEXT_FILTER)
+    if force or context_filter not in getattr(root, "filters", []):
+        root.addFilter(context_filter)
 
     for handler in root.handlers:
         filters = getattr(handler, "filters", [])
-        if force or _CONTEXT_FILTER not in filters:
-            handler.addFilter(_CONTEXT_FILTER)
+        if force or context_filter not in filters:
+            handler.addFilter(context_filter)
 
 
 def _install_file_handler(level: int) -> None:
@@ -82,14 +82,16 @@ def _install_file_handler(level: int) -> None:
         if getattr(handler, "baseFilename", None) == target_str
     ]
 
+    context_filter = _LOGGING_STATE.get("context_filter")
+
     if existing:
         primary = existing[0]
         primary.setLevel(level)
         primary.setFormatter(
             logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s%(log_context)s")
         )
-        if _CONTEXT_FILTER is not None and _CONTEXT_FILTER not in getattr(primary, "filters", []):
-            primary.addFilter(_CONTEXT_FILTER)
+        if context_filter is not None and context_filter not in getattr(primary, "filters", []):
+            primary.addFilter(context_filter)
         for duplicate in existing[1:]:
             root.removeHandler(duplicate)
             try:
@@ -107,8 +109,8 @@ def _install_file_handler(level: int) -> None:
     handler.setFormatter(
         logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s%(log_context)s")
     )
-    if _CONTEXT_FILTER is not None:
-        handler.addFilter(_CONTEXT_FILTER)
+    if context_filter is not None:
+        handler.addFilter(context_filter)
 
     root.addHandler(handler)
 
@@ -170,14 +172,14 @@ def _configure_structlog(level: int) -> None:
     ]
 
     structlog.configure(
-        processors=shared_processors + [structlog.processors.JSONRenderer()],
+        processors=[*shared_processors, structlog.processors.JSONRenderer()],
         wrapper_class=structlog.make_filtering_bound_logger(level),
         context_class=dict,
     )
 
 
 def get_logger(name: str | None = None) -> logging.Logger:
-    if not _LOGGING_INITIALISED:
+    if not _LOGGING_STATE["initialised"]:
         setup_logging()
     logger = logging.getLogger(name or "enreach")
     logger.disabled = False
@@ -186,7 +188,8 @@ def get_logger(name: str | None = None) -> logging.Logger:
 
 @contextmanager
 def logging_context(**kwargs: Any):
-    current = dict(_LOG_CONTEXT.get())
+    base_context = _LOG_CONTEXT.get() or {}
+    current = dict(base_context)
     current.update({k: v for k, v in kwargs.items() if v is not None})
     token = _LOG_CONTEXT.set(current)
     try:

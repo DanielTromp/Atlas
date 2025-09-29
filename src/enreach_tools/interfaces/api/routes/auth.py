@@ -1,6 +1,8 @@
 """Authentication and user profile endpoints wired via application services."""
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastapi import APIRouter, Depends
 
 from enreach_tools.application.dto import user_to_dto
@@ -10,11 +12,13 @@ from enreach_tools.interfaces.api.dependencies import CurrentUserDep, get_user_s
 
 router = APIRouter()
 
+UserServiceDep = Annotated[DefaultUserService, Depends(get_user_service)]
+
 
 @router.get("/auth/me")
 def auth_me(
     current_user: CurrentUserDep,
-    user_service: DefaultUserService = Depends(get_user_service),
+    user_service: UserServiceDep,
 ):
     """Return the authenticated user's profile."""
     entity = user_service.get_current_user(current_user.id)

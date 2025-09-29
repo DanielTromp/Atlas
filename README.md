@@ -72,6 +72,7 @@ Diagnostics
 -----------
 
 - `uv run enreach status` checks `/api/status/` and a token‑protected endpoint for quick 200/403 diagnostics.
+- Logging pipeline overview and configuration live in `docs/logging.md`.
 
 Performance Benchmarks
 ----------------------
@@ -185,6 +186,9 @@ CLI (Jira/Confluence/Zabbix)
 - Zabbix problems (existing):
   - `uv run enreach zabbix problems --limit 20 --severities 2,3,4`
   - Filters: `--groupids`, `--all` (include acknowledged)
+- Zabbix dashboard (mirrors /app/#zabbix view):
+  - `uv run enreach zabbix dashboard --systems-only --unack-only`
+  - Add `--json` for automation, `--groupids/--hostids/--severities` to override defaults, and `--include-subgroups/--no-include-subgroups` when you manage group scoping yourself.
 
 - NetBox helpers:
   - Live search (no CSV):
@@ -195,14 +199,14 @@ CLI (Jira/Confluence/Zabbix)
     - By name: `uv run enreach netbox device-json --name edge01`
     - Add `--raw` to print raw JSON without pretty formatting.
 
-- Cross-system search (Home aggregator):
+- Cross-system search (Search aggregator):
   - `uv run enreach search run --q "vw746" --json`
   - Options:
     - `--zlimit 0` (Zabbix max items; 0 = no limit)
     - `--jlimit 0` (Jira max issues; 0 = no limit; upstream caps may apply)
     - `--climit 0` (Confluence max results; 0 = no limit; upstream caps may apply)
     - `--json` to output full JSON with all fields (links, statuses, timestamps)
-    - `--out home.json` to save the full JSON to a file
+    - `--out search.json` to save the full JSON to a file
 
 Notes:
 - `-h` is available as an alias for `--help` on all commands and groups.

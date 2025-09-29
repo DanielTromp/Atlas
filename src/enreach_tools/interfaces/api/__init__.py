@@ -4,12 +4,13 @@ from fastapi import APIRouter
 
 from enreach_tools.infrastructure.logging import setup_logging
 
-from .routes import admin, auth, profile
+from .routes import admin, auth, profile, tools
 
 router = APIRouter()
 router.include_router(auth.router)
 router.include_router(profile.router)
 router.include_router(admin.router)
+router.include_router(tools.router)
 
 
 def bootstrap_api() -> APIRouter:

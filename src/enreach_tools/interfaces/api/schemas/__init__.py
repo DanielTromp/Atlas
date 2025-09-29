@@ -8,6 +8,7 @@ from .account import (
     PasswordChange,
     ProfileUpdate,
 )
+from .tools import ToolCatalog, ToolDefinition, ToolLink, ToolParameter
 
 __all__ = [
     "APIKeyPayload",
@@ -16,4 +17,8 @@ __all__ = [
     "AdminUpdateUser",
     "PasswordChange",
     "ProfileUpdate",
+    "ToolCatalog",
+    "ToolDefinition",
+    "ToolLink",
+    "ToolParameter",
 ]

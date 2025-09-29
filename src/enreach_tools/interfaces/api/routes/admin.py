@@ -1,6 +1,8 @@
 """Admin management endpoints."""
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastapi import APIRouter, Body, Depends, HTTPException
 
 from enreach_tools.application.dto.admin import (
@@ -20,12 +22,18 @@ from enreach_tools.interfaces.api.schemas import (
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
+AdminServiceDep = Annotated[AdminService, Depends(get_admin_service)]
+AdminCreateUserBody = Annotated[AdminCreateUser, Body(...)]
+AdminUpdateUserBody = Annotated[AdminUpdateUser, Body(...)]
+AdminSetPasswordBody = Annotated[AdminSetPassword, Body(...)]
+APIKeyPayloadBody = Annotated[APIKeyPayload, Body(...)]
+
 
 @router.get("/users")
 def list_users(
     admin: AdminUserDep,
+    service: AdminServiceDep,
     include_inactive: bool = False,
-    service: AdminService = Depends(get_admin_service),
 ):
     entities = service.list_users(include_inactive=include_inactive)
     return [dto.dict_clean() for dto in admin_users_to_dto(entities)]
@@ -34,8 +42,8 @@ def list_users(
 @router.post("/users")
 def create_user(
     admin: AdminUserDep,
-    payload: AdminCreateUser = Body(...),
-    service: AdminService = Depends(get_admin_service),
+    payload: AdminCreateUserBody,
+    service: AdminServiceDep,
 ):
     username = payload.username.strip().lower()
     password = payload.password.strip()
@@ -63,8 +71,8 @@ def create_user(
 def update_user(
     user_id: str,
     admin: AdminUserDep,
-    payload: AdminUpdateUser = Body(...),
-    service: AdminService = Depends(get_admin_service),
+    payload: AdminUpdateUserBody,
+    service: AdminServiceDep,
 ):
     target = service.get_user(user_id)
     if target is None:
@@ -95,8 +103,8 @@ def update_user(
 def set_user_password(
     user_id: str,
     admin: AdminUserDep,
-    payload: AdminSetPassword = Body(...),
-    service: AdminService = Depends(get_admin_service),
+    payload: AdminSetPasswordBody,
+    service: AdminServiceDep,
 ):
     target = service.get_user(user_id)
     if target is None:
@@ -113,7 +121,7 @@ def set_user_password(
 def delete_user(
     user_id: str,
     admin: AdminUserDep,
-    service: AdminService = Depends(get_admin_service),
+    service: AdminServiceDep,
 ):
     target = service.get_user(user_id)
     if target is None:
@@ -127,7 +135,7 @@ def delete_user(
 @router.get("/global-api-keys")
 def list_global_api_keys(
     admin: AdminUserDep,
-    service: AdminService = Depends(get_admin_service),
+    service: AdminServiceDep,
 ):
     entities = service.list_global_api_keys()
     return [dto.dict_clean() for dto in admin_global_keys_to_dto(entities)]
@@ -137,8 +145,8 @@ def list_global_api_keys(
 def upsert_global_api_key(
     provider: str,
     admin: AdminUserDep,
-    payload: APIKeyPayload = Body(...),
-    service: AdminService = Depends(get_admin_service),
+    payload: APIKeyPayloadBody,
+    service: AdminServiceDep,
 ):
     provider_norm = (provider or "").strip().lower()
     if not provider_norm:
@@ -154,7 +162,7 @@ def upsert_global_api_key(
 def delete_global_api_key(
     provider: str,
     admin: AdminUserDep,
-    service: AdminService = Depends(get_admin_service),
+    service: AdminServiceDep,
 ):
     provider_norm = (provider or "").strip().lower()
     if not service.delete_global_api_key(provider_norm):

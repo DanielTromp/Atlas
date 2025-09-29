@@ -86,17 +86,21 @@ class MetricsRegistry:
         return {"counters": counters, "histograms": histograms}
 
 
-_REGISTRY = MetricsRegistry()
+_REGISTRY_STATE: dict[str, MetricsRegistry] = {"instance": MetricsRegistry()}
+
+
+def _registry() -> MetricsRegistry:
+    return _REGISTRY_STATE["instance"]
 
 
 def record_netbox_export(duration_seconds: float | None, *, mode: str, force: bool, status: str) -> None:
     """Record metrics for a NetBox export run."""
 
     labels = {"mode": mode, "force": str(force).lower(), "status": status}
-    _REGISTRY.counter("netbox_export_runs_total").inc(labels=labels)
+    _registry().counter("netbox_export_runs_total").inc(labels=labels)
     if duration_seconds is not None:
         hist_labels = {"mode": mode, "force": str(force).lower()}
-        _REGISTRY.histogram("netbox_export_duration_seconds").observe(
+        _registry().histogram("netbox_export_duration_seconds").observe(
             labels=hist_labels,
             value=duration_seconds,
         )
@@ -104,15 +108,15 @@ def record_netbox_export(duration_seconds: float | None, *, mode: str, force: bo
 
 def record_http_request(duration_seconds: float, *, method: str, path_template: str, status_code: int) -> None:
     labels = {"method": method.upper(), "path_template": path_template, "status_code": str(status_code)}
-    _REGISTRY.counter("http_requests_total").inc(labels=labels)
-    _REGISTRY.histogram("http_request_duration_seconds").observe(
+    _registry().counter("http_requests_total").inc(labels=labels)
+    _registry().histogram("http_request_duration_seconds").observe(
         labels={"method": method.upper(), "path_template": path_template},
         value=duration_seconds,
     )
 
 
 def get_metrics_snapshot() -> dict[str, Any]:
-    return _REGISTRY.snapshot()
+    return _registry().snapshot()
 
 
 
@@ -120,8 +124,7 @@ def get_metrics_snapshot() -> dict[str, Any]:
 
 
 def reset_metrics() -> None:
-    global _REGISTRY
-    _REGISTRY = MetricsRegistry()
+    _REGISTRY_STATE["instance"] = MetricsRegistry()
 
 
 def _format_labels(labels: dict[str, str]) -> str:

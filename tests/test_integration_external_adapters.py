@@ -25,8 +25,7 @@ class _StubEndpoint:
 
     def all(self):
         self.calls += 1
-        for item in self._items:
-            yield item
+        yield from self._items
 
     def get(self, pk):
         self.calls += 1

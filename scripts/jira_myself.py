@@ -1,8 +1,9 @@
 import base64
 import json
 import os
-import urllib.request
-from urllib.error import HTTPError, URLError
+import urllib.parse
+
+import requests
 
 
 def main() -> int:
@@ -15,14 +16,20 @@ def main() -> int:
         return 0
 
     url = base.rstrip("/") + "/rest/api/3/myself?expand=groups,applicationRoles"
-    req = urllib.request.Request(url)
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        print(json.dumps({"ok": False, "error": f"Unsupported URL scheme: {parsed.scheme}"}))
+        return 0
     creds = (email + ":" + token).encode("utf-8")
-    req.add_header("Authorization", "Basic " + base64.b64encode(creds).decode("ascii"))
-    req.add_header("Accept", "application/json")
+    headers = {
+        "Authorization": "Basic " + base64.b64encode(creds).decode("ascii"),
+        "Accept": "application/json",
+    }
 
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            data = json.loads(r.read().decode("utf-8"))
+        response = requests.get(url, headers=headers, timeout=30)
+        response.raise_for_status()
+        data = response.json()
         summary = {
             "displayName": data.get("displayName"),
             "accountId": data.get("accountId"),
@@ -34,18 +41,16 @@ def main() -> int:
             "applicationRoles": [x.get("name") for x in (data.get("applicationRoles", {}).get("items") or [])],
         }
         print(json.dumps({"ok": True, "summary": summary}, ensure_ascii=False))
-    except HTTPError as e:
-        body = e.read().decode("utf-8", "ignore") if hasattr(e, "read") else ""
-        print(
-            json.dumps(
-                {"ok": False, "status": getattr(e, "code", None), "reason": getattr(e, "reason", None), "body": body[:2000]}
-            )
-        )
-    except URLError as e:
+    except requests.HTTPError as e:
+        response = e.response
+        body = response.text if response is not None else ""
+        status = response.status_code if response is not None else None
+        reason = response.reason if response is not None else None
+        print(json.dumps({"ok": False, "status": status, "reason": reason, "body": body[:2000]}))
+    except requests.RequestException as e:
         print(json.dumps({"ok": False, "error": str(e)}))
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

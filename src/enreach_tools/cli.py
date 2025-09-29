@@ -5,17 +5,21 @@ import json
 import os
 import subprocess
 import sys
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from contextlib import ExitStack
 from dataclasses import asdict
-from time import monotonic
+from datetime import UTC, datetime
 from getpass import getuser
+from time import monotonic
+from zoneinfo import ZoneInfo
 
 import typer
+from fastapi import HTTPException
 from rich import print
 from rich.console import Console
 from rich.table import Table
 
+from .api.app import zabbix_problems as zabbix_problems_api
 from .application.context import ServiceContext
 from .application.dto.admin import admin_user_to_dto, admin_users_to_dto
 from .application.orchestration import AsyncJobRunner
@@ -37,6 +41,20 @@ app = typer.Typer(help="Enreach Tools CLI", context_settings=HELP_CTX)
 
 console = Console()
 logger = get_logger(__name__)
+
+try:
+    AMS_TZ = ZoneInfo("Europe/Amsterdam")
+except Exception:
+    AMS_TZ = UTC
+
+ZABBIX_SEVERITY_LABELS = [
+    "Not classified",
+    "Information",
+    "Warning",
+    "Average",
+    "High",
+    "Disaster",
+]
 
 
 def _run_script(relpath: str, *args: str) -> int:
@@ -133,12 +151,120 @@ confluence = typer.Typer(help="Confluence helpers", context_settings=HELP_CTX)
 app.add_typer(confluence, name="confluence")
 netbox = typer.Typer(help="NetBox helpers", context_settings=HELP_CTX)
 app.add_typer(netbox, name="netbox")
-search = typer.Typer(help="Cross-system search (Home aggregator)", context_settings=HELP_CTX)
+search = typer.Typer(help="Cross-system search aggregator", context_settings=HELP_CTX)
 app.add_typer(search, name="search")
 db = typer.Typer(help="Database utilities", context_settings=HELP_CTX)
 app.add_typer(db, name="db")
 users_cli = typer.Typer(help="User administration helpers", context_settings=HELP_CTX)
 app.add_typer(users_cli, name="users")
+
+
+def _safe_int(value: object, default: int = 0) -> int:
+    try:
+        if isinstance(value, bool):
+            return int(value)
+        if isinstance(value, int | float):
+            return int(value)
+        if isinstance(value, str):
+            cleaned = value.strip()
+            if not cleaned:
+                return default
+            return int(float(cleaned)) if any(ch in cleaned for ch in (".", "e", "E")) else int(cleaned)
+    except Exception:
+        return default
+    return default
+
+
+def _severity_label(level: object) -> str:
+    idx = max(0, min(len(ZABBIX_SEVERITY_LABELS) - 1, _safe_int(level, 0)))
+    return ZABBIX_SEVERITY_LABELS[idx]
+
+
+def _zbx_dedupe_key(item: dict[str, object]) -> str:
+    name = str(item.get("name") or "").strip()
+    prefix = name.split(":", 1)[0].strip() if ":" in name else name
+    host_key = str(item.get("hostid") or item.get("host") or "").strip()
+    if host_key and prefix:
+        return f"{host_key}|{prefix}"
+    if host_key:
+        return f"{host_key}|{name}"
+    if prefix:
+        event = str(item.get("eventid") or "").strip()
+        return f"{prefix}|{event}"
+    return str(item.get("eventid") or "").strip()
+
+
+def _apply_zabbix_gui_filter(
+    items: Sequence[dict[str, object]], *, unack_only: bool
+) -> list[dict[str, object]]:
+    buckets: dict[str, dict[str, object]] = {}
+    for item in items:
+        key = _zbx_dedupe_key(item)
+        existing = buckets.get(key)
+        if not existing:
+            buckets[key] = item
+            continue
+        prev_sev = _safe_int(existing.get("severity"), -1)
+        cur_sev = _safe_int(item.get("severity"), -1)
+        if cur_sev > prev_sev:
+            buckets[key] = item
+            continue
+        if cur_sev < prev_sev:
+            continue
+        prev_clock = _safe_int(existing.get("clock"), 0)
+        cur_clock = _safe_int(item.get("clock"), 0)
+        if cur_clock >= prev_clock:
+            buckets[key] = item
+
+    deduped = list(buckets.values())
+    if unack_only:
+        deduped = [it for it in deduped if _safe_int(it.get("acknowledged"), 0) == 0]
+    deduped.sort(key=lambda it: _safe_int(it.get("clock"), 0), reverse=True)
+    return deduped
+
+
+def _format_zabbix_time(item: dict[str, object]) -> str:
+    iso_value = str(item.get("clock_iso") or "").strip()
+    dt: datetime | None = None
+    if iso_value:
+        try:
+            dt = datetime.fromisoformat(iso_value.replace(" ", "T"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
+        except Exception:
+            dt = None
+    if dt is None:
+        clock = _safe_int(item.get("clock"), 0)
+        if clock:
+            try:
+                dt = datetime.fromtimestamp(clock, tz=UTC)
+            except Exception:
+                dt = None
+    if dt is None:
+        return iso_value or ""
+    local_dt = dt.astimezone(AMS_TZ)
+    today = datetime.now(AMS_TZ).date()
+    if local_dt.date() == today:
+        return local_dt.strftime("%H:%M:%S")
+    return local_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _format_zabbix_duration(clock: int) -> str:
+    now_ts = int(datetime.now(UTC).timestamp())
+    seconds = max(0, now_ts - max(0, clock))
+    days, remainder = divmod(seconds, 86_400)
+    hours, remainder = divmod(remainder, 3_600)
+    minutes, seconds = divmod(remainder, 60)
+    parts: list[str] = []
+    if days:
+        parts.append(f"{days}d")
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    if not days and not hours:
+        parts.append(f"{seconds}s")
+    return " ".join(parts) if parts else "0s"
 
 
 def _service_context() -> ServiceContext:
@@ -525,12 +651,102 @@ def db_init(echo: bool = typer.Option(False, "--echo", help="Echo SQL while runn
     print("[green]Database initialised[/green]")
 
 
+@zabbix.command("dashboard")
+def zabbix_dashboard_cli(
+    groupids: str = typer.Option("", "--groupids", help="Comma-separated host group IDs (e.g. 27)."),
+    hostids: str = typer.Option("", "--hostids", help="Comma-separated host IDs."),
+    severities: str = typer.Option("", "--severities", help="Comma-separated severities 0-5 (defaults to UI config)."),
+    include_subgroups: bool = typer.Option(True, "--include-subgroups/--no-include-subgroups", help="When filtering by group IDs, include all subgroups."),
+    limit: int = typer.Option(300, "--limit", help="Maximum rows to fetch from the API (1-2000)."),
+    unack_only: bool = typer.Option(False, "--unack-only/--include-acked", help="Match the UI toggle by filtering for unacknowledged problems after deduplication."),
+    systems_only: bool = typer.Option(False, "--systems-only/--all-groups", help="Shortcut for Systems group (ID 27) including subgroups."),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON payload instead of a table."),
+):
+    """Show the same Zabbix dashboard feed as the web UI."""
+
+    load_env()
+
+    gid_value = groupids.strip().strip(",")
+    if systems_only:
+        gid_value = gid_value or "27"
+        include_subgroups = True
+
+    host_value = hostids.strip().strip(",") or None
+    sev_value = severities.strip().strip(",") or None
+    gid_value_opt = gid_value or None
+
+    include_subgroups_flag = 1 if include_subgroups and gid_value_opt else 0
+
+    try:
+        payload = zabbix_problems_api(
+            severities=sev_value,
+            groupids=gid_value_opt,
+            hostids=host_value,
+            unacknowledged=0,
+            suppressed=0,
+            limit=limit,
+            include_subgroups=include_subgroups_flag,
+        )
+    except HTTPException as exc:  # pragma: no cover - runtime API failure path
+        detail = exc.detail if isinstance(exc.detail, str) else json.dumps(exc.detail)
+        print(f"[red]Zabbix API error:[/red] {detail}")
+        raise typer.Exit(code=1)
+
+    items = payload.get("items", [])
+    filtered = _apply_zabbix_gui_filter(items, unack_only=unack_only)
+
+    if json_output:
+        typer.echo(json.dumps({"items": filtered, "count": len(filtered)}, indent=2))
+        return
+
+    if not filtered:
+        print("[yellow]No problems to show[/yellow]")
+        return
+
+    table = Table(title="Zabbix Dashboard")
+    table.add_column("Time", style="cyan")
+    table.add_column("Severity", style="magenta")
+    table.add_column("Status", style="green")
+    table.add_column("Host", style="blue")
+    table.add_column("Problem")
+    table.add_column("Duration", style="dim")
+
+    for item in filtered:
+        time_text = _format_zabbix_time(item)
+        severity_text = _severity_label(item.get("severity"))
+        status_raw = (item.get("status") or "").upper() or "PROBLEM"
+        if _safe_int(item.get("acknowledged"), 0):
+            status_text = f"{status_raw} [dim](ack)[/dim]"
+        else:
+            status_text = status_raw
+        host = str(item.get("host") or "-" )
+        problem_name = str(item.get("name") or "")
+        prob_url = str(item.get("problem_url") or "").strip()
+        if prob_url:
+            problem_cell = f"[link={prob_url}]{problem_name}[/link]"
+        else:
+            problem_cell = problem_name
+        duration = _format_zabbix_duration(_safe_int(item.get("clock"), 0))
+        table.add_row(time_text, severity_text, status_text, host, problem_cell, duration)
+
+    console.print(table)
+    raw_count = payload.get("count", len(items))
+    summary_parts = [f"{len(filtered)} shown", f"raw {len(items)}"]
+    if raw_count != len(items):
+        summary_parts.append(f"API count {raw_count}")
+    if unack_only:
+        summary_parts.append("unacknowledged only")
+    if gid_value_opt:
+        summary_parts.append(f"group(s) {gid_value_opt}{' +sub' if include_subgroups_flag else ''}")
+    print(f"[dim]{' — '.join(summary_parts)}[/dim]")
+
+
 @zabbix.command("problems")
 def zabbix_problems_cli(
     limit: int = typer.Option(20, "--limit", help="Max items"),
     severities: str = typer.Option("", "--severities", help="Comma list, e.g. 2,3,4 (defaults from .env)"),
     groupids: str = typer.Option("", "--groupids", help="Comma list group IDs (default from .env)"),
-    all: bool = typer.Option(False, "--all", help="Include acknowledged (unacknowledged=0)"),
+    include_all: bool = typer.Option(False, "--all", help="Include acknowledged (unacknowledged=0)"),
 ):
     """Fetch problems from Zabbix via JSON-RPC and print a summary."""
     import requests as _rq
@@ -595,7 +811,7 @@ def zabbix_problems_cli(
     if grp_list:
         params["groupids"] = grp_list
     # Default: show only unacknowledged; when --all, remove filter to show both
-    if not all:
+    if not include_all:
         params["acknowledged"] = 0
 
     try:
@@ -623,7 +839,7 @@ def zabbix_search_cli(
 ):
     """Probe Zabbix for hosts, interfaces, problems and events matching a query.
 
-    This mirrors the fuzzy logic used by the Home aggregator:
+    This mirrors the fuzzy logic used by the Search aggregator:
     - host.get search on both name and host with wildcards
     - hostinterface.get by IP when q looks like an IPv4
     - problem.get by hostids or fallback by name search with wildcards
@@ -970,7 +1186,7 @@ def netbox_search_cli(
 
 @netbox.command("device-json")
 def netbox_device_json(
-    id: int = typer.Option(0, "--id", help="Device ID"),
+    device_id: int = typer.Option(0, "--id", help="Device ID"),
     name: str = typer.Option("", "--name", help="Device name (exact) if --id not used"),
     raw: bool = typer.Option(False, "--raw", help="Print raw JSON only"),
 ):
@@ -990,8 +1206,8 @@ def netbox_device_json(
         r.raise_for_status()
         return r.json()
     data = None
-    if id:
-        data = _get(f"{base}/api/dcim/devices/{id}/")
+    if device_id:
+        data = _get(f"{base}/api/dcim/devices/{device_id}/")
     else:
         if not name:
             print("[red]Provide --id or --name[/red]")
@@ -1019,7 +1235,7 @@ def search_run(
     json_out: bool = typer.Option(False, "--json", help="Output full JSON with all available fields"),
     out: str = typer.Option("", "--out", help="Save full JSON to file (pretty-printed)"),
 ):
-    """Run the Home search aggregator across Zabbix, Jira, Confluence, and NetBox.
+    """Run the Search aggregator across Zabbix, Jira, Confluence, and NetBox.
 
     Defaults: unlimited (zlimit/jlimit/climit = 0). Use --json for full details.
     """
@@ -1035,7 +1251,7 @@ def search_run(
             "out": out or None,
         },
     )
-    from enreach_tools.api.app import home_aggregate as _agg
+    from enreach_tools.api.app import search_aggregate as _agg
     res = _agg(q=q, zlimit=zlimit, jlimit=jlimit, climit=climit)
     # Save to file when requested (pretty JSON)
     if out:

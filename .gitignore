@@ -33,14 +33,7 @@ dist/
 
 # Personal
 personal/
-
-# Local dev server artifacts
-/.server_pid
-/.server.log
-/server.log
-export.log
 # appdata
-/app*.png
-/airtable*.png
-/certs
-/logs/*
+certs/
+logs/
+backups/

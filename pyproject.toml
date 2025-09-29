@@ -24,6 +24,12 @@ dependencies = [
   "alembic>=1.13",
   "passlib[bcrypt]>=1.7",
   "bcrypt>=4.1",
+  "langchain>=0.2.7",
+  "langchain-core>=0.2.7",
+  "langchain-community>=0.2.7",
+  "langchain-openai>=0.1.17",
+  "langchain-anthropic>=0.1.9",
+  "langchain-google-genai>=1.0.9",
 ]
 
 [project.scripts]
@@ -89,3 +95,14 @@ ignore = [
   # subprocess false positive
   "S603", "S607",
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101", "S106"]
+"src/enreach_tools/api/app.py" = ["PLR0913", "PLR0911"]
+"src/enreach_tools/cli.py" = ["PLR0913"]
+"src/enreach_tools/application/chat_agents/enhanced_runtime.py" = ["PLR0913"]
+"src/enreach_tools/application/chat_agents/runtime.py" = ["PLR0911"]
+"src/enreach_tools/application/exporter/netbox.py" = ["PLR0913"]
+"src/enreach_tools/infrastructure/external/confluence_client.py" = ["PLR0913"]
+"src/enreach_tools/infrastructure/external/zabbix_client.py" = ["PLR0913"]
+"src/enreach_tools/infrastructure/rate_limiting.py" = ["PLR0911"]

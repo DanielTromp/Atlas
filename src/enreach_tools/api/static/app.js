@@ -125,7 +125,8 @@
   const $pages = document.getElementById("pages");
   const $pageExport = document.getElementById("page-export");
   const $pageNetbox = document.getElementById("page-netbox");
-  const $pageHome = document.getElementById("page-home");
+  const $pageSearch = document.getElementById("page-search");
+  const $pageTools = document.getElementById("page-tools");
   const $pageChat = document.getElementById("page-chat");
   const $pageZabbix = document.getElementById("page-zabbix");
   const $pageZhost = document.getElementById("page-zhost");
@@ -210,6 +211,18 @@
   const $suggestionDetailMeta = document.getElementById("suggestion-detail-meta");
   const $suggestionCommentsWrapper = document.getElementById("suggestion-comments-wrapper");
   const $suggestionDelete = document.getElementById("suggestion-delete");
+  const $toolsList = document.getElementById("tools-list");
+  const $toolsTags = document.getElementById("tools-tags");
+  const $toolsSearch = document.getElementById("tools-search");
+  const $toolsRefresh = document.getElementById("tools-refresh");
+  const $toolsPreview = document.getElementById("tools-preview");
+  const $toolsPreviewTitle = document.getElementById("tools-preview-title");
+  const $toolsPreviewBody = document.getElementById("tools-preview-body");
+  const $toolsPreviewCollapse = document.getElementById("tools-preview-collapse");
+  let $chatExamples = document.getElementById("chat-examples");
+  const $chatToolsPanel = document.getElementById("chat-tools-panel");
+  const $chatToolsList = document.getElementById("chat-tools-list");
+  const $chatToolsOpen = document.getElementById("chat-tools-open");
   const $adminSettings = document.getElementById("admin-settings");
   const adminContainers = {
     'zabbix': document.getElementById('admin-settings-zabbix'),
@@ -661,6 +674,48 @@
   let dataset = savedDatasetPref || 'all';
   accountState.prefDataset = dataset;
   let page = 'export';
+  const PAGE_PERSIST_KEY = 'enreach_active_page_v1';
+  const ROUTABLE_PAGE_KEYS = [
+    'search',
+    'tools',
+    'zabbix',
+    'netbox',
+    'jira',
+    'confluence',
+    'chat',
+    'export',
+    'zhost',
+    'suggestions',
+    'account',
+    'admin',
+  ];
+  const ROUTABLE_PAGE_SET = new Set(ROUTABLE_PAGE_KEYS);
+  const KNOWN_PAGE_KEYS = new Set([...ROUTABLE_PAGE_KEYS, 'suggestion-detail']);
+  const normalisePageValue = (value) => {
+    if (!value) return null;
+    const lower = String(value).toLowerCase();
+    return KNOWN_PAGE_KEYS.has(lower) ? lower : null;
+  };
+  const persistablePage = (value) => {
+    const normalised = normalisePageValue(value);
+    if (!normalised) return null;
+    if (normalised === 'suggestion-detail') return 'suggestions';
+    if (normalised === 'zhost') return 'zabbix';
+    return normalised;
+  };
+  const persistActivePage = (value) => {
+    const storable = persistablePage(value);
+    if (!storable) return;
+    try { localStorage.setItem(PAGE_PERSIST_KEY, storable); } catch {}
+  };
+  const readPersistedPage = () => {
+    try {
+      const stored = localStorage.getItem(PAGE_PERSIST_KEY);
+      return normalisePageValue(stored);
+    } catch {
+      return null;
+    }
+  };
   const suggestionState = {
     items: [],
     meta: { classifications: [], statuses: [] },
@@ -680,12 +735,24 @@
   };
   const chatConfig = {
     systemPrompt: '',
-    temperature: 0.2,
+    temperature: null,
   };
   const chatSessionsState = {
     items: [],
     active: null,
     loading: false,
+  };
+  const chatExamplesState = {
+    items: [],
+  };
+  let pendingToolContext = null;
+  let chatToolContextLoading = false;
+  const toolsState = {
+    items: [],
+    loading: false,
+    error: null,
+    search: '',
+    activeTag: 'all',
   };
   let dragSrcIndex = -1; // global src index for DnD across headers
   // Density
@@ -717,6 +784,874 @@
       t = setTimeout(() => fn(...args), ms);
     };
   };
+
+  // Tools catalog helpers
+  const TOOL_NO_TAG_KEY = '__other__';
+  const DEFAULT_CHAT_EXAMPLES = [
+    'Show me the latest devices added to NetBox.',
+    'What are the current active alerts in Zabbix?',
+    'Summarise the recent Jira incidents for Systems Infrastructure.',
+    'Search Confluence for the SIP trunk failover runbook.',
+  ];
+
+  chatExamplesState.items = DEFAULT_CHAT_EXAMPLES.map((example) => ({ tool: null, example }));
+
+  // Ensure persistent search options remain visible
+  function ensurePersistentSearchOptions() {
+    const $chatExamples = document.getElementById('chat-examples');
+    if (!$chatExamples) return;
+    
+    // Always show the predefined examples
+    const persistentExamples = [
+      'Find the Zabbix group ID for Systems Infrastructure.',
+      'Search host groups containing Voice.',
+      'List the current high and disaster alerts in Zabbix.',
+      'Show unacknowledged alerts for the Systems Infrastructure group.',
+      'Show the Zabbix alert history for pbx-core over the past 24 hours.',
+      'List resolved Zabbix alerts that mentioned packet loss this week.',
+    ];
+    
+    // Clear and rebuild with persistent examples
+    $chatExamples.innerHTML = '';
+    const fragment = document.createDocumentFragment();
+    
+    persistentExamples.forEach(example => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'chat-suggestion-btn';
+      btn.textContent = example;
+      btn.setAttribute('data-suggestion', example);
+      btn.addEventListener('click', () => {
+        insertChatPrompt(example, true);
+      });
+      fragment.append(btn);
+    });
+    
+    $chatExamples.append(fragment);
+  }
+
+  const cssEscape = (value) => {
+    const str = String(value ?? '');
+    if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
+      try { return CSS.escape(str); } catch { /* ignore */ }
+    }
+    return str.replace(/[^a-zA-Z0-9_-]/g, (ch) => `\\${ch}`);
+  };
+
+  const formatToolTag = (tag) => {
+    if (!tag) return 'Other';
+    if (tag === TOOL_NO_TAG_KEY) return 'Other';
+    const clean = String(tag).replace(/[_-]+/g, ' ').trim();
+    return clean.charAt(0).toUpperCase() + clean.slice(1);
+  };
+
+  const computeToolTagCounts = (items) => {
+    const counts = new Map();
+    for (const tool of items || []) {
+      const tags = Array.isArray(tool?.tags) && tool.tags.length ? tool.tags : [TOOL_NO_TAG_KEY];
+      for (const tag of tags) counts.set(tag, (counts.get(tag) || 0) + 1);
+    }
+    return counts;
+  };
+
+  const getFilteredTools = () => {
+    const term = (toolsState.search || '').trim().toLowerCase();
+    const activeTag = toolsState.activeTag || 'all';
+    return (toolsState.items || []).filter((tool) => {
+      if (activeTag !== 'all') {
+        const tags = Array.isArray(tool?.tags) && tool.tags.length ? tool.tags : [TOOL_NO_TAG_KEY];
+        if (activeTag === TOOL_NO_TAG_KEY) {
+          if (!tags.includes(TOOL_NO_TAG_KEY)) return false;
+        } else if (!tags.includes(activeTag)) {
+          return false;
+        }
+      }
+      if (!term) return true;
+      const haystack = [tool?.name, tool?.summary, tool?.description, tool?.path, tool?.ai_usage];
+      if (Array.isArray(tool?.tags)) haystack.push(...tool.tags);
+      return haystack.some((value) => typeof value === 'string' && value.toLowerCase().includes(term));
+    });
+  };
+
+  function renderToolTags() {
+    if (!$toolsTags) return;
+    $toolsTags.innerHTML = '';
+    if (!toolsState.items.length) {
+      $toolsTags.hidden = true;
+      return;
+    }
+    $toolsTags.hidden = false;
+    const counts = computeToolTagCounts(toolsState.items);
+    const fragment = document.createDocumentFragment();
+
+    const makeChip = (key, label, count) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'tools-tag-chip';
+      if ((toolsState.activeTag || 'all') === key) btn.classList.add('active');
+      btn.textContent = `${label} (${count})`;
+      btn.addEventListener('click', () => {
+        if (toolsState.activeTag === key) return;
+        toolsState.activeTag = key;
+        hideToolPreview();
+        renderTools();
+      });
+      fragment.append(btn);
+    };
+
+    makeChip('all', 'All', toolsState.items.length);
+    const sorted = Array.from(counts.entries()).sort((a, b) => {
+      const labelA = formatToolTag(a[0]).toLowerCase();
+      const labelB = formatToolTag(b[0]).toLowerCase();
+      return labelA.localeCompare(labelB);
+    });
+    for (const [tag, count] of sorted) makeChip(tag, formatToolTag(tag), count);
+    $toolsTags.append(fragment);
+  }
+
+  function buildToolCurl(tool) {
+    const method = String(tool?.method || 'GET').toUpperCase();
+    const sample = (tool && typeof tool.sample === 'object' && tool.sample !== null) ? tool.sample : {};
+    let path = tool?.path || '/';
+    const isQuery = method === 'GET' || method === 'DELETE';
+    if (isQuery && sample && typeof sample === 'object') {
+      const params = new URLSearchParams();
+      for (const [key, value] of Object.entries(sample)) {
+        if (value === undefined || value === null) continue;
+        params.append(String(key), String(value));
+      }
+      const qs = params.toString();
+      if (qs) path += (path.includes('?') ? '&' : '?') + qs;
+    }
+    let curl = `curl -X ${method} '${path}'`;
+    const sampleKeys = sample && typeof sample === 'object' ? Object.keys(sample) : [];
+    const extras = [];
+    if (!isQuery && sampleKeys.length) {
+      curl += ` \
+  -H 'Content-Type: application/json' \
+  -d '${JSON.stringify(sample)}'`;
+      extras.push('', '# Body', JSON.stringify(sample, null, 2));
+    } else if (isQuery && sampleKeys.length) {
+      extras.push('', '# Parameters', JSON.stringify(sample, null, 2));
+    }
+    return [curl, ...extras].join('\n');
+  }
+
+  function hideToolPreview() {
+    if ($toolsPreview) $toolsPreview.hidden = true;
+    if ($toolsPreviewBody) $toolsPreviewBody.textContent = '';
+    if ($toolsPreviewTitle) $toolsPreviewTitle.textContent = 'Tool result';
+  }
+
+  function showToolPreview(tool, detail) {
+    if (!$toolsPreview || !$toolsPreviewBody || !$toolsPreviewTitle) return;
+    const method = String(detail?.method || tool?.method || 'GET').toUpperCase();
+    const url = detail?.url || tool?.path || '';
+    const status = detail?.status ? String(detail.status) : '';
+    const ok = detail?.ok !== false;
+    const body = detail?.body || '';
+    const output = detail?.output || '';
+    const lines = [`${method} ${url}`];
+    if (body) {
+      lines.push('', 'Body:');
+      lines.push(typeof body === 'string' ? body : JSON.stringify(body, null, 2));
+    }
+    if (output) {
+      lines.push('', ok ? 'Response:' : 'Response (error):');
+      lines.push(typeof output === 'string' ? output : JSON.stringify(output, null, 2));
+    }
+    $toolsPreview.hidden = false;
+    const baseTitle = tool?.name || tool?.key || tool?.path || 'Tool';
+    $toolsPreviewTitle.textContent = status ? `${baseTitle} — ${status}` : baseTitle;
+    $toolsPreviewBody.textContent = lines.join('\n');
+  }
+
+  function buildToolRequest(tool) {
+    const method = String(tool?.method || 'GET').toUpperCase();
+    const sample = tool && typeof tool.sample === 'object' && tool.sample !== null ? tool.sample : {};
+    let requestPath = tool?.path || '/';
+    const options = { method };
+    const isQuery = method === 'GET' || method === 'DELETE';
+    if (isQuery) {
+      const params = new URLSearchParams();
+      for (const [key, value] of Object.entries(sample)) {
+        if (value === undefined || value === null) continue;
+        params.append(String(key), String(value));
+      }
+      const qs = params.toString();
+      if (qs) requestPath += (requestPath.includes('?') ? '&' : '?') + qs;
+    } else if (sample && Object.keys(sample).length) {
+      options.headers = { 'Content-Type': 'application/json' };
+      options.body = JSON.stringify(sample);
+    }
+    return { requestPath, options, sample };
+  }
+
+  const truncateText = (text, limit = 1800) => {
+    if (text.length <= limit) return text;
+    return `${text.slice(0, limit)}\n… (truncated)`;
+  };
+
+  const formatToolValue = (value) => {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    try {
+      const text = JSON.stringify(value);
+      return text.length > 120 ? `${text.slice(0, 117)}…` : text;
+    } catch {
+      return String(value);
+    }
+  };
+
+  function summariseToolItems(tool, items, limit = 5) {
+    if (!Array.isArray(items) || !items.length) return 'No items returned.';
+    const prefer = ['severity', 'status', 'acknowledged', 'host', 'name', 'title', 'summary', 'clock_iso', 'eventid', 'key'];
+    const lines = [];
+    const count = Math.min(items.length, limit);
+    for (let i = 0; i < count; i += 1) {
+      const item = items[i];
+      if (item && typeof item === 'object') {
+        const parts = [];
+        for (const key of prefer) {
+          if (item[key] !== undefined) {
+            parts.push(`${key}: ${formatToolValue(item[key])}`);
+          }
+        }
+        if (!parts.length) {
+          const keys = Object.keys(item).slice(0, 4);
+          for (const key of keys) {
+            parts.push(`${key}: ${formatToolValue(item[key])}`);
+          }
+        }
+        lines.push(`${i + 1}. ${parts.join(', ')}`);
+      } else {
+        lines.push(`${i + 1}. ${formatToolValue(item)}`);
+      }
+    }
+    if (items.length > limit) {
+      lines.push(`… (+${items.length - limit} more)`);
+    }
+    return lines.join('\n');
+  }
+
+  function summariseAckStats(items) {
+    let hasAck = false;
+    let unackCount = 0;
+    let ackCount = 0;
+    for (const item of items) {
+      if (!item || typeof item !== 'object' || item.acknowledged === undefined) continue;
+      hasAck = true;
+      const value = item.acknowledged;
+      const isAcked = value === true || value === 1 || value === '1' || value === 'true';
+      if (isAcked) ackCount += 1; else unackCount += 1;
+    }
+    if (!hasAck) return null;
+    return `Acknowledged: ${ackCount}, Unacknowledged: ${unackCount}`;
+  }
+
+  function summariseToolData(tool, data) {
+    if (data === null || data === undefined) return 'No data returned.';
+    if (typeof data === 'string') return data;
+    if (Array.isArray(data)) {
+      return summariseToolItems(tool, data);
+    }
+    if (typeof data === 'object') {
+      if (Array.isArray(data.items)) {
+        const summary = summariseToolItems(tool, data.items);
+        const ackLine = summariseAckStats(data.items);
+        const countLineBase = `Items returned: ${data.items.length}${data.count !== undefined ? ` (count: ${data.count})` : ''}`;
+        const countLine = ackLine ? `${countLineBase} | ${ackLine}` : countLineBase;
+        return `${countLine}\n${summary}`;
+      }
+      const keys = Object.keys(data).slice(0, 8);
+      if (!keys.length) return 'No fields returned.';
+      return keys.map((key) => `${key}: ${formatToolValue(data[key])}`).join('\n');
+    }
+    return String(data);
+  }
+
+  async function prepareToolContextForChat(tool) {
+    const { requestPath, options } = buildToolRequest(tool);
+    const fetchOptions = { method: options.method };
+    if (options.headers) fetchOptions.headers = { ...options.headers };
+    if (options.body !== undefined) fetchOptions.body = options.body;
+    let res;
+    let raw = '';
+    try {
+      res = await fetch(`${API_BASE}${requestPath}`, fetchOptions);
+      raw = await res.text();
+    } catch (err) {
+      const error = new Error(err?.message || 'Network error while calling tool');
+      error.__toolPreview = {
+        method: fetchOptions.method,
+        url: requestPath,
+        status: error.message,
+        ok: false,
+        body: fetchOptions.body || null,
+        output: error.message,
+      };
+      throw error;
+    }
+    const statusLine = `${res.status} ${res.statusText || ''}`.trim();
+    if (!res.ok) {
+      const error = new Error(raw || statusLine || 'Request failed');
+      error.__toolPreview = {
+        method: fetchOptions.method,
+        url: requestPath,
+        status: error.message,
+        ok: false,
+        body: fetchOptions.body || null,
+        output: raw || error.message,
+      };
+      throw error;
+    }
+    let parsed = null;
+    if (raw) {
+      try { parsed = JSON.parse(raw); }
+      catch (_) { parsed = null; }
+    }
+    const summary = summariseToolData(tool, parsed ?? raw);
+    const previewOutput = parsed ? JSON.stringify(parsed, null, 2) : raw;
+    showToolPreview(tool, {
+      method: fetchOptions.method,
+      url: requestPath,
+      status: statusLine,
+      ok: true,
+      body: fetchOptions.body || null,
+      output: previewOutput || '(no content)',
+    });
+    return {
+      label: `${tool?.name || tool?.key || 'Tool'} (${fetchOptions.method} ${requestPath})`,
+      text: truncateText(summary, 2000),
+    };
+  }
+
+  async function copyToolEndpoint(tool, button) {
+    const text = `${String(tool?.method || 'GET').toUpperCase()} ${tool?.path || '/'}`;
+    const original = button?.textContent;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const tmp = document.createElement('textarea');
+        tmp.value = text;
+        tmp.style.position = 'fixed';
+        tmp.style.opacity = '0';
+        document.body.appendChild(tmp);
+        tmp.select();
+        document.execCommand('copy');
+        document.body.removeChild(tmp);
+      }
+      if (button) {
+        button.textContent = 'Copied';
+        setTimeout(() => { button.textContent = original || 'Copy endpoint'; }, 1500);
+      }
+    } catch (err) {
+      if (button) {
+        button.textContent = 'Copy failed';
+        setTimeout(() => { button.textContent = original || 'Copy endpoint'; }, 2000);
+      }
+    }
+  }
+
+  async function runToolSample(tool, button) {
+    if (!tool) return;
+    const { requestPath, options } = buildToolRequest(tool);
+    const fetchOptions = { method: options.method };
+    if (options.headers) fetchOptions.headers = { ...options.headers };
+    if (options.body !== undefined) fetchOptions.body = options.body;
+
+    const original = button?.textContent;
+    if (button) {
+      button.disabled = true;
+      button.textContent = 'Running...';
+    }
+    try {
+      const res = await fetch(`${API_BASE}${requestPath}`, fetchOptions);
+      const statusLine = `${res.status} ${res.statusText || ''}`.trim();
+      const raw = await res.text();
+      let output = raw;
+      if (raw) {
+        try { output = JSON.stringify(JSON.parse(raw), null, 2); }
+        catch (_) { output = raw; }
+      }
+      showToolPreview(tool, {
+        method: fetchOptions.method,
+        url: requestPath,
+        status: statusLine,
+        ok: res.ok,
+        body: fetchOptions.body || null,
+        output: output || '(no content)',
+      });
+      if (!res.ok) throw new Error(output || statusLine || 'Request failed');
+    } catch (err) {
+      const msg = err?.message || 'Unknown error';
+      showToolPreview(tool, {
+        method: fetchOptions.method,
+        url: requestPath,
+        status: msg,
+        ok: false,
+        body: fetchOptions.body || null,
+        output: msg,
+      });
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.textContent = original || 'Run sample';
+      }
+    }
+  }
+
+  function insertChatPrompt(text, autoSend = false) {
+    if (!$chatInput) return;
+    const value = String(text || '').trim();
+    if (!value) return;
+    $chatInput.value = value;
+    $chatInput.focus();
+    if (autoSend) {
+      setTimeout(() => sendChat(), 120);
+    }
+  }
+
+  async function useToolExample(tool, example) {
+    if (!example) return;
+    if (chatToolContextLoading) {
+      insertChatPrompt(example, true);
+      showPage('chat');
+      return;
+    }
+    chatToolContextLoading = true;
+    let statusNode = null;
+    if ($chatToolsList) {
+      statusNode = document.createElement('div');
+      statusNode.className = 'chat-tools-status';
+      statusNode.textContent = `Loading ${tool?.name || tool?.key || 'tool'} data...`;
+      $chatToolsList.prepend(statusNode);
+    }
+    try {
+      const context = await prepareToolContextForChat(tool);
+      pendingToolContext = context;
+    } catch (err) {
+      pendingToolContext = null;
+      console.error('Failed to load tool context', err);
+      if (err?.__toolPreview) {
+        showToolPreview(tool, err.__toolPreview);
+      } else {
+        showToolPreview(tool, {
+          method: String(tool?.method || 'GET').toUpperCase(),
+          url: tool?.path || '/',
+          status: err?.message || 'Failed to load tool data',
+          ok: false,
+          body: null,
+          output: err?.message || 'Failed to load tool data',
+        });
+      }
+    } finally {
+      if (statusNode) statusNode.remove();
+      chatToolContextLoading = false;
+    }
+    insertChatPrompt(example, true);
+    showPage('chat');
+  }
+
+  function renderTools() {
+    if (!$toolsList) return;
+    renderToolTags();
+    $toolsList.innerHTML = '';
+    if (toolsState.loading) {
+      const div = document.createElement('div');
+      div.className = 'tools-empty';
+      div.textContent = 'Loading tools...';
+      $toolsList.append(div);
+      return;
+    }
+    if (toolsState.error) {
+      const div = document.createElement('div');
+      div.className = 'tools-error';
+      div.textContent = toolsState.error;
+      $toolsList.append(div);
+      return;
+    }
+    const items = getFilteredTools();
+    if (!items.length) {
+      const div = document.createElement('div');
+      div.className = 'tools-empty';
+      div.textContent = toolsState.items.length ? 'No tools found for the current filters.' : 'No tools available.';
+      $toolsList.append(div);
+      return;
+    }
+    const fragment = document.createDocumentFragment();
+    for (const tool of items) {
+      const card = document.createElement('article');
+      card.className = 'tool-card';
+      if (tool?.key) card.dataset.toolKey = tool.key;
+
+      const header = document.createElement('div');
+      header.className = 'tool-card-header';
+
+      const headLeft = document.createElement('div');
+      headLeft.className = 'tool-card-head';
+      const method = document.createElement('span');
+      method.className = `tool-method tool-method-${String(tool.method || 'get').toLowerCase()}`;
+      method.textContent = String(tool.method || 'GET').toUpperCase();
+      const name = document.createElement('h3');
+      name.className = 'tool-name';
+      name.textContent = tool.name || tool.key || 'Tool';
+      const path = document.createElement('code');
+      path.className = 'tool-path';
+      path.textContent = tool.path || '/';
+      headLeft.append(method, name, path);
+
+      const tagWrap = document.createElement('div');
+      tagWrap.className = 'tool-card-tags';
+      const tags = Array.isArray(tool?.tags) && tool.tags.length ? tool.tags : [TOOL_NO_TAG_KEY];
+      for (const tag of tags) {
+        const chip = document.createElement('span');
+        chip.className = 'tool-tag';
+        chip.textContent = formatToolTag(tag);
+        chip.addEventListener('click', () => {
+          toolsState.activeTag = tag;
+          hideToolPreview();
+          renderTools();
+        });
+        tagWrap.append(chip);
+      }
+
+      header.append(headLeft, tagWrap);
+      card.append(header);
+
+      if (tool.summary) {
+        const summary = document.createElement('p');
+        summary.className = 'tool-summary';
+        summary.textContent = tool.summary;
+        card.append(summary);
+      }
+      if (tool.description) {
+        const desc = document.createElement('p');
+        desc.className = 'tool-description';
+        desc.textContent = tool.description;
+        card.append(desc);
+      }
+
+      if (Array.isArray(tool.parameters) && tool.parameters.length) {
+        const paramSection = document.createElement('div');
+        paramSection.className = 'tool-section tool-section-params';
+        const title = document.createElement('h4');
+        title.textContent = 'Parameters';
+        const list = document.createElement('ul');
+        list.className = 'tool-param-list';
+        for (const param of tool.parameters) {
+          const item = document.createElement('li');
+          const nameCode = document.createElement('code');
+          nameCode.textContent = param.name;
+          item.append(nameCode);
+          const metaParts = [];
+          metaParts.push(param.required ? 'required' : 'optional');
+          if (param.type) metaParts.push(param.type);
+          if (param.default !== null && param.default !== undefined && param.default !== '') metaParts.push(`default ${param.default}`);
+          if (param.example !== null && param.example !== undefined && param.example !== '') metaParts.push(`e.g. ${param.example}`);
+          if (metaParts.length) {
+            const meta = document.createElement('span');
+            meta.className = 'tool-param-meta';
+            meta.textContent = metaParts.join(' • ');
+            item.append(meta);
+          }
+          if (param.description) {
+            const desc = document.createElement('div');
+            desc.className = 'tool-param-desc';
+            desc.textContent = param.description;
+            item.append(desc);
+          }
+          list.append(item);
+        }
+        paramSection.append(title, list);
+        card.append(paramSection);
+      }
+
+      if (tool.ai_usage) {
+        const ai = document.createElement('div');
+        ai.className = 'tool-ai-tip';
+        ai.innerHTML = `<strong>AI tip:</strong> ${tool.ai_usage}`;
+        card.append(ai);
+      }
+
+      if (Array.isArray(tool.response_fields) && tool.response_fields.length) {
+        const resp = document.createElement('div');
+        resp.className = 'tool-response-fields';
+        const label = document.createElement('span');
+        label.className = 'tool-response-label';
+        label.textContent = 'Key fields:';
+        const fieldWrap = document.createElement('div');
+        fieldWrap.className = 'tool-response-list';
+        tool.response_fields.forEach((field) => {
+          const code = document.createElement('code');
+          code.textContent = field;
+          fieldWrap.append(code);
+        });
+        resp.append(label, fieldWrap);
+        card.append(resp);
+      }
+
+      if (tool.sample && typeof tool.sample === 'object' && Object.keys(tool.sample).length) {
+        const sampleBox = document.createElement('details');
+        sampleBox.className = 'tool-sample';
+        const sum = document.createElement('summary');
+        sum.textContent = 'Sample';
+        const pre = document.createElement('pre');
+        pre.className = 'tool-sample-body';
+        pre.textContent = buildToolCurl(tool);
+        sampleBox.append(sum, pre);
+        card.append(sampleBox);
+      }
+
+      if (Array.isArray(tool.examples) && tool.examples.length) {
+        const examplesSection = document.createElement('div');
+        examplesSection.className = 'tool-section tool-section-examples';
+        const title = document.createElement('h4');
+        title.textContent = 'Examples';
+        const list = document.createElement('ul');
+        list.className = 'tool-example-list';
+        tool.examples.forEach((example) => {
+          if (!example) return;
+          const item = document.createElement('li');
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'tool-example-btn';
+          btn.textContent = example;
+          btn.addEventListener('click', () => useToolExample(tool, example));
+          item.append(btn);
+          list.append(item);
+        });
+        examplesSection.append(title, list);
+        card.append(examplesSection);
+      }
+
+      if (Array.isArray(tool.links) && tool.links.length) {
+        const linkWrap = document.createElement('div');
+        linkWrap.className = 'tool-links';
+        tool.links.forEach((link) => {
+          if (!link?.url) return;
+          const a = document.createElement('a');
+          a.className = 'tool-link';
+          a.textContent = link.label || link.url;
+          a.href = link.url;
+          if (/^https?:/i.test(link.url)) {
+            a.target = '_blank';
+            a.rel = 'noopener';
+          }
+          linkWrap.append(a);
+        });
+        card.append(linkWrap);
+      }
+
+      const actions = document.createElement('div');
+      actions.className = 'tool-card-actions';
+      if (tool.sample && typeof tool.sample === 'object') {
+        const runBtn = document.createElement('button');
+        runBtn.type = 'button';
+        runBtn.className = 'btn';
+        runBtn.textContent = 'Run sample';
+        runBtn.addEventListener('click', () => runToolSample(tool, runBtn));
+        actions.append(runBtn);
+      }
+      const copyBtn = document.createElement('button');
+      copyBtn.type = 'button';
+      copyBtn.className = 'btn ghost';
+      copyBtn.textContent = 'Copy endpoint';
+      copyBtn.addEventListener('click', () => copyToolEndpoint(tool, copyBtn));
+      actions.append(copyBtn);
+      card.append(actions);
+
+      fragment.append(card);
+    }
+    $toolsList.append(fragment);
+  }
+
+  async function loadTools(force = false) {
+    if (!force && toolsState.items.length) {
+      renderTools();
+      updateChatToolViews();
+      return;
+    }
+    toolsState.loading = true;
+    toolsState.error = null;
+    renderTools();
+    hideToolPreview();
+    try {
+      const res = await fetch(`${API_BASE}/tools`);
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `Request error (${res.status})`);
+      }
+      const data = await res.json();
+      toolsState.items = Array.isArray(data?.tools) ? data.tools : [];
+    } catch (err) {
+      toolsState.items = [];
+      toolsState.error = err?.message || 'Could not load tools';
+    } finally {
+      toolsState.loading = false;
+      renderTools();
+      updateChatToolViews();
+    }
+  }
+
+  function collectToolExamples(limit = 6) {
+    const examples = [];
+    const seen = new Set();
+    const addExample = (tool, example) => {
+      const text = String(example || '').trim();
+      if (!text) return;
+      const key = text.toLowerCase();
+      if (seen.has(key)) return;
+      examples.push({ tool, example: text });
+      seen.add(key);
+    };
+
+    for (const tool of toolsState.items || []) {
+      if (!tool || !Array.isArray(tool.examples)) continue;
+      for (const example of tool.examples) {
+        addExample(tool, example);
+        if (examples.length >= limit) return examples;
+      }
+    }
+
+    if (examples.length < limit) {
+      for (const fallback of DEFAULT_CHAT_EXAMPLES) {
+        addExample(null, fallback);
+        if (examples.length >= limit) break;
+      }
+    }
+
+    return examples;
+  }
+
+  function renderChatExamples() {
+    if (!$chatExamples) return;
+    $chatExamples.innerHTML = '';
+    const items = Array.isArray(chatExamplesState.items) ? chatExamplesState.items : [];
+    if (!items.length) {
+      const empty = document.createElement('div');
+      empty.className = 'chat-examples-empty';
+      empty.textContent = 'Example prompts will appear once the tool catalogue is loaded.';
+      $chatExamples.append(empty);
+      return;
+    }
+    const fragment = document.createDocumentFragment();
+    items.forEach(({ example }) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'chat-suggestion-btn';
+      btn.textContent = example;
+      btn.setAttribute('data-suggestion', example);
+      fragment.append(btn);
+    });
+    $chatExamples.append(fragment);
+    setupSuggestionButtons();
+  }
+
+  function renderChatToolsPanel() {
+    if (!$chatToolsList) return;
+    if (!toolsState.items.length) {
+      $chatToolsList.classList.add('empty');
+      $chatToolsList.textContent = 'Tools will load automatically.';
+      return;
+    }
+    $chatToolsList.classList.remove('empty');
+    $chatToolsList.innerHTML = '';
+    const fragment = document.createDocumentFragment();
+    for (const tool of toolsState.items) {
+      if (!tool) continue;
+      const item = document.createElement('div');
+      item.className = 'chat-tool-item';
+
+      const meta = document.createElement('div');
+      meta.className = 'chat-tool-meta';
+      const name = document.createElement('div');
+      name.className = 'chat-tool-name';
+      name.textContent = tool.name || tool.key || 'Tool';
+      meta.append(name);
+      if (tool.summary) {
+        const summary = document.createElement('div');
+        summary.className = 'chat-tool-summary';
+        summary.textContent = tool.summary;
+        meta.append(summary);
+      }
+      if (Array.isArray(tool.tags) && tool.tags.length) {
+        const tagsWrap = document.createElement('div');
+        tagsWrap.className = 'chat-tool-tags';
+        tool.tags.forEach((tag) => {
+          const chip = document.createElement('span');
+          chip.className = 'chat-tool-chip';
+          chip.textContent = formatToolTag(tag);
+          tagsWrap.append(chip);
+        });
+        meta.append(tagsWrap);
+      }
+      item.append(meta);
+
+      const actions = document.createElement('div');
+      actions.className = 'chat-tool-actions';
+
+      if (Array.isArray(tool.examples) && tool.examples.length) {
+        const firstExample = tool.examples.find((ex) => String(ex || '').trim());
+        if (firstExample) {
+          const exampleBtn = document.createElement('button');
+          exampleBtn.type = 'button';
+          exampleBtn.className = 'chat-tool-suggestion';
+          exampleBtn.textContent = 'Insert example';
+          exampleBtn.title = String(firstExample);
+          exampleBtn.addEventListener('click', () => useToolExample(tool, firstExample));
+          actions.append(exampleBtn);
+        }
+      }
+
+      const detailsBtn = document.createElement('button');
+      detailsBtn.type = 'button';
+      detailsBtn.className = 'btn ghost';
+      detailsBtn.textContent = 'View details';
+      detailsBtn.addEventListener('click', () => openToolInCatalogue(tool));
+      actions.append(detailsBtn);
+
+      item.append(actions);
+      fragment.append(item);
+    }
+    $chatToolsList.append(fragment);
+  }
+
+  function highlightToolCard(key) {
+    if (!key) return;
+    try {
+      const selectorKey = cssEscape(key);
+      const card = document.querySelector(`.tool-card[data-tool-key="${selectorKey}"]`);
+      if (card) {
+        card.classList.add('tool-card-highlight');
+        card.scrollIntoView({ behavior: 'smooth', block: 'start', inline: 'nearest' });
+        setTimeout(() => card.classList.remove('tool-card-highlight'), 1600);
+      }
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  function openToolInCatalogue(tool) {
+    if (!tool) return;
+    const value = tool.name || tool.key || '';
+    toolsState.search = value;
+    toolsState.activeTag = 'all';
+    if ($toolsSearch) $toolsSearch.value = value;
+    renderTools();
+    showPage('tools');
+    setTimeout(() => highlightToolCard(tool.key || value), 120);
+  }
+
+  function updateChatToolViews() {
+    chatExamplesState.items = collectToolExamples(6);
+    renderChatExamples();
+    renderChatToolsPanel();
+  }
+
+  renderChatToolsPanel();
 
   // Simple markdown parser for chat messages
   function parseMarkdown(text) {
@@ -1147,13 +2082,18 @@
     }
   });
 
-  const resizeObs = new ResizeObserver(() => {
+  const handleResize = () => {
     viewportHeight = $bodyScroll.clientHeight;
     updateTemplates();
     computeView();
     renderVisible();
-  });
-  resizeObs.observe($body);
+  };
+  if (typeof ResizeObserver === 'function') {
+    const resizeObs = new ResizeObserver(() => handleResize());
+    resizeObs.observe($body);
+  } else {
+    window.addEventListener('resize', handleResize);
+  }
 
   // Density select
   function applyDensity(val) {
@@ -1627,6 +2567,10 @@
         setUserMenu(false);
         handled = true;
       }
+      if ($toolsPreview && !$toolsPreview.hidden) {
+        hideToolPreview();
+        handled = true;
+      }
       if (handled) {
         e.preventDefault();
         e.stopPropagation();
@@ -1638,9 +2582,11 @@
   function showPage(p) {
     page = p;
     setUserMenu(false);
+    persistActivePage(p);
     // Toggle page sections
     const map = {
-      home: $pageHome,
+      search: $pageSearch,
+      tools: $pageTools,
       zabbix: $pageZabbix,
       netbox: $pageNetbox,
       jira: $pageJira,
@@ -1691,6 +2637,8 @@
     // When switching into Export, ensure data is loaded/refreshed
     if (p === 'export') {
       fetchData();
+    } else if (p === 'tools') {
+      loadTools();
     } else if (p === 'chat') {
       fetchChatSessions();
       loadChatDefaults();
@@ -1710,7 +2658,7 @@
     } else if (p === 'confluence') {
       ensureConfDefaults();
       try { const prev = localStorage.getItem('conf_last_query'); if (prev) searchConfluence(false); } catch { /* noop */ }
-    } else if (p === 'home') {
+    } else if (p === 'search') {
       // no-op; wait for user query
     } else if (p === 'admin') {
       loadAdminSettings(adminState.settings.length === 0).catch(() => {});
@@ -1734,6 +2682,9 @@
         prepareNewSuggestion().catch(() => {});
       }
     }
+    if (p !== 'tools') {
+      hideToolPreview();
+    }
   }
   function parseHashPage() {
     try {
@@ -1742,7 +2693,8 @@
       if (!raw) {
         suggestionState.route = { mode: 'list', id: null };
         accountState.tab = 'profile';
-        return 'home';
+        const stored = readPersistedPage();
+        return stored || 'search';
       }
       if (lower.startsWith('suggestions')) {
         const parts = raw.split('/');
@@ -1769,17 +2721,20 @@
         suggestionState.route = { mode: 'list', id: null };
         return 'admin';
       }
-      const known = ["home","zabbix","netbox","jira","confluence","chat","export","zhost","suggestions","account"];
-      if (known.includes(lower)) {
+      if (ROUTABLE_PAGE_SET.has(lower)) {
         suggestionState.route = { mode: 'list', id: null };
         if (lower === 'account') accountState.tab = 'profile';
         return lower;
       }
     } catch {}
     suggestionState.route = { mode: 'list', id: null };
-    return 'home';
+    const stored = readPersistedPage();
+    return stored || 'search';
   }
-  window.addEventListener('hashchange', () => showPage(parseHashPage()));
+  window.addEventListener('hashchange', () => {
+    const nextPage = parseHashPage();
+    showPage(nextPage);
+  });
   // Attach click handlers to each top-level page button (robust against text-node targets)
   if ($pages) {
     const pgBtns = Array.from($pages.querySelectorAll('button.tab'));
@@ -1810,6 +2765,31 @@
       });
     });
   }
+
+  $toolsSearch?.addEventListener('input', () => {
+    toolsState.search = ($toolsSearch.value || '').trim();
+    hideToolPreview();
+    renderTools();
+  });
+  $toolsRefresh?.addEventListener('click', (e) => {
+    e.preventDefault();
+    toolsState.activeTag = 'all';
+    toolsState.search = ($toolsSearch?.value || '').trim();
+    hideToolPreview();
+    loadTools(true);
+  });
+  $toolsPreviewCollapse?.addEventListener('click', (e) => {
+    e.preventDefault();
+    hideToolPreview();
+  });
+  $chatToolsOpen?.addEventListener('click', (e) => {
+    e.preventDefault();
+    toolsState.search = '';
+    toolsState.activeTag = 'all';
+    if ($toolsSearch) $toolsSearch.value = '';
+    renderTools();
+    showPage('tools');
+  });
 
   if ($userMenuToggle) {
     $userMenuToggle.addEventListener('click', (e) => {
@@ -3313,6 +4293,7 @@
   const $chatSessions = document.getElementById('chat-sessions');
   const $chatNew = document.getElementById('chat-new');
   const $chatMessages = document.getElementById('chat-messages');
+  renderChatEmptyState();
   let chatSessionId = null;
   function saveChatPrefs() {
     try {
@@ -3375,18 +4356,41 @@
     const prompt = usage.prompt_tokens ?? usage.promptTokens;
     const completion = usage.completion_tokens ?? usage.completionTokens;
     const total = usage.total_tokens ?? usage.totalTokens;
+    const cost = usage.cost_usd ?? usage.costUsd ?? 0;
+    
     const toNumber = (value) => {
       const num = Number(value);
       return Number.isFinite(num) ? num : null;
     };
+    
     const promptNum = toNumber(prompt);
     const completionNum = toNumber(completion);
     const totalNum = toNumber(total);
+    const costNum = toNumber(cost);
+    
     if (promptNum !== null) parts.push(`prompt: ${promptNum}`);
     if (completionNum !== null) parts.push(`completion: ${completionNum}`);
     if (totalNum !== null) parts.push(`total: ${totalNum}`);
+    if (costNum !== null && costNum > 0) parts.push(`cost: $${costNum.toFixed(4)}`);
+    
     if (!parts.length) return '';
     return `Tokens — ${parts.join(', ')}`;
+  }
+
+  function formatTokenMetrics(usage) {
+    if (!usage || typeof usage !== 'object') return '';
+    const efficiency = usage.token_efficiency ?? 0;
+    const retries = usage.retry_count ?? 0;
+    const rateLimited = usage.was_rate_limited ?? false;
+    const queueTime = usage.queue_wait_time_ms ?? 0;
+    
+    const parts = [];
+    if (efficiency > 0) parts.push(`efficiency: ${efficiency.toFixed(2)} chars/token`);
+    if (retries > 0) parts.push(`retries: ${retries}`);
+    if (rateLimited) parts.push('rate limited');
+    if (queueTime > 0) parts.push(`queue: ${queueTime}ms`);
+    
+    return parts.length > 0 ? `Performance — ${parts.join(', ')}` : '';
   }
 
   function appendChat(role, text, meta = null) {
@@ -3420,11 +4424,20 @@
 
     if (role === 'assistant') {
       const usageText = meta && meta.prompt_tokens !== undefined ? formatTokenSummary(meta) : formatTokenSummary(meta?.usage ?? meta);
+      const metricsText = formatTokenMetrics(meta?.usage ?? meta);
+      
       if (usageText) {
         const metaDiv = document.createElement('div');
         metaDiv.className = 'chat-message-meta';
         metaDiv.textContent = usageText;
         messageDiv.appendChild(metaDiv);
+      }
+      
+      if (metricsText) {
+        const metricsDiv = document.createElement('div');
+        metricsDiv.className = 'chat-message-metrics';
+        metricsDiv.textContent = metricsText;
+        messageDiv.appendChild(metricsDiv);
       }
     }
     
@@ -3464,42 +4477,45 @@
     }
   }
 
+  function renderChatEmptyState() {
+    if (!$chatMessages) return;
+    $chatMessages.innerHTML = '';
+    const empty = document.createElement('div');
+    empty.className = 'chat-empty-state';
+
+    const icon = document.createElement('div');
+    icon.className = 'chat-empty-icon';
+    icon.textContent = '💬';
+    const title = document.createElement('h3');
+    title.textContent = 'Welcome to AI Chat';
+    const description = document.createElement('p');
+    description.textContent = 'Ask anything about your data exports, monitoring events or Atlassian updates and I will pull the relevant context.';
+
+    const suggestions = document.createElement('div');
+    suggestions.id = 'chat-examples';
+    suggestions.className = 'chat-suggestions';
+
+    empty.append(icon, title, description, suggestions);
+    $chatMessages.append(empty);
+    $chatExamples = suggestions;
+    
+    // Ensure persistent examples are shown
+    ensurePersistentSearchOptions();
+  }
+
   function clearChatLog() {
-    if ($chatMessages) {
-      // Show empty state instead of clearing completely
-      $chatMessages.innerHTML = `
-        <div class="chat-empty-state">
-          <div class="chat-empty-icon">💬</div>
-          <h3>Welcome to AI Chat</h3>
-          <p>Ask me anything about your data. I'll help you analyze and provide insights.</p>
-          <div class="chat-suggestions">
-            <button class="chat-suggestion-btn" data-suggestion="Show me the latest devices added to NetBox">
-              Show latest devices
-            </button>
-            <button class="chat-suggestion-btn" data-suggestion="What are the current active alerts in Zabbix?">
-              Current alerts
-            </button>
-            <button class="chat-suggestion-btn" data-suggestion="Summarize the recent Jira tickets">
-              Recent tickets
-            </button>
-          </div>
-        </div>
-      `;
-      setupSuggestionButtons();
-    }
+    renderChatEmptyState();
   }
 
   function setupSuggestionButtons() {
     const suggestionButtons = document.querySelectorAll('.chat-suggestion-btn');
     suggestionButtons.forEach(btn => {
-      btn.addEventListener('click', () => {
-        const suggestion = btn.getAttribute('data-suggestion');
-        if ($chatInput) {
-          $chatInput.value = suggestion;
-          $chatInput.focus();
-          // Auto-send the suggestion
-          setTimeout(() => sendChat(), 100);
-        }
+      if (btn.dataset.bound === '1') return;
+      btn.dataset.bound = '1';
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        const suggestion = btn.getAttribute('data-suggestion') || btn.textContent || '';
+        insertChatPrompt(suggestion, true);
       });
     });
   }
@@ -3695,11 +4711,41 @@
     const sid = await ensureChatSession();
     if (!sid) return;
     const sys = chatConfig.systemPrompt || '';
-    // Placeholder tijdens verwerken
+    const toolContext = pendingToolContext;
+    pendingToolContext = null;
+    const messagePayload = toolContext
+      ? `${toolContext.label}\n${toolContext.text}\n\nQuestion:\n${q}`
+      : q;
+    const tempPref = (typeof chatConfig.temperature === 'number' && Number.isFinite(chatConfig.temperature))
+      ? chatConfig.temperature
+      : undefined;
+    
+    // Enhanced status placeholder with queue information
     let placeholder = document.createElement('div');
-    placeholder.innerHTML = `<em>AI is thinking…</em>`;
+    placeholder.className = 'chat-status-message processing';
+    placeholder.innerHTML = `
+      <div class="chat-status-icon spinning"></div>
+      <span>AI is processing your request...</span>
+    `;
     $chatMessages?.appendChild(placeholder);
     $chatMessages?.scrollTo(0, $chatMessages.scrollHeight);
+    
+    // Check queue status
+    try {
+      const queueRes = await fetch(`${API_BASE}/monitoring/queue-status`);
+      if (queueRes.ok) {
+        const queueData = await queueRes.json();
+        const queueSize = queueData?.queue?.queue_size || 0;
+        if (queueSize > 0) {
+          placeholder.innerHTML = `
+            <div class="chat-status-icon"></div>
+            <span>Request queued (${queueSize} ahead of you)</span>
+          `;
+        }
+      }
+    } catch (e) {
+      // Ignore queue status errors
+    }
     try {
       const includeData = !!document.getElementById('chat-include-data')?.checked;
       const wantStream = !!document.getElementById('chat-stream')?.checked;
@@ -3707,14 +4753,14 @@
       const res = wantStream ? await fetch(`${API_BASE}/chat/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: prov, model: mdl, message: q, session_id: sid, system: sys, temperature: chatConfig.temperature, include_context: includeData, dataset }),
+        body: JSON.stringify({ provider: prov, model: mdl, message: messagePayload, session_id: sid, system: sys, temperature: tempPref, include_context: includeData, dataset }),
       }) : null;
       if (!wantStream || !res || !res.ok || !res.body) {
         // Fallback to non-streaming
         const res2 = await fetch(`${API_BASE}/chat/complete`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ provider: prov, model: mdl, message: q, session_id: sid, system: sys, temperature: chatConfig.temperature, include_context: includeData, dataset }),
+          body: JSON.stringify({ provider: prov, model: mdl, message: messagePayload, session_id: sid, system: sys, temperature: tempPref, include_context: includeData, dataset }),
         });
         const data2 = await res2.json().catch(() => ({}));
         placeholder.remove();
@@ -3774,7 +4820,7 @@
         const res3 = await fetch(`${API_BASE}/chat/complete`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ provider: prov, model: mdl, message: q, session_id: sid, system: sys, temperature: chatConfig.temperature, include_context: includeData, dataset }),
+          body: JSON.stringify({ provider: prov, model: mdl, message: messagePayload, session_id: sid, system: sys, temperature: tempPref, include_context: includeData, dataset }),
         });
         const data3 = await res3.json().catch(() => ({}));
         if (!res3.ok) {
@@ -3801,7 +4847,18 @@
       await fetchChatSessions();
     } catch (e) {
       placeholder.remove();
-      appendChat('assistant', `Error: ${e?.message || e}`);
+      
+      // Enhanced error handling with user-friendly messages
+      let errorMessage = `Error: ${e?.message || e}`;
+      if (e?.message && e.message.includes('rate limit')) {
+        errorMessage = '⚠️ Rate limit reached. Please wait a moment before sending another message.';
+      } else if (e?.message && e.message.includes('503')) {
+        errorMessage = '⚠️ Service temporarily unavailable. Please try again in a few moments.';
+      } else if (e?.message && e.message.includes('queue')) {
+        errorMessage = '⏳ Request queue is full. Please wait and try again.';
+      }
+      
+      appendChat('assistant', errorMessage);
     }
   }
   $chatSend?.addEventListener('click', () => { sendChat(); });
@@ -4048,8 +5105,15 @@
       alert(`Error: ${err?.message || err}`);
     }
   });
-  // Home search for selected Zabbix problem/host
-  document.getElementById('zbx-home')?.addEventListener('click', (e) => {
+  function cleanupDeepSearchQuery(raw) {
+    if (!raw) return raw;
+    let value = raw.trim();
+    value = value.replace(/^SYSTEMS\s*-\s*/i, '');
+    value = value.replace(/\s*-\s*RAC$/i, '');
+    return value.trim();
+  }
+  // Search page for selected Zabbix problem/host
+  document.getElementById('zbx-search')?.addEventListener('click', (e) => {
     e.preventDefault();
     try {
       const feed = document.getElementById('zbx-feed');
@@ -4069,18 +5133,20 @@
           if (!query) {
             const probCell = tr.children[5];
             query = (probCell?.innerText || '').trim();
-          }
         }
-      } catch {}
-      if (!query) { alert('Could not determine host/problem text to search.'); return; }
-      // Navigate to Home and perform search
-      const homeInput = document.getElementById('home-q');
-      if (homeInput) homeInput.value = query;
-      showPage('home');
-      // Delay a tick to allow DOM to show Home before searching
-      setTimeout(() => { try { if (typeof searchHome === 'function') searchHome(); } catch {} }, 0);
-    } catch (err) {
-      alert(`Error: ${err?.message || err}`);
+      }
+    } catch {}
+    if (!query) { alert('Could not determine host/problem text to search.'); return; }
+    const finalQuery = cleanupDeepSearchQuery(query) || query.trim();
+    if (!finalQuery) { alert('Query resolved to an empty value.'); return; }
+    // Navigate to Search and perform deep search
+    const searchInput = document.getElementById('search-q');
+    if (searchInput) searchInput.value = finalQuery;
+    showPage('search');
+    // Delay a tick to allow DOM to show Search before running
+    setTimeout(() => { try { if (typeof runDeepSearch === 'function') runDeepSearch(); } catch {} }, 0);
+  } catch (err) {
+    alert(`Error: ${err?.message || err}`);
     }
   });
   // Persist and react to unack toggle
@@ -4490,28 +5556,28 @@
   });
   $nbQ?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); searchNetbox(); } });
 
-  // Home aggregator
-  const $homeQ = document.getElementById('home-q');
-  const $homeResults = document.getElementById('home-results');
-  const $homeZ = document.getElementById('home-zlimit');
-  const $homeJ = document.getElementById('home-jlimit');
-  const $homeC = document.getElementById('home-climit');
-  async function searchHome() {
-    if ($homeResults) $homeResults.textContent = 'Searching…';
-    const q = ($homeQ?.value || '').trim();
-    if (!q) { if ($homeResults) $homeResults.textContent = 'Enter a search term.'; return; }
+  // Search aggregator
+  const $searchQ = document.getElementById('search-q');
+  const $searchResults = document.getElementById('search-results');
+  const $searchZ = document.getElementById('search-zlimit');
+  const $searchJ = document.getElementById('search-jlimit');
+  const $searchC = document.getElementById('search-climit');
+  async function runDeepSearch() {
+    if ($searchResults) $searchResults.textContent = 'Searching…';
+    const q = ($searchQ?.value || '').trim();
+    if (!q) { if ($searchResults) $searchResults.textContent = 'Enter a search term.'; return; }
     try {
       if (!NB_BASE) {
         try { const r0 = await fetch(`${API_BASE}/netbox/config`); const d0 = await r0.json(); NB_BASE = (d0 && d0.base_url) || ''; } catch {}
       }
       // Build limits (defaults 10; 0 means no limit; NetBox unlimited server-side)
-      const zl = Number($homeZ?.value || 10) || 10;
-      const jl = Number($homeJ?.value || 10) || 10;
-      const cl = Number($homeC?.value || 10) || 10;
+      const zl = Number($searchZ?.value || 10) || 10;
+      const jl = Number($searchJ?.value || 10) || 10;
+      const cl = Number($searchC?.value || 10) || 10;
       const qs = new URLSearchParams({ q, zlimit: String(zl), jlimit: String(jl), climit: String(cl) });
-      const res = await fetch(`${API_BASE}/home/aggregate?${qs.toString()}`);
+      const res = await fetch(`${API_BASE}/search/aggregate?${qs.toString()}`);
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) { if ($homeResults) $homeResults.textContent = data?.detail || `${res.status} ${res.statusText}`; return; }
+      if (!res.ok) { if ($searchResults) $searchResults.textContent = data?.detail || `${res.status} ${res.statusText}`; return; }
       const wrap = document.createElement('div');
       function section(title, contentNode) { const d = document.createElement('div'); d.className = 'panel'; const h = document.createElement('h3'); h.textContent = title; d.appendChild(h); d.appendChild(contentNode); return d; }
       // Zabbix
@@ -4589,11 +5655,11 @@
         nnode.appendChild(ul);
       } else { nnode.textContent = 'No NetBox data.'; }
       wrap.appendChild(section('NetBox', nnode));
-      if ($homeResults) { $homeResults.innerHTML = ''; $homeResults.appendChild(wrap); }
-    } catch (e) { if ($homeResults) $homeResults.textContent = `Error: ${e?.message || e}`; }
+      if ($searchResults) { $searchResults.innerHTML = ''; $searchResults.appendChild(wrap); }
+    } catch (e) { if ($searchResults) $searchResults.textContent = `Error: ${e?.message || e}`; }
   }
-  document.getElementById('home-search')?.addEventListener('click', () => searchHome());
-  $homeQ?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); searchHome(); } });
+  document.getElementById('search-run')?.addEventListener('click', () => runDeepSearch());
+  $searchQ?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); runDeepSearch(); } });
 
   // Jira helpers
   function ensureJiraDefaults() {
@@ -4727,6 +5793,10 @@
   loadChatDefaults();
   loadChatConfig();
   const initialPage = parseHashPage();
+  persistActivePage(initialPage);
+  if (typeof setupChatSidebarTabs === 'function') {
+    setupChatSidebarTabs();
+  }
   // Clean up any legacy ?view=... from the URL at startup
   try { updateURLDebounced(); } catch {}
   if (initialPage === 'chat') {
@@ -4734,6 +5804,7 @@
     setupAutoResize();
     setupSuggestionButtons();
   }
+  loadTools();
   showPage(initialPage);
   // Ensure Export dataset loads immediately on first load
   if (initialPage === 'export') {
@@ -4813,6 +5884,411 @@
         e.preventDefault();
         fetchData();
       }
+  // ---------------------------
+  // Token Usage Monitoring
+  // ---------------------------
+  
+  const monitoringState = {
+    tokenUsage: null,
+    queueStatus: null,
+    rateLimits: null,
+    autoRefresh: false,
+    refreshInterval: null,
+  };
+
+  async function loadTokenUsageStats(hours = 24) {
+    try {
+      const res = await fetch(`${API_BASE}/monitoring/token-usage?hours=${hours}`);
+      if (!res.ok) return null;
+      const data = await res.json();
+      monitoringState.tokenUsage = data;
+      return data;
+    } catch (err) {
+      console.error('Failed to load token usage stats', err);
+      return null;
+    }
+  }
+
+  async function loadQueueStatus() {
+    try {
+      const res = await fetch(`${API_BASE}/monitoring/queue-status`);
+      if (!res.ok) return null;
+      const data = await res.json();
+      monitoringState.queueStatus = data;
+      return data;
+    } catch (err) {
+      console.error('Failed to load queue status', err);
+      return null;
+    }
+  }
+
+  async function loadRateLimitStatus() {
+    try {
+      const res = await fetch(`${API_BASE}/monitoring/rate-limits`);
+      if (!res.ok) return null;
+      const data = await res.json();
+      monitoringState.rateLimits = data;
+      return data;
+    } catch (err) {
+      console.error('Failed to load rate limit status', err);
+      return null;
+    }
+  }
+
+  async function loadPerformanceMetrics(hours = 24) {
+    try {
+      const res = await fetch(`${API_BASE}/monitoring/performance?hours=${hours}`);
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (err) {
+      console.error('Failed to load performance metrics', err);
+      return null;
+    }
+  }
+
+  function renderTokenUsageDashboard() {
+    const container = document.getElementById('token-usage-dashboard');
+    if (!container || !monitoringState.tokenUsage) return;
+
+    const usage = monitoringState.tokenUsage.token_usage_24h || {};
+    const rateLimits = monitoringState.rateLimits?.rate_limits || {};
+    
+    container.innerHTML = `
+      <div class="token-usage-header">
+        <h3 class="token-usage-title">Token Usage & Performance</h3>
+        <button class="token-usage-refresh" onclick="refreshMonitoringData()">Refresh</button>
+      </div>
+      
+      <div class="token-metrics-grid">
+        <div class="token-metric-card">
+          <div class="token-metric-value">${(usage.total_tokens || 0).toLocaleString()}</div>
+          <div class="token-metric-label">Total Tokens</div>
+        </div>
+        <div class="token-metric-card">
+          <div class="token-metric-value">$${(usage.total_cost_usd || 0).toFixed(4)}</div>
+          <div class="token-metric-label">Total Cost</div>
+        </div>
+        <div class="token-metric-card">
+          <div class="token-metric-value">${usage.request_count || 0}</div>
+          <div class="token-metric-label">Requests</div>
+        </div>
+        <div class="token-metric-card">
+          <div class="token-metric-value">${Math.round(usage.average_tokens_per_request || 0)}</div>
+          <div class="token-metric-label">Avg Tokens/Req</div>
+        </div>
+      </div>
+      
+      <div class="rate-limit-status ${getRateLimitStatusClass(rateLimits)}">
+        <div class="rate-limit-indicator"></div>
+        <span>${getRateLimitStatusText(rateLimits)}</span>
+      </div>
+      
+      <div class="performance-chart">
+        <span>Performance chart placeholder</span>
+      </div>
+      
+      <div class="cost-summary">
+        <span class="cost-period">Last 24 hours</span>
+        <span class="cost-amount">$${(usage.total_cost_usd || 0).toFixed(4)}</span>
+      </div>
+    `;
+  }
+
+  function getRateLimitStatusClass(rateLimits) {
+    if (rateLimits.stabilization_active) return 'error';
+    if (rateLimits.request_utilization_minute > 80 || rateLimits.token_utilization_minute > 80) return 'warning';
+    return 'healthy';
+  }
+
+  function getRateLimitStatusText(rateLimits) {
+    if (rateLimits.stabilization_active) {
+      return 'Rate limiting active - requests temporarily reduced';
+    }
+    
+    const reqUtil = Math.round(rateLimits.request_utilization_minute || 0);
+    const tokenUtil = Math.round(rateLimits.token_utilization_minute || 0);
+    
+    if (reqUtil > 80 || tokenUtil > 80) {
+      return `High utilization - Requests: ${reqUtil}%, Tokens: ${tokenUtil}%`;
+    }
+    
+    return `Healthy - Requests: ${reqUtil}%, Tokens: ${tokenUtil}%`;
+  }
+
+  function renderQueueStatus() {
+    const container = document.getElementById('queue-status');
+    if (!container || !monitoringState.queueStatus) return;
+
+    const queue = monitoringState.queueStatus.queue || {};
+    const queueSize = queue.queue_size || 0;
+    const processing = queue.processing_count || 0;
+    
+    let statusClass = 'idle';
+    let statusText = 'Idle';
+    
+    if (processing > 0) {
+      statusClass = 'processing';
+      statusText = `Processing ${processing} request${processing > 1 ? 's' : ''}`;
+    } else if (queueSize > 0) {
+      statusClass = 'waiting';
+      statusText = `${queueSize} request${queueSize > 1 ? 's' : ''} queued`;
+    }
+
+    container.innerHTML = `
+      <div class="queue-status">
+        <div class="queue-indicator ${statusClass}"></div>
+        <span>${statusText}</span>
+      </div>
+    `;
+  }
+
+  async function refreshMonitoringData() {
+    try {
+      await Promise.all([
+        loadTokenUsageStats(),
+        loadQueueStatus(),
+        loadRateLimitStatus(),
+      ]);
+      
+      renderTokenUsageDashboard();
+      renderQueueStatus();
+      
+    } catch (err) {
+      console.error('Failed to refresh monitoring data', err);
+    }
+  }
+
+  function startMonitoringAutoRefresh() {
+    if (monitoringState.refreshInterval) {
+      clearInterval(monitoringState.refreshInterval);
+    }
+    
+    monitoringState.autoRefresh = true;
+  // Handle monitoring dashboard toggle
+  const $chatShowMonitoring = document.getElementById('chat-show-monitoring');
+  $chatShowMonitoring?.addEventListener('change', () => {
+    const show = $chatShowMonitoring.checked;
+    const dashboard = document.getElementById('token-usage-dashboard');
+    const queueStatus = document.getElementById('queue-status');
+    
+    if (dashboard) dashboard.style.display = show ? 'block' : 'none';
+    if (queueStatus) queueStatus.style.display = show ? 'block' : 'none';
+    
+    if (show) {
+      refreshMonitoringData();
+    }
+    
+    try {
+      localStorage.setItem('chat_show_monitoring', show ? '1' : '0');
+    } catch {}
+  });
+
+  // Load monitoring preference
+  try {
+    const savedMonitoring = localStorage.getItem('chat_show_monitoring');
+    if ($chatShowMonitoring && savedMonitoring !== null) {
+      $chatShowMonitoring.checked = savedMonitoring === '1';
+    }
+  } catch {}
+
+  // Override showPage to handle monitoring
+  const originalShowPageFunc = showPage;
+  showPage = function(p) {
+    originalShowPageFunc(p);
+    
+    if (p === 'chat') {
+      // Show/hide monitoring based on checkbox
+      const showMonitoring = $chatShowMonitoring?.checked || false;
+      const dashboard = document.getElementById('token-usage-dashboard');
+      const queueStatus = document.getElementById('queue-status');
+      
+      if (dashboard) dashboard.style.display = showMonitoring ? 'block' : 'none';
+      if (queueStatus) queueStatus.style.display = showMonitoring ? 'block' : 'none';
+      
+      if (showMonitoring) {
+        // Load initial monitoring data
+        refreshMonitoringData();
+        startMonitoringAutoRefresh();
+      }
+    } else {
+      stopMonitoringAutoRefresh();
+    }
+  };
+    monitoringState.refreshInterval = setInterval(() => {
+      if (page === 'chat' || page === 'admin') {
+        refreshMonitoringData();
+      }
+    }, 30000); // Refresh every 30 seconds
+  }
+
+  function stopMonitoringAutoRefresh() {
+    if (monitoringState.refreshInterval) {
+      clearInterval(monitoringState.refreshInterval);
+      monitoringState.refreshInterval = null;
+    }
+    monitoringState.autoRefresh = false;
+  }
+
+  // Initialize monitoring when chat page is shown
+  const originalShowPage = showPage;
+  showPage = function(p) {
+    originalShowPage(p);
+    
+    if (p === 'chat') {
+      // Load initial monitoring data
+      refreshMonitoringData();
+      startMonitoringAutoRefresh();
+    } else {
+      stopMonitoringAutoRefresh();
+    }
+  };
+
+  // ---------------------------
+  // Enhanced Chat Sidebar Management
+  // ---------------------------
+  
+  const CHAT_SIDEBAR_TABS = ['sessions', 'tools'];
+
+  const chatSidebarState = {
+    activeTab: CHAT_SIDEBAR_TABS[0],
+    tabsReady: false,
+  };
+
+  function normaliseChatSidebarTab(tabName) {
+    if (!tabName) return CHAT_SIDEBAR_TABS[0];
+    const value = String(tabName).toLowerCase();
+    return CHAT_SIDEBAR_TABS.includes(value) ? value : CHAT_SIDEBAR_TABS[0];
+  }
+
+  function switchChatSidebarTab(tabName, options = {}) {
+    const { focusTab = false, skipPersist = false } = options;
+    const targetTab = normaliseChatSidebarTab(tabName);
+    chatSidebarState.activeTab = targetTab;
+
+    const tabButtons = document.querySelectorAll('.chat-sidebar-tab');
+    let activeButton = null;
+    tabButtons.forEach((btn) => {
+      const btnTab = normaliseChatSidebarTab(btn.getAttribute('data-tab'));
+      const isActive = btnTab === targetTab;
+      btn.classList.toggle('active', isActive);
+      btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+      btn.setAttribute('tabindex', isActive ? '0' : '-1');
+      if (isActive) activeButton = btn;
+    });
+
+    const panels = document.querySelectorAll('.chat-sidebar-panel');
+    panels.forEach((panel) => {
+      const panelTab = normaliseChatSidebarTab(panel.getAttribute('data-tab'));
+      const isActive = panelTab === targetTab;
+      panel.classList.toggle('active', isActive);
+      panel.toggleAttribute('hidden', !isActive);
+      panel.setAttribute('aria-hidden', isActive ? 'false' : 'true');
+      panel.setAttribute('tabindex', isActive ? '0' : '-1');
+    });
+
+    if (focusTab && activeButton) activeButton.focus();
+    if (!skipPersist) {
+      try { localStorage.setItem('chat_sidebar_tab', targetTab); } catch {}
+    }
+    return targetTab;
+  }
+
+  // Setup sidebar tab event listeners
+  function setupChatSidebarTabs() {
+    const tabButtons = document.querySelectorAll('.chat-sidebar-tab');
+    if (!tabButtons.length) return;
+
+    const tabContainer = document.querySelector('.chat-sidebar-tabs');
+
+    if (!chatSidebarState.tabsReady) {
+      tabContainer?.addEventListener('click', (event) => {
+        const btn = event.target.closest('.chat-sidebar-tab');
+        if (!btn) return;
+        const tabName = btn.getAttribute('data-tab');
+        if (!tabName) return;
+        event.preventDefault();
+        switchChatSidebarTab(tabName);
+      });
+
+      tabContainer?.addEventListener('keydown', (event) => {
+        const target = event.target.closest('.chat-sidebar-tab');
+        if (!target) return;
+
+        const key = event.key;
+        const currentIdx = CHAT_SIDEBAR_TABS.indexOf(normaliseChatSidebarTab(chatSidebarState.activeTab));
+        let nextTab = null;
+
+        if (key === 'ArrowRight' || key === 'ArrowDown') {
+          nextTab = CHAT_SIDEBAR_TABS[(currentIdx + 1) % CHAT_SIDEBAR_TABS.length];
+        } else if (key === 'ArrowLeft' || key === 'ArrowUp') {
+          nextTab = CHAT_SIDEBAR_TABS[(currentIdx - 1 + CHAT_SIDEBAR_TABS.length) % CHAT_SIDEBAR_TABS.length];
+        } else if (key === 'Home') {
+          nextTab = CHAT_SIDEBAR_TABS[0];
+        } else if (key === 'End') {
+          nextTab = CHAT_SIDEBAR_TABS[CHAT_SIDEBAR_TABS.length - 1];
+        } else if (key === ' ' || key === 'Spacebar' || key === 'Enter') {
+          event.preventDefault();
+          switchChatSidebarTab(target.getAttribute('data-tab'), { focusTab: true });
+          return;
+        } else {
+          return;
+        }
+
+        if (nextTab) {
+          event.preventDefault();
+          switchChatSidebarTab(nextTab, { focusTab: true });
+        }
+      });
+
+      chatSidebarState.tabsReady = true;
+    }
+
+    let savedTab = null;
+    try {
+      savedTab = localStorage.getItem('chat_sidebar_tab');
+    } catch {}
+    const initialTab = savedTab && CHAT_SIDEBAR_TABS.includes(savedTab)
+      ? savedTab
+      : chatSidebarState.activeTab || CHAT_SIDEBAR_TABS[0];
+    switchChatSidebarTab(initialTab, { skipPersist: true });
+  }
+
+
+  // Enhanced showPage function with proper chat initialization
+  const enhancedShowPage = showPage;
+  showPage = function(p) {
+    enhancedShowPage(p);
+    
+    if (p === 'chat') {
+      // Initialize sidebar tabs
+      setupChatSidebarTabs();
+      
+      // Ensure persistent search options
+      ensurePersistentSearchOptions();
+      
+      // Load monitoring if enabled
+      const showMonitoring = document.getElementById('chat-show-monitoring')?.checked || false;
+      const dashboard = document.getElementById('token-usage-dashboard');
+      const queueStatus = document.getElementById('queue-status');
+      
+      if (dashboard) dashboard.style.display = showMonitoring ? 'block' : 'none';
+      if (queueStatus) queueStatus.style.display = showMonitoring ? 'block' : 'none';
+      
+      if (showMonitoring) {
+        refreshMonitoringData();
+        startMonitoringAutoRefresh();
+      }
+    } else {
+      stopMonitoringAutoRefresh();
+    }
+  };
+
+  // Expose monitoring functions globally for debugging
+  window.refreshMonitoringData = refreshMonitoringData;
+  window.loadTokenUsageStats = loadTokenUsageStats;
+  window.loadQueueStatus = loadQueueStatus;
+  window.switchChatSidebarTab = switchChatSidebarTab;
+  window.ensurePersistentSearchOptions = ensurePersistentSearchOptions;
     }
   });
 })();

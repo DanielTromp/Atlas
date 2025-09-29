@@ -28,28 +28,34 @@ def get_service_context() -> ServiceContext:
     return ServiceContext(session_factory=Sessionmaker)
 
 
-def get_db_session(context: ServiceContext = Depends(get_service_context)) -> Generator[Session, None, None]:
+ServiceContextDep = Annotated[ServiceContext, Depends(get_service_context)]
+
+
+def get_db_session(context: ServiceContextDep) -> Generator[Session, None, None]:
     """Provide a SQLAlchemy session for FastAPI dependencies."""
     with context.session_scope() as session:
         yield session
 
 
-def get_user_service(session: Session = Depends(get_db_session)) -> DefaultUserService:
+DbSessionDep = Annotated[Session, Depends(get_db_session)]
+
+
+def get_user_service(session: DbSessionDep) -> DefaultUserService:
     """Return a user service bound to the active session."""
     return create_user_service(session)
 
 
-def get_chat_history_service(session: Session = Depends(get_db_session)) -> DefaultChatHistoryService:
+def get_chat_history_service(session: DbSessionDep) -> DefaultChatHistoryService:
     """Return a chat history service bound to the active session."""
     return create_chat_history_service(session)
 
 
-def get_profile_service(session: Session = Depends(get_db_session)) -> ProfileService:
+def get_profile_service(session: DbSessionDep) -> ProfileService:
     """Return a profile service for the active session."""
     return create_profile_service(session)
 
 
-def get_admin_service(session: Session = Depends(get_db_session)) -> AdminService:
+def get_admin_service(session: DbSessionDep) -> AdminService:
     """Return the admin service bound to the active session."""
     return create_admin_service(session)
 
@@ -75,7 +81,6 @@ def admin_user(user: CurrentUserDep) -> User:
 CurrentUserDep = Annotated[User, Depends(current_user)]
 OptionalUserDep = Annotated[User | None, Depends(optional_user)]
 AdminUserDep = Annotated[User, Depends(admin_user)]
-DbSessionDep = Annotated[Session, Depends(get_db_session)]
 
 
 __all__ = [

@@ -11,7 +11,6 @@ from typing import Protocol
 
 from enreach_tools import backup_sync
 from enreach_tools.application.exporter.netbox import (
-    ExportArtifacts,
     ExportPaths,
     LegacyScriptNetboxExporter,
     NativeNetboxExporter,
@@ -100,7 +99,7 @@ class NetboxExportService:
             else:
                 self._logger.info("NetBox export started")
             try:
-                artifacts: ExportArtifacts = self._exporter.export(force=force, verbose=verbose)
+                self._exporter.export(force=force, verbose=verbose)
                 self._merge_csv()
                 self._create_excel()
                 cache_invalidate = getattr(self._client, "invalidate_cache", None)

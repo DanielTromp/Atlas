@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Dataset Viewer</title>
+    <title>Enreach Systems Tools</title>
     <link rel="stylesheet" href="styles.css?v=7" />
     <link rel="icon" href="/favicon.ico" type="image/png" />
   </head>
@@ -21,7 +21,6 @@
             <button id="user-menu-toggle" class="user-menu-toggle" type="button" aria-haspopup="true" aria-expanded="false">
               <span class="user-menu-text">
                 <span id="user-menu-name" class="user-menu-name">Loading…</span>
-                <span id="user-menu-role" class="user-menu-role-text"></span>
               </span>
               <span class="user-menu-caret" aria-hidden="true">▾</span>
             </button>
@@ -53,25 +52,54 @@
       </div>
       <!-- Top-level pages navigation -->
       <nav class="tabs" id="pages" aria-label="Pages">
-        <button class="tab active" data-page="home">Home</button>
+        <button class="tab" data-page="search">Search</button>
         <button class="tab" data-page="zabbix">Zabbix</button>
         <button class="tab" data-page="netbox">NetBox</button>
         <button class="tab" data-page="jira">Jira</button>
         <button class="tab" data-page="confluence">Confluence</button>
-        <button class="tab" data-page="chat">Chat</button>
         <button class="tab" data-page="export">Export</button>
-        <button class="tab" data-page="admin">Admin</button>
+        <button class="tabmaintenance" data-page="chat"  title="Under Construction 👷">Chat</button>
+        <button class="tabmaintenance" data-page="tools" title="Under Construction 👷">Tools</button>
+        <button class="tabmaintenance" data-page="admin" title="Under Construction 👷">Admin</button>
       </nav>
     </header>
 
-    <main class="main">
+    <main class="main"></main>
+      <!-- Search Page -->
+      <section class="page" id="page-search" hidden>
+        <div class="panel">
+          <h2>Search</h2>
+          <div class="toolbar" style="margin: 8px 0 12px">
+            <label class="field grow">
+              <span>Search</span>
+              <input id="search-q" type="text" placeholder="Object name (e.g., device, vm, IP, keyword)" />
+            </label>
+            <button id="search-run" class="btn">Search</button>
+            <div class="spacer"></div>
+            <label class="field">
+              <span>Zabbix</span>
+              <input id="search-zlimit" type="number" min="0" value="10" style="width:80px" />
+            </label>
+            <label class="field">
+              <span>Jira</span>
+              <input id="search-jlimit" type="number" min="0" value="10" style="width:80px" />
+            </label>
+            <label class="field">
+              <span>Confluence</span>
+              <input id="search-climit" type="number" min="0" value="10" style="width:100px" />
+            </label>
+          </div>
+          <div id="search-results" class="feed empty">Enter a search term and press Search.</div>
+        </div>
+      </section>
+
       <!-- Export Page -->
       <section class="page" id="page-export">
         <div class="panel panel-export">
           <nav class="tabs" id="ds-tabs" aria-label="Datasets">
+            <button class="tab active" data-ds="all">All</button>
             <button class="tab" data-ds="devices">Devices</button>
             <button class="tab" data-ds="vms">VMs</button>
-            <button class="tab active" data-ds="all">All</button>
           </nav>
           <div class="toolbar">
             <label class="field grow">
@@ -487,38 +515,43 @@
         </div>
       </section>
 
-      <!-- Home Page -->
-      <section class="page" id="page-home" hidden>
-        <div class="panel">
-          <h2>Home</h2>
-          <div class="toolbar" style="margin: 8px 0 12px">
-            <label class="field grow">
-              <span>Search</span>
-              <input id="home-q" type="text" placeholder="Object name (e.g., device, vm, IP, keyword)" />
-            </label>
-            <button id="home-search" class="btn">Search</button>
-            <div class="spacer"></div>
-            <label class="field">
-              <span>Zabbix</span>
-              <input id="home-zlimit" type="number" min="0" value="10" style="width:80px" />
-            </label>
-            <label class="field">
-              <span>Jira</span>
-              <input id="home-jlimit" type="number" min="0" value="10" style="width:80px" />
-            </label>
-            <label class="field">
-              <span>Confluence</span>
-              <input id="home-climit" type="number" min="0" value="10" style="width:100px" />
-            </label>
+      <!-- Tools Page -->
+      <section class="page" id="page-tools" hidden>
+        <div class="panel panel-tools">
+          <div class="tools-header">
+            <div class="tools-header-text">
+              <h2>Tools</h2>
+              <p class="tools-lead">
+                Discover which API tools are available to the web app and AI agents. Filter to find the right integration and run a sample
+                request to inspect the response.
+              </p>
+            </div>
+            <div class="tools-actions">
+              <label class="field grow">
+                <span>Search</span>
+                <input id="tools-search" type="text" placeholder="Filter by name, tag or description" />
+              </label>
+              <button id="tools-refresh" class="btn ghost" type="button">Refresh</button>
+            </div>
           </div>
-          <div id="home-results" class="feed empty">Enter a search term and press Search.</div>
+          <div id="tools-tags" class="tools-tags"></div>
+          <div id="tools-list" class="tools-grid empty">
+            <div class="tools-empty">No tools loaded yet.</div>
+          </div>
+          <div id="tools-preview" class="tools-preview" hidden>
+            <div class="tools-preview-header">
+              <h3 id="tools-preview-title">Tool result</h3>
+              <button id="tools-preview-collapse" class="btn ghost" type="button">Hide</button>
+            </div>
+            <pre id="tools-preview-body" class="tools-preview-body"></pre>
+          </div>
         </div>
       </section>
 
       <!-- Chat Page -->
       <section class="page" id="page-chat" hidden>
         <div class="chat-container">
-          <!-- Sidebar with chat sessions -->
+          <!-- Enhanced Sidebar with Dual Tabs -->
           <div class="chat-sidebar">
             <div class="chat-sidebar-header">
               <button id="chat-new" class="btn btn-new-chat">
@@ -529,8 +562,37 @@
                 New chat
               </button>
             </div>
-            <div class="chat-sessions" id="chat-sessions">
-              <div class="chat-sessions-empty">No chats yet</div>
+            
+            <!-- Dual Tab Navigation -->
+            <div class="chat-sidebar-tabs" role="tablist" aria-label="Chat sections">
+              <button id="chat-tab-sessions" class="chat-sidebar-tab active" data-tab="sessions" type="button" role="tab" aria-selected="true" aria-controls="chat-sessions-panel" tabindex="0">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                </svg>
+                Sessions
+              </button>
+              <button id="chat-tab-tools" class="chat-sidebar-tab" data-tab="tools" type="button" role="tab" aria-selected="false" aria-controls="chat-tools-panel" tabindex="-1">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path>
+                </svg>
+                Tools
+              </button>
+            </div>
+            
+            <!-- Sessions Panel -->
+            <div id="chat-sessions-panel" class="chat-sidebar-panel active" data-tab="sessions" role="tabpanel" aria-labelledby="chat-tab-sessions" aria-hidden="false" tabindex="0">
+              <div class="chat-sessions" id="chat-sessions">
+                <div class="chat-sessions-empty">No chats yet</div>
+              </div>
+            </div>
+
+            <!-- Tools Panel -->
+            <div id="chat-tools-panel" class="chat-sidebar-panel" data-tab="tools" role="tabpanel" aria-labelledby="chat-tab-tools" aria-hidden="true" hidden tabindex="-1">
+              <div class="chat-tools-header">
+                <h3>Available Tools</h3>
+                <button id="chat-tools-open" class="btn ghost" type="button">Open catalogue</button>
+              </div>
+              <div id="chat-tools-list" class="chat-tools-list empty">Tools will load automatically.</div>
             </div>
           </div>
           
@@ -564,22 +626,22 @@
               </div>
             </div>
             
+            <!-- Token Usage Dashboard -->
+            <div id="token-usage-dashboard" class="token-usage-dashboard" style="display: none;">
+              <!-- Content will be populated by JavaScript -->
+            </div>
+            
+            <!-- Queue Status -->
+            <div id="queue-status" class="queue-status-container" style="display: none;">
+              <!-- Content will be populated by JavaScript -->
+            </div>
+            
             <div class="chat-messages" id="chat-messages">
               <div class="chat-empty-state">
                 <div class="chat-empty-icon">💬</div>
                 <h3>Welcome to AI Chat</h3>
                 <p>Ask me anything about your data. I'll help you analyze and provide insights.</p>
-                <div class="chat-suggestions">
-                  <button class="chat-suggestion-btn" data-suggestion="Show me the latest devices added to NetBox">
-                    Show latest devices
-                  </button>
-                  <button class="chat-suggestion-btn" data-suggestion="What are the current active alerts in Zabbix?">
-                    Current alerts
-                  </button>
-                  <button class="chat-suggestion-btn" data-suggestion="Summarize the recent Jira tickets">
-                    Recent tickets
-                  </button>
-                </div>
+                <div id="chat-examples" class="chat-suggestions"></div>
               </div>
             </div>
             
@@ -607,6 +669,10 @@
                   <input id="chat-stream" type="checkbox" checked />
                   <span>Stream responses</span>
                 </label>
+                <label class="chat-checkbox">
+                  <input id="chat-show-monitoring" type="checkbox" />
+                  <span>Show monitoring</span>
+                </label>
               </div>
             </div>
           </div>
@@ -628,7 +694,7 @@
               </svg>
             </button>
             <button id="zbx-ack" class="btn" title="Acknowledge selected problems">Ack</button>
-            <button id="zbx-home" class="btn" title="Search selected on Home">Home Search</button>
+            <button id="zbx-search" class="btn" title="Deep search for the selected item">Deep Search</button>
             <a class="btn" href="https://zabbix.enreach.tech/zabbix.php" target="_blank" rel="noopener">Open Zabbix</a>
             <div class="spacer"></div>
             <label class="field">
