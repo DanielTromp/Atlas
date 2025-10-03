@@ -22,59 +22,50 @@ Usage
 Commvault CLI quick reference
 ----------------------------
 
-All Commvault commands live under `uv run enreach commvault ...` and share the same connection settings from `.env` (`COMMVAULT_BASE_URL`, `COMMVAULT_API_TOKEN` or `COMMVAULT_EMAIL`/`COMMVAULT_PASSWORD`, optional `COMMVAULT_VERIFY_TLS`). Key subcommands:
+All Commvault commands live under `uv run enreach commvault ...` and share the same connection settings from `.env` (`COMMVAULT_BASE_URL`, `COMMVAULT_API_TOKEN`, optional `COMMVAULT_VERIFY_TLS`).
 
-- `servers list`
-  - `--hours 8760` — look back window (0 disables the filter).
-  - `--job-limit 100` — cap the number of recent jobs retrieved per server (0 skips job metrics).
-  - `--no-jobs` — skip the metrics call entirely for faster lightweight listings.
-  - `--json` — emit machine-readable output instead of the rich table.
-  - `--refresh-cache` — bypass any cached metrics to force a live refresh.
-- `servers show <client>`
-  - Accepts a name or numeric `clientId` (use `servers search` to discover IDs).
-  - Reuses `--hours`, `--job-limit`, `--oldest-first`, `--retained-only`, `--retain-after YYYY-MM-DDTHH:MM`, `--json`, and `--refresh-cache` options.
-  - Displays retention metadata, the latest job slice (up to 10 rows), and prints “Data as of …” so you know when the cache was last refreshed.
-- `servers export <client>`
-  - `--format json|csv` (default `json`).
-  - `--out reports/client.csv` — target path; combine with `--overwrite` to replace existing files.
-  - Respects the same time-window and retention switches as `servers show`, plus `--refresh-cache` to force a fresh pull before writing the export.
-- `servers search "needle"` — fuzzy match clients by name/display name; pair with `--limit` and `--json` for automation.
-- Examples:
-  - Look up client metadata: `uv run enreach commvault servers search vm8`
-  - Inspect recent backup jobs for a single client: `uv run enreach commvault servers show vm8 --hours 168 --job-limit 50`
-  - Export a year of retained jobs: `uv run enreach commvault servers export vm8 --hours 8760 --job-limit 500 --retained-only --format csv --out reports/vm8-retention.csv`
-- Bulk job scan: `uv run enreach commvault backups --limit 0 --since 24h --client vm8` (omit `--client` to scan all; add `--json` for automation).
-- Storage visibility:
-  - `uv run enreach commvault storage list` — overview of all storage pools with capacity and status.
-  - `uv run enreach commvault storage show 78` — detailed view for pool ID 78 (e.g. the SoftIron estate) with raw JSON available via `--json`.
+### Backups command (primary workflow)
 
-Warm the cache before large reporting windows with:
+`uv run enreach commvault backups` reads directly from the cached job snapshot (or the API when `--refresh-cache` is passed) and can export filtered results for reporting.
+
+Common switches:
+
+- `--client core-prod1` — filter to a specific client name or numeric ID (omit to include everything in the cache/API window).
+- `--since 24h` — look-back window (`Nh`, `Nd`, or ISO timestamp). Use `0h` to disable the cutoff.
+- `--limit 100` — cap the number of jobs returned (0 lets the API choose page size when refreshing).
+- `--retained` — only include jobs whose retention date is still in the future (still on backup storage).
+- `--refresh-cache` — bypass the cached snapshot and pull a fresh dataset from Commvault before filtering/exporting.
+- `--json` — emit machine-readable output (includes metadata such as `source`, `cache_generated_at`, and export paths).
+- `--export-csv` / `--export-xlsx` — write the filtered jobs to `reports/<slug>.csv`/`.xlsx` (override the stem via `--out`).
+
+Examples:
 
 ```
-uv run enreach commvault servers list --limit 200 --hours 8760 --job-limit 500 --refresh-cache
+# Review the most recent week of jobs for a single client
+uv run enreach commvault backups --client core-prod3 --since 168h --limit 0
+
+# Produce retained-job reports in both CSV and Excel formats
+uv run enreach commvault backups --since 0h --retained --export-xlsx --client cdr-prod
 ```
 
-Repeat the warm-up on your preferred cadence (manual, cron, etc.) or add `--refresh-cache` to individual commands whenever you need to invalidate the cached metrics for a specific client.
+### Storage overview
 
-- Commvault tools:
-  - List servers with recent backup metrics: `uv run enreach commvault servers list --hours 168 --job-limit 20`
-  - Detailed view (retain filters, CSV view): `uv run enreach commvault servers show vm8 --hours 168 --job-limit 20`
-  - Export retained jobs: `uv run enreach commvault servers export vm8 --hours 8760 --job-limit 500 --retained-only --format csv --out reports/vm8-retained.csv`
-  - Warm up the Commvault job cache for the last year (adjust `--limit` to your estate size):
-    `uv run enreach commvault servers list --limit 200 --hours 8760 --job-limit 500 --refresh-cache`
-    Subsequent commands can omit `--refresh-cache` and will read from the warm cache until its TTL expires.
+- `uv run enreach commvault storage list` — overview of all storage pools with capacity and status.
+- `uv run enreach commvault storage show <pool-id>` — detailed view for a specific pool (add `--json` for raw data).
 
-### Refresh the Commvault UI cache without opening the web app
+### Refresh the Commvault cache without opening the web app
 
-Run the helper script to pull the latest jobs and merge them into `data/commvault_backups.json`:
+Run the helper script to pull the latest jobs and merge them into `data/commvault_backups.json` (and optionally refresh storage metrics):
 
 ```
 uv run python scripts/update_commvault_cache.py --since 24 --limit 0
+# the cache (35MB) already contains all the jobs from Commvault
 ```
 
 - `--since` controls the look-back window (0 keeps every cached job).
 - `--limit` caps the number of records requested from the Commvault API (0 lets the API decide).
-- The script shares the same cache as the web UI. After running it, open the Commvault tab and switch between **Backups**, **Storage**, and **Reports** — the backups view will show the selected look-back window, the Storage tab now surfaces per-pool capacity/dedupe metrics, and the Reports tab will light up as we add higher-level summaries. Use `--skip-storage` if you only need the job cache.
+- Add `--skip-storage` if you only need the job cache warmed.
+- The CLI commands and the web UI share this cache, so updating it here refreshes all surfaces.
 
 Confluence Upload
 -----------------

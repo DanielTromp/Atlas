@@ -8,7 +8,7 @@ import sys
 from collections.abc import Iterable, Sequence
 from contextlib import ExitStack
 from dataclasses import asdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from getpass import getuser
 from time import monotonic
 from zoneinfo import ZoneInfo
@@ -18,6 +18,9 @@ from fastapi import HTTPException
 from rich import print
 from rich.console import Console
 from rich.table import Table
+
+from pathlib import Path
+from typing import Any
 
 from .api.app import zabbix_problems as zabbix_problems_api
 from .application.context import ServiceContext
@@ -33,6 +36,7 @@ from .infrastructure.logging import get_logger, logging_context
 from .infrastructure.metrics import record_netbox_export
 from .infrastructure.queues import InMemoryJobQueue
 from .infrastructure.tracing import init_tracing, span, tracing_enabled
+from .interfaces.cli.commvault import app as commvault_cli_app
 
 # Enable -h as an alias for --help everywhere
 HELP_CTX = {"help_option_names": ["-h", "--help"]}
@@ -149,6 +153,7 @@ jira = typer.Typer(help="Jira helpers", context_settings=HELP_CTX)
 app.add_typer(jira, name="jira")
 confluence = typer.Typer(help="Confluence helpers", context_settings=HELP_CTX)
 app.add_typer(confluence, name="confluence")
+app.add_typer(commvault_cli_app, name="commvault")
 netbox = typer.Typer(help="NetBox helpers", context_settings=HELP_CTX)
 app.add_typer(netbox, name="netbox")
 search = typer.Typer(help="Cross-system search aggregator", context_settings=HELP_CTX)
