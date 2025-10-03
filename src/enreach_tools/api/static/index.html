@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="styles.css?v=7" />
     <link rel="icon" href="/favicon.ico" type="image/png" />
   </head>
-  <body class="theme-nebula">
+  <body class="theme-enreach-light">
     <header class="topbar">
       <div class="topbar-primary">
         <div class="brand-group">
@@ -147,7 +147,7 @@
           <nav class="tabs" id="commvault-tabs" aria-label="Commvault datasets">
             <button class="tab active" data-commvault-tab="backups">Backups</button>
             <button class="tab" data-commvault-tab="storage">Storage</button>
-            <button class="tab" data-commvault-tab="reports">Reports</button>
+            <button class="tab" data-commvault-tab="servers">Servers</button>
           </nav>
           <div class="commvault-panel-group">
             <div class="commvault-panel active" data-commvault-panel="backups">
@@ -248,13 +248,133 @@
               </div>
             </div>
 
-            <div class="commvault-panel" data-commvault-panel="reports" hidden>
+            <div class="commvault-panel" data-commvault-panel="servers" hidden>
               <div class="commvault-panel-header">
-                <h2 class="commvault-title">Reports &amp; Trends</h2>
-                <p class="commvault-panel-subtitle">High-level backup health summaries and reporting exports will appear here.</p>
+                <div class="commvault-toolbar">
+                  <div class="commvault-toolbar-overview">
+                    <h2 class="commvault-title">Servers</h2>
+                    <span id="commvault-server-summary" class="commvault-summary">Search for a server to view restore points, retention and data reduction metrics.</span>
+                  </div>
+                  <div class="commvault-actions commvault-server-actions">
+                    <button id="commvault-server-refresh" class="btn ghost" type="button">Refresh</button>
+                    <div class="commvault-server-export-buttons" id="commvault-server-export-buttons">
+                      <button class="btn ghost" data-format="text" type="button">Text</button>
+                      <button class="btn ghost" data-format="markdown" type="button">Markdown</button>
+                      <button class="btn ghost" data-format="html" type="button">HTML</button>
+                      <button class="btn ghost" data-format="docx" type="button">DOCX</button>
+                      <button class="btn ghost" data-format="xlsx" type="button">XLSX</button>
+                      <button class="btn ghost" data-format="csv" type="button">CSV</button>
+                    </div>
+                  </div>
+                </div>
               </div>
-              <div class="commvault-placeholder">
-                Reporting widgets are under construction. Expect SLA compliance charts, retention drift monitors, and export shortcuts soon.
+              <div class="commvault-server-search">
+                <label class="field column commvault-server-query-field">
+                  <span>Server</span>
+                  <input id="commvault-server-query" type="text" placeholder="Search by client name or ID" autocomplete="off" />
+                </label>
+                <button id="commvault-server-search" class="btn" type="button">Search</button>
+                <label class="commvault-server-option commvault-server-checkbox">
+                  <input id="commvault-server-retained" type="checkbox" checked />
+                  <span>Retained only</span>
+                </label>
+                <label class="field column commvault-server-option">
+                  <span>Since</span>
+                  <select id="commvault-server-since">
+                    <option value="0">All time</option>
+                    <option value="24" selected>24 hours</option>
+                    <option value="72">72 hours</option>
+                    <option value="168">7 days</option>
+                    <option value="720">30 days</option>
+                  </select>
+                </label>
+                <label class="field column commvault-server-option">
+                  <span>Job limit</span>
+                  <input id="commvault-server-limit" type="number" min="0" step="50" value="500" />
+                </label>
+              </div>
+              <div id="commvault-server-suggestions" class="commvault-server-suggestions" hidden></div>
+              <div id="commvault-server-status" class="commvault-status" hidden></div>
+              <div class="commvault-server-metrics" id="commvault-server-metrics">
+                <div class="commvault-server-card">
+                  <span class="label">Restore points</span>
+                  <span id="commvault-server-metric-count" class="value">—</span>
+                  <span id="commvault-server-metric-window" class="meta"></span>
+                </div>
+                <div class="commvault-server-card">
+                  <span class="label">Application size</span>
+                  <span id="commvault-server-metric-app" class="value">—</span>
+                  <span id="commvault-server-metric-app-extra" class="meta"></span>
+                </div>
+                <div class="commvault-server-card">
+                  <span class="label">Media size</span>
+                  <span id="commvault-server-metric-media" class="value">—</span>
+                  <span id="commvault-server-metric-media-extra" class="meta"></span>
+                </div>
+                <div class="commvault-server-card">
+                  <span class="label">Average reduction</span>
+                  <span id="commvault-server-metric-reduction" class="value">—</span>
+                  <span id="commvault-server-metric-reduction-ratio" class="meta"></span>
+                </div>
+              </div>
+              <div class="commvault-server-secondary">
+                <div class="commvault-server-breakdown">
+                  <h3>Plans</h3>
+                  <ul id="commvault-server-plan" class="commvault-server-breakdown-list">
+                    <li class="empty">No data yet.</li>
+                  </ul>
+                </div>
+                <div class="commvault-server-breakdown">
+                  <h3>Subclients</h3>
+                  <ul id="commvault-server-subclient" class="commvault-server-breakdown-list">
+                    <li class="empty">No data yet.</li>
+                  </ul>
+                </div>
+                <div class="commvault-server-breakdown">
+                  <h3>Policies</h3>
+                  <ul id="commvault-server-policy" class="commvault-server-breakdown-list">
+                    <li class="empty">No data yet.</li>
+                  </ul>
+                </div>
+              </div>
+              <div class="commvault-server-charts">
+                <div class="commvault-server-chart">
+                  <div class="commvault-server-chart-header">
+                    <h3>Backup size trend</h3>
+                    <span id="commvault-server-chart-size-unit" class="meta"></span>
+                  </div>
+                  <canvas id="commvault-server-chart-size" width="640" height="200"></canvas>
+                  <div class="commvault-server-chart-legend">
+                    <span class="legend app">Application</span>
+                    <span class="legend media">Media</span>
+                  </div>
+                </div>
+                <div class="commvault-server-chart">
+                  <div class="commvault-server-chart-header">
+                    <h3>Data reduction %</h3>
+                  </div>
+                  <canvas id="commvault-server-chart-savings" width="640" height="200"></canvas>
+                </div>
+              </div>
+              <div class="commvault-table-wrapper commvault-server-table-wrapper">
+                <table class="commvault-table compact commvault-server-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Job</th>
+                      <th scope="col">Status</th>
+                      <th scope="col">Plan</th>
+                      <th scope="col">Subclient</th>
+                      <th scope="col">Start</th>
+                      <th scope="col">Retain until</th>
+                      <th scope="col">App size</th>
+                      <th scope="col">Media size</th>
+                      <th scope="col">Savings</th>
+                    </tr>
+                  </thead>
+                  <tbody id="commvault-server-table-body">
+                    <tr class="empty"><td colspan="9">Search for a server to see recent restore points.</td></tr>
+                  </tbody>
+                </table>
               </div>
             </div>
           </div>

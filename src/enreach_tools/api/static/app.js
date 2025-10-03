@@ -4,8 +4,9 @@
 
   // Theming (React-powered dropdown)
   const THEMES = [
-    { id: 'nebula', label: 'Enreach Purple' },
-    { id: 'default', label: 'Light' },
+    { id: 'enreach-light', label: 'Enreach Light' },
+    { id: 'nebula', label: 'Nebula Dark' },
+    { id: 'default', label: 'Neutral Light' },
   ];
   const THEME_STORAGE_KEY = 'enreach_theme_v1';
   const THEME_CLASS_PREFIX = 'theme-';
@@ -210,6 +211,32 @@
   const $commvaultStorageTableBody = document.getElementById("commvault-storage-table-body");
   const $commvaultStorageDetail = document.getElementById("commvault-storage-detail");
   const $commvaultStorageRefresh = document.getElementById("commvault-storage-refresh");
+  const $commvaultServerSummary = document.getElementById("commvault-server-summary");
+  const $commvaultServerQuery = document.getElementById("commvault-server-query");
+  const $commvaultServerSearchBtn = document.getElementById("commvault-server-search");
+  const $commvaultServerRetained = document.getElementById("commvault-server-retained");
+  const $commvaultServerSince = document.getElementById("commvault-server-since");
+  const $commvaultServerLimit = document.getElementById("commvault-server-limit");
+  const $commvaultServerRefresh = document.getElementById("commvault-server-refresh");
+  const $commvaultServerStatus = document.getElementById("commvault-server-status");
+  const $commvaultServerMetrics = document.getElementById("commvault-server-metrics");
+  const $commvaultServerPlanList = document.getElementById("commvault-server-plan");
+  const $commvaultServerSubclientList = document.getElementById("commvault-server-subclient");
+  const $commvaultServerPolicyList = document.getElementById("commvault-server-policy");
+  const $commvaultServerExportButtons = document.getElementById("commvault-server-export-buttons");
+  const $commvaultServerTableBody = document.getElementById("commvault-server-table-body");
+  const $commvaultServerChartSize = document.getElementById("commvault-server-chart-size");
+  const $commvaultServerChartSavings = document.getElementById("commvault-server-chart-savings");
+  const $commvaultServerSuggestions = document.getElementById("commvault-server-suggestions");
+  const $commvaultServerMetricCount = document.getElementById("commvault-server-metric-count");
+  const $commvaultServerMetricWindow = document.getElementById("commvault-server-metric-window");
+  const $commvaultServerMetricApp = document.getElementById("commvault-server-metric-app");
+  const $commvaultServerMetricAppExtra = document.getElementById("commvault-server-metric-app-extra");
+  const $commvaultServerMetricMedia = document.getElementById("commvault-server-metric-media");
+  const $commvaultServerMetricMediaExtra = document.getElementById("commvault-server-metric-media-extra");
+  const $commvaultServerMetricReduction = document.getElementById("commvault-server-metric-reduction");
+  const $commvaultServerMetricReductionRatio = document.getElementById("commvault-server-metric-reduction-ratio");
+  const $commvaultServerChartSizeUnit = document.getElementById("commvault-server-chart-size-unit");
   const commvaultPanels = Array.from(document.querySelectorAll('[data-commvault-panel]'));
   const $suggestionsButton = document.getElementById("open-suggestions");
   const $suggestionList = document.getElementById("suggestion-list");
@@ -370,6 +397,31 @@
     selectedId: null,
     lastFetchMs: 0,
   };
+  const commvaultServerState = {
+    loading: false,
+    refreshing: false,
+    query: '',
+    clientIdentifier: '',
+    selectedClientId: null,
+    selectedClientName: '',
+    jobs: [],
+    stats: null,
+    jobMetrics: null,
+    summary: null,
+    retainedOnly: true,
+    sinceHours: 24,
+    jobLimit: 500,
+    suggestions: [],
+    suggestionSerial: 0,
+    requestSerial: 0,
+    lastFetchKey: null,
+    lastFetchMs: 0,
+    lastIdentifier: '',
+    error: null,
+  };
+  const commvaultChartState = new Map();
+  let commvaultChartTooltip = null;
+  let commvaultServerSuggestionTimer = null;
   let commvaultStatusTimeout = null;
   let currentUser = null;
 
@@ -380,13 +432,96 @@
   }
 
   setCommvaultSearch(commvaultState.search || '');
+  if ($commvaultServerSince) {
+    const initialSince = Number($commvaultServerSince.value);
+    commvaultServerState.sinceHours = Number.isFinite(initialSince) ? Math.max(0, initialSince) : 0;
+  }
+  if ($commvaultServerLimit) {
+    const initialLimit = Number($commvaultServerLimit.value);
+    commvaultServerState.jobLimit = Number.isFinite(initialLimit) ? Math.max(0, initialLimit) : 0;
+  }
+  if ($commvaultServerRetained) {
+    commvaultServerState.retainedOnly = !!$commvaultServerRetained.checked;
+  }
+
+  function ensureCommvaultChartTooltip() {
+    if (commvaultChartTooltip) return commvaultChartTooltip;
+    const tip = document.createElement('div');
+    tip.className = 'chart-tooltip';
+    tip.hidden = true;
+    document.body.appendChild(tip);
+    commvaultChartTooltip = tip;
+    return tip;
+  }
+
+  function hideCommvaultChartTooltip() {
+    if (commvaultChartTooltip) {
+      commvaultChartTooltip.hidden = true;
+    }
+  }
+
+  function showCommvaultChartTooltip(content, clientX, clientY) {
+    const tip = ensureCommvaultChartTooltip();
+    tip.innerHTML = content;
+    tip.hidden = false;
+    const offset = 14;
+    const maxWidth = window.innerWidth - 160;
+    const x = Math.min(clientX + offset, maxWidth);
+    const y = clientY + offset;
+    tip.style.left = `${x}px`;
+    tip.style.top = `${y}px`;
+  }
+
+  function registerCommvaultChart(canvas, info) {
+    if (!canvas) return;
+    commvaultChartState.set(canvas, info);
+    if (!canvas.dataset.commvaultChartBound) {
+      canvas.addEventListener('mousemove', (event) => handleCommvaultChartHover(canvas, event));
+      canvas.addEventListener('mouseleave', () => { hideCommvaultChartTooltip(); });
+      canvas.dataset.commvaultChartBound = '1';
+    }
+  }
+
+  function handleCommvaultChartHover(canvas, event) {
+    const info = commvaultChartState.get(canvas);
+    if (!info || !Array.isArray(info.points) || info.points.length === 0) {
+      hideCommvaultChartTooltip();
+      return;
+    }
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = rect.width ? canvas.width / rect.width : 1;
+    const scaleY = rect.height ? canvas.height / rect.height : 1;
+    const pointerX = event.offsetX * scaleX;
+    const pointerY = event.offsetY * scaleY;
+    let nearest = null;
+    let minDistance = Infinity;
+    const maxDistance = 18 * Math.max(scaleX, scaleY);
+    for (const point of info.points) {
+      const dx = pointerX - point.x;
+      const dy = pointerY - point.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < minDistance) {
+        minDistance = dist;
+        nearest = point;
+      }
+    }
+    if (!nearest || minDistance > maxDistance) {
+      hideCommvaultChartTooltip();
+      return;
+    }
+    const valueLine = nearest.valueLabel ? `<div>${escapeHtml(nearest.valueLabel)}</div>` : '';
+    const dateLine = nearest.dateLabel ? `<div class="chart-tooltip-meta">${escapeHtml(nearest.dateLabel)}</div>` : '';
+    const content = `<strong>${escapeHtml(nearest.datasetLabel || 'Value')}</strong>${valueLine}${dateLine}`;
+    showCommvaultChartTooltip(content, event.clientX, event.clientY);
+  }
 
   const COMMVAULT_STORAGE_REFRESH_INTERVAL_MS = 60_000;
   const COMMVAULT_TAB_KEY = 'commvault_active_tab';
   const storedCommvaultTab = (() => {
     try {
       const value = localStorage.getItem(COMMVAULT_TAB_KEY);
-      if (value && ['backups', 'storage', 'reports'].includes(value)) return value;
+      if (value === 'reports') return 'servers';
+      if (value && ['backups', 'storage', 'servers'].includes(value)) return value;
     } catch {}
     return 'backups';
   })();
@@ -3010,7 +3145,7 @@
   // Commvault backups
   // ---------------------------
   function setCommvaultTab(tab) {
-    if (!['backups', 'storage', 'reports'].includes(tab)) tab = 'backups';
+    if (!['backups', 'storage', 'servers'].includes(tab)) tab = 'backups';
     commvaultState.tab = tab;
     if ($commvaultTabs) {
       $commvaultTabs.querySelectorAll('button[data-commvault-tab]').forEach((btn) => {
@@ -3030,6 +3165,15 @@
     } else if (tab === 'storage') {
       renderCommvaultStorage();
       loadCommvaultStorage(false);
+    } else if (tab === 'servers') {
+      renderCommvaultServerState();
+      if ($commvaultServerQuery) {
+        try {
+          $commvaultServerQuery.focus({ preventScroll: true });
+        } catch (_) {
+          /* ignore */
+        }
+      }
     }
   }
 
@@ -3110,6 +3254,22 @@
       }).format(d);
     } catch {
       return value;
+    }
+  }
+
+  function formatCommvaultChartDate(value) {
+    if (!value) return '';
+    try {
+      const d = new Date(value);
+      if (Number.isNaN(d.getTime())) return '';
+      return new Intl.DateTimeFormat(undefined, {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      }).format(d);
+    } catch {
+      return '';
     }
   }
 
@@ -3505,6 +3665,578 @@
     `;
   }
 
+  function setCommvaultServerStatus(message, isError = false) {
+    if (!$commvaultServerStatus) return;
+    if (!message) {
+      $commvaultServerStatus.hidden = true;
+      $commvaultServerStatus.textContent = '';
+      $commvaultServerStatus.classList.remove('error');
+      return;
+    }
+    $commvaultServerStatus.hidden = false;
+    $commvaultServerStatus.textContent = message;
+    $commvaultServerStatus.classList.toggle('error', !!isError);
+  }
+
+  function renderCommvaultServerSuggestions() {
+    if (!$commvaultServerSuggestions) return;
+    const suggestions = Array.isArray(commvaultServerState.suggestions) ? commvaultServerState.suggestions : [];
+    const query = (commvaultServerState.query || '').trim();
+    if (!suggestions.length || !query) {
+      $commvaultServerSuggestions.hidden = true;
+      $commvaultServerSuggestions.innerHTML = '';
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    for (const item of suggestions.slice(0, 8)) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.dataset.clientId = item?.client_id != null ? String(item.client_id) : '';
+      btn.dataset.clientName = item?.display_name || item?.name || '';
+      const display = item?.display_name || item?.name || (item?.client_id != null ? `#${item.client_id}` : 'Unknown');
+      const subtitle = item?.client_id != null ? `ID ${item.client_id}${item?.name && item.name !== display ? ` · ${item.name}` : ''}` : (item?.name || '');
+      btn.innerHTML = `<strong>${escapeHtml(display)}</strong>${subtitle ? `<span class="muted">${escapeHtml(subtitle)}</span>` : ''}`;
+      frag.append(btn);
+    }
+    $commvaultServerSuggestions.innerHTML = '';
+    $commvaultServerSuggestions.append(frag);
+    $commvaultServerSuggestions.hidden = false;
+  }
+
+  function renderCommvaultServerBreakdown(items, target) {
+    if (!target) return;
+    const list = Array.isArray(items) ? items.filter(Boolean) : [];
+    if (!list.length) {
+      target.innerHTML = '<li class="empty">No data yet.</li>';
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    for (const entry of list.slice(0, 8)) {
+      const label = entry?.label || entry?.plan || entry?.name || 'Unnamed';
+      const count = entry?.restore_points ?? entry?.count ?? entry?.total ?? 0;
+      const li = document.createElement('li');
+      const labelSpan = document.createElement('span');
+      labelSpan.textContent = label;
+      const countSpan = document.createElement('span');
+      countSpan.className = 'count';
+      countSpan.textContent = String(count);
+      li.append(labelSpan, countSpan);
+      frag.append(li);
+    }
+    target.innerHTML = '';
+    target.append(frag);
+  }
+
+  function renderCommvaultServerMetrics() {
+    if (!$commvaultServerMetrics) return;
+    const stats = commvaultServerState.stats;
+    if (!$commvaultServerMetricCount) return;
+    if (!stats || !commvaultServerState.summary) {
+      $commvaultServerMetricCount.textContent = '—';
+      if ($commvaultServerMetricWindow) $commvaultServerMetricWindow.textContent = '';
+      if ($commvaultServerMetricApp) $commvaultServerMetricApp.textContent = '—';
+      if ($commvaultServerMetricAppExtra) $commvaultServerMetricAppExtra.textContent = '';
+      if ($commvaultServerMetricMedia) $commvaultServerMetricMedia.textContent = '—';
+      if ($commvaultServerMetricMediaExtra) $commvaultServerMetricMediaExtra.textContent = '';
+      if ($commvaultServerMetricReduction) $commvaultServerMetricReduction.textContent = '—';
+      if ($commvaultServerMetricReductionRatio) $commvaultServerMetricReductionRatio.textContent = '';
+      return;
+    }
+    const jobCount = stats.job_count ?? commvaultServerState.jobs.length;
+    $commvaultServerMetricCount.textContent = String(jobCount);
+    const windowHours = commvaultServerState.jobMetrics?.window_hours ?? commvaultServerState.sinceHours ?? 0;
+    if ($commvaultServerMetricWindow) {
+      $commvaultServerMetricWindow.textContent = windowHours > 0 ? `${windowHours}h window` : 'All time window';
+    }
+    if ($commvaultServerMetricApp) {
+      $commvaultServerMetricApp.textContent = formatCommvaultBytes(stats.total_application_bytes);
+    }
+    if ($commvaultServerMetricAppExtra) {
+      const retained = stats.retained_jobs ?? 0;
+      $commvaultServerMetricAppExtra.textContent = retained ? `${retained} retained job(s)` : '';
+    }
+    if ($commvaultServerMetricMedia) {
+      $commvaultServerMetricMedia.textContent = formatCommvaultBytes(stats.total_media_bytes);
+    }
+    if ($commvaultServerMetricMediaExtra) {
+      const savingsBytes = stats.savings_bytes ?? null;
+      $commvaultServerMetricMediaExtra.textContent = savingsBytes ? `Saved ${formatCommvaultBytes(savingsBytes)}` : '';
+    }
+    if ($commvaultServerMetricReduction) {
+      const avgSavings = stats.average_savings_percent;
+      $commvaultServerMetricReduction.textContent = typeof avgSavings === 'number' ? formatCommvaultPercent(avgSavings) : '—';
+    }
+    if ($commvaultServerMetricReductionRatio) {
+      $commvaultServerMetricReductionRatio.textContent = stats.average_reduction_ratio_text ? `≈ ${stats.average_reduction_ratio_text}` : '';
+    }
+    renderCommvaultServerBreakdown(stats.plan_breakdown, $commvaultServerPlanList);
+    renderCommvaultServerBreakdown(stats.subclient_breakdown, $commvaultServerSubclientList);
+    renderCommvaultServerBreakdown(stats.policy_breakdown, $commvaultServerPolicyList);
+  }
+
+  function renderCommvaultServerTable() {
+    if (!$commvaultServerTableBody) return;
+    const jobs = Array.isArray(commvaultServerState.jobs) ? commvaultServerState.jobs : [];
+    if (!jobs.length) {
+      $commvaultServerTableBody.innerHTML = '<tr class="empty"><td colspan="9">Search for a server to see recent restore points.</td></tr>';
+      return;
+    }
+    const rows = jobs.map((job) => {
+      const jobId = job?.job_id != null ? String(job.job_id) : '–';
+      const statusLabel = job?.localized_status || job?.status || 'Unknown';
+      const statusClass = getCommvaultStatusClass(statusLabel);
+      const statusHtml = `<span class="status-pill${statusClass ? ` ${statusClass}` : ''}">${escapeHtml(statusLabel)}</span>`;
+      const plan = job?.plan_name || '—';
+      const subclient = job?.subclient_name || job?.backup_set_name || '—';
+      const start = formatCommvaultDate(job?.start_time);
+      const retain = formatCommvaultDate(job?.retain_until);
+      const appSize = formatCommvaultBytes(job?.size_of_application_bytes);
+      const mediaSize = formatCommvaultBytes(job?.size_on_media_bytes);
+      const savings = formatCommvaultPercent(job?.percent_savings);
+      return `
+        <tr>
+          <td><strong>${escapeHtml(jobId)}</strong></td>
+          <td>${statusHtml}</td>
+          <td>${plan !== '—' ? escapeHtml(plan) : '—'}</td>
+          <td>${subclient !== '—' ? escapeHtml(subclient) : '—'}</td>
+          <td>${escapeHtml(start)}</td>
+          <td>${escapeHtml(retain)}</td>
+          <td>${escapeHtml(appSize)}</td>
+          <td>${escapeHtml(mediaSize)}</td>
+          <td>${escapeHtml(savings)}</td>
+        </tr>`;
+    });
+    $commvaultServerTableBody.innerHTML = rows.join('');
+  }
+
+  function ensureCommvaultCanvas(canvas) {
+    if (!canvas) return null;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    const dpr = window.devicePixelRatio || 1;
+    const displayWidth = canvas.clientWidth || canvas.width;
+    const displayHeight = canvas.clientHeight || canvas.height;
+    if (canvas.style.width === '') canvas.style.width = `${displayWidth}px`;
+    if (canvas.style.height === '') canvas.style.height = `${displayHeight}px`;
+    const scaledWidth = Math.max(1, Math.floor(displayWidth * dpr));
+    const scaledHeight = Math.max(1, Math.floor(displayHeight * dpr));
+    if (canvas.width !== scaledWidth || canvas.height !== scaledHeight) {
+      canvas.width = scaledWidth;
+      canvas.height = scaledHeight;
+    }
+    ctx.resetTransform?.();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { ctx, width: displayWidth, height: displayHeight };
+  }
+
+  function drawCommvaultServerLineChart(canvas, datasets, options = {}) {
+    const surface = ensureCommvaultCanvas(canvas);
+    if (!surface) return;
+    const { ctx, width, height } = surface;
+    const scaleX = canvas.width / Math.max(1, width);
+    const scaleY = canvas.height / Math.max(1, height);
+    const chartInfo = {
+      points: [],
+      axisLabels: Array.isArray(options.labels) ? options.labels : [],
+    };
+    ctx.clearRect(0, 0, width, height);
+    ctx.font = '12px system-ui, sans-serif';
+    ctx.fillStyle = '#64748b';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+
+    const maxPoints = Math.max(0, ...datasets.map((ds) => Array.isArray(ds?.values) ? ds.values.length : 0));
+    if (maxPoints < 2) {
+      ctx.fillText('Not enough data to chart', 12, height / 2);
+      registerCommvaultChart(canvas, chartInfo);
+      return;
+    }
+
+    let minValue = Number.POSITIVE_INFINITY;
+    let maxValue = Number.NEGATIVE_INFINITY;
+    let hasValue = false;
+    for (const ds of datasets) {
+      for (const raw of ds.values || []) {
+        if (raw == null || Number.isNaN(raw)) continue;
+        if (raw < minValue) minValue = raw;
+        if (raw > maxValue) maxValue = raw;
+        hasValue = true;
+      }
+    }
+    if (!hasValue) {
+      ctx.fillText('Not enough data to chart', 12, height / 2);
+      registerCommvaultChart(canvas, chartInfo);
+      return;
+    }
+    if (!Number.isFinite(minValue) || !Number.isFinite(maxValue) || minValue === maxValue) {
+      minValue = 0;
+      maxValue = Number.isFinite(maxValue) && maxValue > 0 ? maxValue : 1;
+    }
+
+    const padding = 16;
+    const usableWidth = Math.max(1, width - padding * 2);
+    const usableHeight = Math.max(1, height - padding * 2);
+
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.35)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(padding, height - padding);
+    ctx.lineTo(width - padding, height - padding);
+    ctx.stroke();
+
+    for (const dataset of datasets) {
+      const values = Array.isArray(dataset?.values) ? dataset.values : [];
+      if (!values.length) continue;
+      ctx.beginPath();
+      ctx.lineWidth = dataset?.lineWidth || 2.2;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = dataset?.color || '#3b82f6';
+      let hasMove = false;
+      const denominator = maxValue - minValue || 1;
+      const stepX = values.length > 1 ? usableWidth / (values.length - 1) : usableWidth;
+      for (let index = 0; index < values.length; index += 1) {
+        const raw = values[index];
+        if (raw == null || Number.isNaN(raw)) {
+          hasMove = false;
+          continue;
+        }
+        const normalised = (raw - minValue) / denominator;
+        const x = padding + stepX * index;
+        const y = height - padding - Math.max(0, Math.min(1, normalised)) * usableHeight;
+        if (!hasMove) {
+          ctx.moveTo(x, y);
+          hasMove = true;
+        } else {
+          ctx.lineTo(x, y);
+        }
+      }
+      ctx.stroke();
+
+      if (dataset?.drawPoints) {
+        ctx.fillStyle = dataset.color || '#3b82f6';
+        const denominatorInner = maxValue - minValue || 1;
+        const stepXInner = values.length > 1 ? usableWidth / (values.length - 1) : usableWidth;
+        const pointLabels = Array.isArray(dataset?.pointLabels) ? dataset.pointLabels : null;
+        const datasetLabel = dataset?.name || '';
+        for (let index = 0; index < values.length; index += 1) {
+          const raw = values[index];
+          if (raw == null || Number.isNaN(raw)) continue;
+          const normalised = (raw - minValue) / denominatorInner;
+          const x = padding + stepXInner * index;
+          const y = height - padding - Math.max(0, Math.min(1, normalised)) * usableHeight;
+          ctx.beginPath();
+          ctx.arc(x, y, 3, 0, Math.PI * 2);
+          ctx.fill();
+
+          const axisLabel = chartInfo.axisLabels[index] || '';
+          const dateLabel = (Array.isArray(options.tooltipDates) ? options.tooltipDates[index] : '') || axisLabel;
+          const pointLabel = pointLabels ? pointLabels[index] : null;
+          chartInfo.points.push({
+            x: x * scaleX,
+            y: y * scaleY,
+            datasetLabel,
+            valueLabel: pointLabel,
+            dateLabel,
+          });
+        }
+      }
+    }
+
+    const axisLabels = Array.isArray(options?.labels) ? options.labels : null;
+    if (axisLabels && axisLabels.length) {
+      const baseValues = Array.isArray(datasets[0]?.values) ? datasets[0].values : [];
+      const labelCount = Math.min(axisLabels.length, baseValues.length);
+      if (labelCount > 0) {
+        const stepXLabels = labelCount > 1 ? usableWidth / (labelCount - 1) : usableWidth;
+        const labelEvery = Math.max(1, options?.labelEvery || Math.ceil(labelCount / 6));
+        ctx.save();
+        ctx.fillStyle = '#475569';
+        ctx.strokeStyle = 'rgba(148, 163, 184, 0.25)';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        for (let index = 0; index < labelCount; index += 1) {
+          if (index % labelEvery !== 0 && index !== labelCount - 1 && index !== 0) continue;
+          const label = axisLabels[index];
+          if (!label) continue;
+          const x = padding + stepXLabels * index;
+          ctx.beginPath();
+          ctx.moveTo(x, height - padding);
+          ctx.lineTo(x, height - padding + 4);
+          ctx.stroke();
+          ctx.fillText(String(label), x, height - padding + 6);
+        }
+        ctx.restore();
+      }
+    }
+
+    if (options?.label) {
+      ctx.fillStyle = '#475569';
+      ctx.fillText(options.label, padding, padding - 4);
+    }
+
+    registerCommvaultChart(canvas, chartInfo);
+    return chartInfo;
+  }
+
+  function renderCommvaultServerCharts() {
+    if (!$commvaultServerChartSize || !$commvaultServerChartSavings) return;
+    hideCommvaultChartTooltip();
+    const timeline = commvaultServerState.stats?.series?.timeline;
+    if (!Array.isArray(timeline) || !timeline.length) {
+      drawCommvaultServerLineChart($commvaultServerChartSize, []);
+      drawCommvaultServerLineChart($commvaultServerChartSavings, []);
+      if ($commvaultServerChartSizeUnit) $commvaultServerChartSizeUnit.textContent = '';
+      return;
+    }
+
+    const appRaw = timeline.map((entry) => {
+      const value = entry?.size_of_application_bytes;
+      return typeof value === 'number' ? value : Number(value) || 0;
+    });
+    const mediaRaw = timeline.map((entry) => {
+      const value = entry?.size_on_media_bytes;
+      return typeof value === 'number' ? value : Number(value) || 0;
+    });
+    const shortDateLabels = timeline.map((entry) => formatCommvaultChartDate(entry?.start_time));
+    const longDateLabels = timeline.map((entry) => formatCommvaultDate(entry?.start_time));
+    const appValueLabels = timeline.map((entry) => formatCommvaultBytes(entry?.size_of_application_bytes));
+    const mediaValueLabels = timeline.map((entry) => formatCommvaultBytes(entry?.size_on_media_bytes));
+
+    const maxRaw = Math.max(0, ...appRaw, ...mediaRaw);
+    const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+    let unitIndex = 0;
+    let divisor = 1;
+    while (unitIndex < units.length - 1 && maxRaw / divisor >= 1024) {
+      divisor *= 1024;
+      unitIndex += 1;
+    }
+    const appValues = appRaw.map((value) => (divisor ? value / divisor : value));
+    const mediaValues = mediaRaw.map((value) => (divisor ? value / divisor : value));
+    const unitLabel = units[unitIndex];
+    if ($commvaultServerChartSizeUnit) {
+      $commvaultServerChartSizeUnit.textContent = `Unit: ${unitLabel}`;
+    }
+    drawCommvaultServerLineChart($commvaultServerChartSize, [
+      { values: appValues, color: '#6366f1', drawPoints: true, pointLabels: appValueLabels, name: 'Application' },
+      { values: mediaValues, color: '#0ea5e9', drawPoints: true, pointLabels: mediaValueLabels, name: 'Media' },
+    ], { labels: shortDateLabels, tooltipDates: longDateLabels });
+
+    const savingsValues = timeline.map((entry) => {
+      const value = entry?.percent_savings;
+      if (value == null) return null;
+      const num = Number(value);
+      return Number.isFinite(num) ? num : null;
+    });
+    const savingsLabels = timeline.map((entry) => (entry?.percent_savings == null ? null : formatCommvaultPercent(entry.percent_savings)));
+    drawCommvaultServerLineChart($commvaultServerChartSavings, [
+      { values: savingsValues, color: '#f97316', drawPoints: true, pointLabels: savingsLabels, name: 'Data reduction' },
+    ], { label: 'Percentage', labels: shortDateLabels, tooltipDates: longDateLabels });
+  }
+
+  function updateCommvaultServerSummaryText() {
+    if (!$commvaultServerSummary) return;
+    if (commvaultServerState.loading) {
+      $commvaultServerSummary.textContent = 'Loading server metrics…';
+      return;
+    }
+    if (!commvaultServerState.summary) {
+      $commvaultServerSummary.textContent = 'Search for a server to view restore points and retention metrics.';
+      return;
+    }
+    const summary = commvaultServerState.summary;
+    const name = summary.display_name || summary.name || `#${summary.client_id}`;
+    const stats = commvaultServerState.stats;
+    const jobMetrics = commvaultServerState.jobMetrics;
+    const jobCount = stats?.job_count ?? jobMetrics?.job_count ?? commvaultServerState.jobs.length;
+    const windowHours = jobMetrics?.window_hours ?? commvaultServerState.sinceHours ?? 0;
+    const retainedText = commvaultServerState.retainedOnly ? 'retained jobs' : 'all jobs';
+    const apps = formatCommvaultBytes(stats?.total_application_bytes);
+    const media = formatCommvaultBytes(stats?.total_media_bytes);
+    const updated = formatTimestamp(jobMetrics?.fetched_at) || 'recently';
+    $commvaultServerSummary.textContent = `Showing ${jobCount} restore point(s) for ${name} (${retainedText}, window ${windowHours > 0 ? `${windowHours}h` : 'all time'}) — app ${apps}, media ${media} — updated ${updated}.`;
+  }
+
+  function renderCommvaultServerState() {
+    updateCommvaultServerSummaryText();
+    renderCommvaultServerMetrics();
+    renderCommvaultServerTable();
+    renderCommvaultServerCharts();
+    renderCommvaultServerSuggestions();
+    const loading = commvaultServerState.loading;
+    if ($commvaultServerSearchBtn) $commvaultServerSearchBtn.disabled = loading;
+    if ($commvaultServerRefresh) $commvaultServerRefresh.disabled = loading;
+    if ($commvaultServerQuery) $commvaultServerQuery.disabled = loading && commvaultServerState.refreshing;
+    if ($commvaultServerExportButtons) {
+      $commvaultServerExportButtons.classList.toggle('disabled', !commvaultServerState.summary || loading);
+    }
+  }
+
+  async function fetchCommvaultServerSummary(options = { refresh: false }) {
+    const inputIdentifier = commvaultServerState.selectedClientId != null
+      ? String(commvaultServerState.selectedClientId)
+      : (commvaultServerState.clientIdentifier || commvaultServerState.query).trim();
+    if (!inputIdentifier) {
+      setCommvaultServerStatus('Enter a server name or ID to search.', true);
+      return;
+    }
+
+    setCommvaultServerStatus('Loading server metrics…');
+    commvaultServerState.clientIdentifier = inputIdentifier;
+    const params = new URLSearchParams();
+    params.set('client', inputIdentifier);
+    params.set('job_limit', String(Math.max(0, commvaultServerState.jobLimit || 0)));
+    params.set('since_hours', String(Math.max(0, commvaultServerState.sinceHours || 0)));
+    params.set('retained_only', commvaultServerState.retainedOnly ? 'true' : 'false');
+    if (options?.refresh) params.set('refresh_cache', 'true');
+
+    const fetchKey = `${inputIdentifier}|${params.get('job_limit')}|${params.get('since_hours')}|${params.get('retained_only')}`;
+    const now = Date.now();
+    if (!options?.refresh && commvaultServerState.lastFetchKey === fetchKey && commvaultServerState.lastFetchMs && now - commvaultServerState.lastFetchMs < 30_000) {
+      setCommvaultServerStatus('');
+      renderCommvaultServerState();
+      return;
+    }
+
+    const serial = ++commvaultServerState.requestSerial;
+    commvaultServerState.loading = true;
+    commvaultServerState.refreshing = !!options?.refresh;
+    renderCommvaultServerState();
+
+    try {
+      const res = await fetch(`${API_BASE}/commvault/servers/summary?${params.toString()}`);
+      if (!res.ok) {
+        throw new Error(`${res.status} ${res.statusText}`);
+      }
+      const data = await res.json().catch(() => ({}));
+      if (serial !== commvaultServerState.requestSerial) return;
+      applyCommvaultServerSummary(data || {}, inputIdentifier);
+      commvaultServerState.lastFetchKey = fetchKey;
+      commvaultServerState.lastFetchMs = Date.now();
+      setCommvaultServerStatus('');
+    } catch (err) {
+      if (serial !== commvaultServerState.requestSerial) return;
+      commvaultServerState.error = err;
+      console.error('Failed to load Commvault server metrics', err);
+      setCommvaultServerStatus(`Failed to load server metrics: ${err?.message || err}`, true);
+    } finally {
+      if (serial === commvaultServerState.requestSerial) {
+        commvaultServerState.loading = false;
+        commvaultServerState.refreshing = false;
+        renderCommvaultServerState();
+      }
+    }
+  }
+
+  function applyCommvaultServerSummary(payload, identifier) {
+    const summary = payload?.client || null;
+    commvaultServerState.summary = summary;
+    commvaultServerState.stats = payload?.stats || null;
+    commvaultServerState.jobs = Array.isArray(payload?.jobs) ? payload.jobs : [];
+    commvaultServerState.jobMetrics = payload?.job_metrics || null;
+    commvaultServerState.lastIdentifier = identifier;
+    if (summary?.client_id != null) {
+      commvaultServerState.selectedClientId = summary.client_id;
+      commvaultServerState.selectedClientName = summary.display_name || summary.name || '';
+    }
+  }
+
+  function queueCommvaultServerSuggestions(value) {
+    const text = (value || '').trim();
+    commvaultServerState.query = value;
+    if (commvaultServerSuggestionTimer) {
+      clearTimeout(commvaultServerSuggestionTimer);
+      commvaultServerSuggestionTimer = null;
+    }
+    if (!text) {
+      commvaultServerState.suggestions = [];
+      renderCommvaultServerSuggestions();
+      return;
+    }
+    const serial = ++commvaultServerState.suggestionSerial;
+    commvaultServerSuggestionTimer = setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({ q: text, limit: '8' });
+        const res = await fetch(`${API_BASE}/commvault/servers/search?${params.toString()}`);
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        const data = await res.json().catch(() => ({}));
+        if (serial !== commvaultServerState.suggestionSerial) return;
+        commvaultServerState.suggestions = Array.isArray(data?.results) ? data.results : [];
+        renderCommvaultServerSuggestions();
+      } catch (err) {
+        if (serial !== commvaultServerState.suggestionSerial) return;
+        console.warn('Commvault server suggestion lookup failed', err);
+        commvaultServerState.suggestions = [];
+        renderCommvaultServerSuggestions();
+      }
+    }, 220);
+  }
+
+  function handleCommvaultServerSuggestionClick(event) {
+    const btn = event.target.closest('button[data-client-id]');
+    if (!btn) return;
+    event.preventDefault();
+    if (commvaultServerSuggestionTimer) {
+      clearTimeout(commvaultServerSuggestionTimer);
+      commvaultServerSuggestionTimer = null;
+    }
+    commvaultServerState.suggestionSerial += 1;
+    const clientId = btn.dataset.clientId ? Number(btn.dataset.clientId) : null;
+    const clientName = btn.dataset.clientName || btn.textContent || '';
+    commvaultServerState.selectedClientId = Number.isFinite(clientId) ? clientId : null;
+    commvaultServerState.selectedClientName = clientName.trim();
+    commvaultServerState.clientIdentifier = commvaultServerState.selectedClientId != null ? String(commvaultServerState.selectedClientId) : commvaultServerState.selectedClientName;
+    commvaultServerState.suggestions = [];
+    if ($commvaultServerQuery) {
+      $commvaultServerQuery.value = commvaultServerState.selectedClientName || btn.textContent || '';
+    }
+    renderCommvaultServerSuggestions();
+    fetchCommvaultServerSummary({ refresh: false });
+  }
+
+  function handleCommvaultServerSearch(forceRefresh = false) {
+    const inputValue = $commvaultServerQuery ? ($commvaultServerQuery.value || '').trim() : '';
+    if (!inputValue && commvaultServerState.selectedClientId == null) {
+      setCommvaultServerStatus('Enter a server name or ID to search.', true);
+      return;
+    }
+    if (commvaultServerSuggestionTimer) {
+      clearTimeout(commvaultServerSuggestionTimer);
+      commvaultServerSuggestionTimer = null;
+    }
+    commvaultServerState.suggestionSerial += 1;
+    if (commvaultServerState.selectedClientName && commvaultServerState.selectedClientName !== inputValue) {
+      commvaultServerState.selectedClientId = null;
+      commvaultServerState.selectedClientName = '';
+    }
+    commvaultServerState.clientIdentifier = commvaultServerState.selectedClientId != null ? String(commvaultServerState.selectedClientId) : inputValue;
+    commvaultServerState.query = inputValue;
+    commvaultServerState.suggestions = [];
+    renderCommvaultServerSuggestions();
+    fetchCommvaultServerSummary({ refresh: forceRefresh });
+  }
+
+  function downloadCommvaultServerExport(format) {
+    if (!commvaultServerState.lastIdentifier) {
+      setCommvaultServerStatus('Search for a server before exporting.', true);
+      return;
+    }
+    const params = new URLSearchParams();
+    params.set('client', commvaultServerState.lastIdentifier);
+    params.set('file_format', format);
+    params.set('job_limit', String(Math.max(0, commvaultServerState.jobLimit || 0)));
+    params.set('since_hours', String(Math.max(0, commvaultServerState.sinceHours || 0)));
+    params.set('retained_only', commvaultServerState.retainedOnly ? 'true' : 'false');
+    const url = `${API_BASE}/commvault/servers/export?${params.toString()}`;
+    const link = document.createElement('a');
+    link.href = url;
+    link.rel = 'noopener';
+    link.target = '_blank';
+    document.body.append(link);
+    link.click();
+    link.remove();
+  }
+
   async function loadCommvaultData(force) {
     if (commvaultState.loading) return;
     const now = Date.now();
@@ -3663,6 +4395,90 @@
     commvaultStorageState.selectedId = id;
     renderCommvaultStorage();
   });
+
+  if ($commvaultServerQuery) {
+    $commvaultServerQuery.addEventListener('input', (event) => {
+      queueCommvaultServerSuggestions(event.target.value || '');
+    });
+    $commvaultServerQuery.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        handleCommvaultServerSearch(false);
+      }
+    });
+  }
+
+  if ($commvaultServerSearchBtn) {
+    $commvaultServerSearchBtn.addEventListener('click', () => handleCommvaultServerSearch(false));
+  }
+
+  if ($commvaultServerRefresh) {
+    $commvaultServerRefresh.addEventListener('click', () => handleCommvaultServerSearch(true));
+  }
+
+  if ($commvaultServerRetained) {
+    $commvaultServerRetained.addEventListener('change', () => {
+      commvaultServerState.retainedOnly = !!$commvaultServerRetained.checked;
+      if (commvaultServerState.summary && !commvaultServerState.loading) {
+        fetchCommvaultServerSummary({ refresh: true });
+      }
+    });
+  }
+
+  if ($commvaultServerSince) {
+    $commvaultServerSince.addEventListener('change', () => {
+      const value = Number($commvaultServerSince.value);
+      const next = Number.isFinite(value) ? Math.max(0, value) : 0;
+      if (commvaultServerState.sinceHours === next) return;
+      commvaultServerState.sinceHours = next;
+      if (commvaultServerState.summary && !commvaultServerState.loading) {
+        fetchCommvaultServerSummary({ refresh: true });
+      }
+    });
+  }
+
+  if ($commvaultServerLimit) {
+    const syncLimit = () => {
+      const value = Number($commvaultServerLimit.value);
+      const next = Number.isFinite(value) ? Math.max(0, Math.min(2000, value)) : 0;
+      $commvaultServerLimit.value = String(next);
+      if (commvaultServerState.jobLimit === next) return next;
+      commvaultServerState.jobLimit = next;
+      return next;
+    };
+    $commvaultServerLimit.addEventListener('change', () => {
+      const next = syncLimit();
+      if (commvaultServerState.summary && !commvaultServerState.loading && next != null) {
+        fetchCommvaultServerSummary({ refresh: true });
+      }
+    });
+    $commvaultServerLimit.addEventListener('blur', syncLimit);
+  }
+
+  if ($commvaultServerSuggestions) {
+    $commvaultServerSuggestions.addEventListener('click', handleCommvaultServerSuggestionClick);
+  }
+
+  if ($commvaultServerExportButtons) {
+    $commvaultServerExportButtons.addEventListener('click', (event) => {
+      const btn = event.target.closest('button[data-format]');
+      if (!btn || btn.disabled) return;
+      const format = btn.dataset.format;
+      if (!format) return;
+      downloadCommvaultServerExport(format);
+    });
+  }
+
+  document.addEventListener('click', (event) => {
+    if (commvaultState.tab !== 'servers') return;
+    if (!$commvaultServerSuggestions || $commvaultServerSuggestions.hidden) return;
+    if ($commvaultServerSuggestions.contains(event.target)) return;
+    if ($commvaultServerQuery && $commvaultServerQuery.contains(event.target)) return;
+    commvaultServerState.suggestions = [];
+    renderCommvaultServerSuggestions();
+  });
+
+  renderCommvaultServerState();
 
   // ---------------------------
   // Suggestions
@@ -6283,6 +7099,87 @@
   const $searchZ = document.getElementById('search-zlimit');
   const $searchJ = document.getElementById('search-jlimit');
   const $searchC = document.getElementById('search-climit');
+  let searchCommvaultMetricsSeq = 0;
+
+  function createCommvaultMetricCard(label, value, meta) {
+    const card = document.createElement('div');
+    card.className = 'commvault-server-card';
+    const lbl = document.createElement('span'); lbl.className = 'label'; lbl.textContent = label;
+    const val = document.createElement('span'); val.className = 'value'; val.textContent = value;
+    card.append(lbl, val);
+    if (meta) {
+      const metaNode = document.createElement('span'); metaNode.className = 'meta'; metaNode.textContent = meta;
+      card.append(metaNode);
+    }
+    return card;
+  }
+
+  async function loadSearchCommvaultMetrics(query, container) {
+    if (!container) return;
+    const existing = container.querySelector('.search-commvault-metrics-panel');
+    if (existing) existing.remove();
+
+    const trimmed = (query || '').trim();
+    if (!trimmed) return;
+
+    const seq = ++searchCommvaultMetricsSeq;
+    const params = new URLSearchParams({
+      client: trimmed,
+      job_limit: '0',
+      since_hours: '0',
+      retained_only: 'true',
+    });
+
+    try {
+      const res = await fetch(`${API_BASE}/commvault/servers/summary?${params.toString()}`);
+      if (seq !== searchCommvaultMetricsSeq) return;
+      if (!res.ok) return;
+      const data = await res.json().catch(() => null);
+      if (!data || !data.stats || !Array.isArray(data.jobs)) return;
+
+      const stats = data.stats || {};
+      const metrics = data.job_metrics || {};
+      const summary = data.client || {};
+
+      const jobCount = Number(stats.job_count) || 0;
+      const windowHours = Number(metrics.window_hours);
+      const windowText = Number.isFinite(windowHours) && windowHours > 0 ? `${windowHours}h window` : 'All time window';
+      const retainedCount = Number(stats.retained_jobs) || 0;
+      const retainedText = `${retainedCount.toLocaleString()} retained job(s)`;
+      const savingsText = `Saved ${formatCommvaultBytes(stats.savings_bytes)}`;
+      const ratioMeta = stats.average_reduction_ratio_text ? `≈ ${stats.average_reduction_ratio_text}` : '';
+      const fetchedAt = metrics.fetched_at ? formatTimestamp(metrics.fetched_at) : '';
+
+      const metricsWrap = document.createElement('div');
+      metricsWrap.className = 'commvault-server-metrics';
+      metricsWrap.append(
+        createCommvaultMetricCard('Restore points', jobCount.toLocaleString(), windowText),
+        createCommvaultMetricCard('Application size', formatCommvaultBytes(stats.total_application_bytes), retainedText),
+        createCommvaultMetricCard('Media size', formatCommvaultBytes(stats.total_media_bytes), savingsText),
+        createCommvaultMetricCard('Average reduction', formatCommvaultPercent(stats.average_savings_percent), ratioMeta),
+      );
+
+      const panel = document.createElement('div');
+      panel.className = 'panel search-commvault-metrics-panel';
+      const header = document.createElement('div');
+      header.className = 'search-commvault-metrics-header';
+      const title = document.createElement('h3');
+      const name = summary.display_name || summary.name || (summary.client_id != null ? `Client ${summary.client_id}` : 'Commvault');
+      title.textContent = `Commvault — ${name}`;
+      header.append(title);
+      if (fetchedAt) {
+        const meta = document.createElement('span'); meta.className = 'search-commvault-metrics-meta'; meta.textContent = `Cached ${fetchedAt}`;
+        header.append(meta);
+      }
+      panel.append(header, metricsWrap);
+
+      container.prepend(panel);
+    } catch (err) {
+      if (seq !== searchCommvaultMetricsSeq) return;
+      console.warn('Commvault metrics lookup failed', err);
+    }
+  }
+
   async function runDeepSearch() {
     if ($searchResults) $searchResults.textContent = 'Searching…';
     const q = ($searchQ?.value || '').trim();
@@ -6376,7 +7273,11 @@
         nnode.appendChild(ul);
       } else { nnode.textContent = 'No NetBox data.'; }
       wrap.appendChild(section('NetBox', nnode));
-      if ($searchResults) { $searchResults.innerHTML = ''; $searchResults.appendChild(wrap); }
+      if ($searchResults) {
+        $searchResults.innerHTML = '';
+        $searchResults.appendChild(wrap);
+        loadSearchCommvaultMetrics(q, wrap);
+      }
     } catch (e) { if ($searchResults) $searchResults.textContent = `Error: ${e?.message || e}`; }
   }
   document.getElementById('search-run')?.addEventListener('click', () => runDeepSearch());

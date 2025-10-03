@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import html
 import json
 import os
 import re
@@ -10,10 +11,13 @@ import shutil
 import sys
 import time
 import uuid
+import warnings
+from collections import Counter
 from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from io import BytesIO, StringIO
 from pathlib import Path
 from threading import Lock
 from typing import Annotated, Any, Literal
@@ -23,7 +27,7 @@ import numpy as np
 import pandas as pd
 import requests
 from dotenv import dotenv_values
-from fastapi import Body, FastAPI, HTTPException, Query, Request
+from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
     FileResponse,
@@ -92,6 +96,13 @@ try:
     from openai import OpenAI  # type: ignore
 except Exception:  # optional dependency
     OpenAI = None  # type: ignore
+
+try:  # optional dependency; urllib3 may not always be available
+    from urllib3 import disable_warnings as _disable_urllib3_warnings
+    from urllib3.exceptions import InsecureRequestWarning as _InsecureRequestWarning
+except Exception:  # pragma: no cover - urllib3 optional
+    _disable_urllib3_warnings = None  # type: ignore[assignment]
+    _InsecureRequestWarning = None  # type: ignore[assignment]
 
 load_env()
 
@@ -634,6 +645,9 @@ def _commvault_client_from_env() -> CommvaultClient:
     except ValueError:
         timeout = 30.0
 
+    if not verify_tls:
+        _maybe_disable_commvault_tls_warnings()
+
     config = CommvaultClientConfig(
         base_url=base_url,
         authtoken=authtoken,
@@ -643,6 +657,15 @@ def _commvault_client_from_env() -> CommvaultClient:
         timeout=timeout,
     )
     return CommvaultClient(config)
+
+
+def _maybe_disable_commvault_tls_warnings() -> None:
+    """Mute urllib3 TLS warnings when verification is intentionally disabled."""
+
+    if _disable_urllib3_warnings and _InsecureRequestWarning:
+        _disable_urllib3_warnings(_InsecureRequestWarning)
+        return
+    warnings.filterwarnings("ignore", category=Warning, module="urllib3")
 
 
 def _collect_commvault_jobs_for_ui(
@@ -805,6 +828,798 @@ def _filter_commvault_jobs(jobs: Iterable[Mapping[str, Any]], since_hours: int) 
         if start and start >= cutoff:
             filtered.append(dict(job))
     return filtered
+
+
+def _safe_commvault_client_id(value: Any) -> int | None:
+    try:
+        client_id = int(value)
+    except (TypeError, ValueError):
+        return None
+    return client_id if client_id >= 0 else None
+
+
+def _normalise_commvault_client_name(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _cached_commvault_clients() -> tuple[list[dict[str, Any]], list[Mapping[str, Any]], str | None]:
+    cache = _load_commvault_backups()
+    jobs_payload = cache.get("jobs")
+    if not isinstance(jobs_payload, list):
+        jobs_payload = []
+
+    clients: dict[tuple[int | None, str], dict[str, Any]] = {}
+    for raw in jobs_payload:
+        if not isinstance(raw, Mapping):
+            continue
+        client_id = _safe_commvault_client_id(raw.get("client_id"))
+        client_name = _normalise_commvault_client_name(raw.get("client_name"))
+        dest_name = _normalise_commvault_client_name(raw.get("destination_client_name"))
+        primary = client_name or dest_name
+        display = dest_name or client_name or primary
+        key_name = (primary or display or "").casefold()
+        key = (client_id, key_name)
+        entry = clients.get(key)
+        if not entry:
+            label = display or primary or (f"Client {client_id}" if client_id is not None else "Unnamed client")
+            entry = {
+                "client_id": client_id,
+                "name": primary or label,
+                "display_name": label,
+                "name_variants": set(),
+                "job_count": 0,
+            }
+            clients[key] = entry
+        entry["job_count"] += 1
+        for candidate in (client_name, dest_name, primary, display):
+            if candidate:
+                entry["name_variants"].add(candidate.casefold())
+
+    client_list = list(clients.values())
+    for entry in client_list:
+        entry["name_variants"].add((entry["name"] or "").casefold())
+        entry["name_variants"].add((entry["display_name"] or "").casefold())
+    client_list.sort(key=lambda item: (-item["job_count"], (item["display_name"] or item["name"] or "").lower()))
+
+    jobs = [job for job in jobs_payload if isinstance(job, Mapping)]
+    generated_at = cache.get("generated_at")
+    return client_list, jobs, generated_at
+
+
+def _match_cached_commvault_client(identifier: str, clients: list[dict[str, Any]]) -> dict[str, Any]:
+    ident = (identifier or "").strip()
+    if not ident:
+        raise HTTPException(status_code=400, detail="Client identifier is required")
+
+    if ident.isdigit():
+        client_id = int(ident)
+        for entry in clients:
+            if entry["client_id"] == client_id:
+                return entry
+        raise HTTPException(status_code=404, detail=f"No cached client with ID {client_id} found")
+
+    needle = ident.casefold()
+    exact = [entry for entry in clients if needle in entry["name_variants"]]
+    if len(exact) == 1:
+        return exact[0]
+    if len(exact) > 1:
+        names = ", ".join(sorted({entry["display_name"] or entry["name"] or str(entry["client_id"]) for entry in exact}))
+        raise HTTPException(status_code=409, detail=f"Ambiguous client '{identifier}'. Matches: {names}")
+
+    matches = [
+        entry
+        for entry in clients
+        if any(needle in variant for variant in entry["name_variants"] if variant)
+    ]
+    if not matches:
+        raise HTTPException(status_code=404, detail=f"No cached client matching '{identifier}' found")
+    if len(matches) > 1:
+        names = ", ".join(sorted({entry["display_name"] or entry["name"] or str(entry["client_id"]) for entry in matches}))
+        raise HTTPException(status_code=409, detail=f"Ambiguous client '{identifier}'. Matches: {names}")
+    return matches[0]
+
+
+def _job_matches_cached_client(job: Mapping[str, Any], client_record: dict[str, Any]) -> bool:
+    if client_record.get("client_id") is not None:
+        job_id = _safe_commvault_client_id(job.get("client_id"))
+        if job_id is not None and job_id == client_record["client_id"]:
+            return True
+    names = {
+        _normalise_commvault_client_name(job.get("client_name")).casefold(),
+        _normalise_commvault_client_name(job.get("destination_client_name")).casefold(),
+    }
+    names.discard("")
+    if not names:
+        return False
+    variants = client_record.get("name_variants") or set()
+    return any(name in variants for name in names)
+
+
+def _build_cached_client_summary(record: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "client_id": record.get("client_id"),
+        "name": record.get("name"),
+        "display_name": record.get("display_name"),
+        "host_name": None,
+        "os_name": None,
+        "os_type": None,
+        "os_subtype": None,
+        "processor_type": None,
+        "cpu_count": None,
+        "is_media_agent": None,
+        "is_virtual": None,
+        "is_infrastructure": None,
+        "is_commserve": None,
+        "readiness_status": None,
+        "last_ready_time": None,
+        "sla_status_code": None,
+        "sla_description": None,
+        "agent_applications": [],
+        "client_groups": [],
+    }
+
+
+def _build_cached_job_metrics(
+    jobs: list[dict[str, Any]],
+    *,
+    since_hours: int,
+    retained_only: bool,
+    cache_generated_at: str | None,
+) -> dict[str, Any]:
+    def _to_int(value: Any) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+
+    total_app = sum(max(0, _to_int(job.get("size_of_application_bytes"))) for job in jobs)
+    total_media = sum(max(0, _to_int(job.get("size_on_media_bytes"))) for job in jobs)
+    last_start: datetime | None = None
+    for job in jobs:
+        start_dt = _parse_job_datetime(job.get("start_time"))
+        if start_dt and (last_start is None or start_dt > last_start):
+            last_start = start_dt
+
+    fetched_at = _parse_job_datetime(cache_generated_at) if cache_generated_at else None
+    if fetched_at is None:
+        fetched_at = datetime.now(tz=UTC)
+
+    retain_cutoff = fetched_at if retained_only else None
+
+    return {
+        "window_hours": since_hours,
+        "job_count": len(jobs),
+        "total_application_bytes": total_app,
+        "total_media_bytes": total_media,
+        "last_job_start": last_start.isoformat() if last_start else None,
+        "within_window": bool(jobs),
+        "descending": True,
+        "retain_cutoff": retain_cutoff.isoformat() if retain_cutoff else None,
+        "retain_required": retained_only,
+        "fetched_at": fetched_at.isoformat(),
+    }
+
+
+def _slugify_commvault_name(value: str, default: str = "commvault") -> str:
+    text = (value or "").strip().lower()
+    if not text:
+        return default
+    safe = re.sub(r"[^a-z0-9]+", "-", text)
+    safe = re.sub(r"-+", "-", safe).strip("-")
+    return safe or default
+
+
+def _format_bytes_for_report(value: int | float | None) -> str:
+    if not value:
+        return "0 B"
+    size = float(value)
+    if size <= 0:
+        return "0 B"
+    units = ["B", "KB", "MB", "GB", "TB", "PB"]
+    idx = 0
+    while size >= 1024 and idx < len(units) - 1:
+        size /= 1024
+        idx += 1
+    precision = 0 if size >= 100 else 1 if size >= 10 else 2
+    return f"{size:.{precision}f} {units[idx]}"
+
+
+def _compute_commvault_server_metrics(jobs: list[dict[str, Any]]) -> dict[str, Any]:
+    if not jobs:
+        return {
+            "job_count": 0,
+            "plan_breakdown": [],
+            "subclient_breakdown": [],
+            "policy_breakdown": [],
+            "total_application_bytes": 0,
+            "total_media_bytes": 0,
+            "retained_jobs": 0,
+            "average_savings_percent": None,
+            "average_reduction_ratio": None,
+            "average_reduction_ratio_text": None,
+            "savings_bytes": 0,
+            "series": {"timeline": []},
+            "latest_job": None,
+            "latest_job_started_at": None,
+            "next_retain_expiry": None,
+        }
+
+    plan_counts: Counter[str] = Counter()
+    subclient_counts: Counter[str] = Counter()
+    policy_counts: Counter[str] = Counter()
+    total_application = 0
+    total_media = 0
+    savings_samples: list[float] = []
+    retained_jobs = 0
+    next_expiry: datetime | None = None
+    latest_start: datetime | None = None
+    latest_job: dict[str, Any] | None = None
+    timeline: list[dict[str, Any]] = []
+
+    def _as_int(value: Any) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0
+
+    def _as_float(value: Any) -> float | None:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    for job in jobs:
+        plan = job.get("plan_name") or "Unassigned"
+        subclient = job.get("subclient_name") or "Unspecified"
+        policy = job.get("storage_policy_name") or "Unspecified"
+        plan_counts[plan] += 1
+        subclient_counts[subclient] += 1
+        policy_counts[policy] += 1
+
+        app_size = max(0, _as_int(job.get("size_of_application_bytes")))
+        media_size = max(0, _as_int(job.get("size_on_media_bytes")))
+        total_application += app_size
+        total_media += media_size
+
+        savings = _as_float(job.get("percent_savings"))
+        if savings is not None:
+            savings_samples.append(savings)
+
+        retain_until = _parse_job_datetime(job.get("retain_until"))
+        if retain_until:
+            retained_jobs += 1
+            if next_expiry is None or retain_until < next_expiry:
+                next_expiry = retain_until
+
+        start_dt = _parse_job_datetime(job.get("start_time"))
+        if start_dt and (latest_start is None or start_dt > latest_start):
+            latest_start = start_dt
+            latest_job = job
+
+        timeline.append(
+            {
+                "start_time": job.get("start_time"),
+                "start_timestamp": start_dt.timestamp() if start_dt else None,
+                "size_of_application_bytes": app_size,
+                "size_on_media_bytes": media_size,
+                "percent_savings": savings,
+                "plan_name": job.get("plan_name"),
+                "status": job.get("localized_status") or job.get("status"),
+            }
+        )
+
+    timeline.sort(key=lambda item: item.get("start_timestamp") or 0)
+    for entry in timeline:
+        entry.pop("start_timestamp", None)
+
+    average_savings = None
+    if savings_samples:
+        average_savings = sum(savings_samples) / len(savings_samples)
+
+    reduction_ratio = None
+    reduction_ratio_text = None
+    if total_media > 0:
+        reduction_ratio = total_application / total_media if total_application else 0
+        if reduction_ratio and reduction_ratio > 0:
+            reduction_ratio_text = f"{reduction_ratio:.1f}:1"
+
+    savings_bytes = max(0, total_application - total_media)
+
+    def _counts_to_rows(counter: Counter[str]) -> list[dict[str, Any]]:
+        return [
+            {"label": label, "restore_points": count}
+            for label, count in counter.most_common()
+        ]
+
+    return {
+        "job_count": len(jobs),
+        "plan_breakdown": _counts_to_rows(plan_counts),
+        "subclient_breakdown": _counts_to_rows(subclient_counts),
+        "policy_breakdown": _counts_to_rows(policy_counts),
+        "total_application_bytes": total_application,
+        "total_media_bytes": total_media,
+        "retained_jobs": retained_jobs,
+        "average_savings_percent": average_savings,
+        "average_reduction_ratio": reduction_ratio,
+        "average_reduction_ratio_text": reduction_ratio_text,
+        "savings_bytes": savings_bytes,
+        "series": {"timeline": timeline},
+        "latest_job": latest_job,
+        "latest_job_started_at": latest_start.isoformat() if latest_start else None,
+        "next_retain_expiry": next_expiry.isoformat() if next_expiry else None,
+    }
+
+
+def _load_commvault_server_data(
+    client_identifier: str,
+    *,
+    job_limit: int,
+    since_hours: int,
+    retained_only: bool,
+    refresh_cache: bool,
+) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+    clients, jobs_payload, cache_generated_at = _cached_commvault_clients()
+    if not clients:
+        raise HTTPException(status_code=503, detail="Commvault cached backups are not available. Run an export first.")
+
+    client_record = _match_cached_commvault_client(client_identifier, clients)
+
+    cutoff = datetime.now(tz=UTC) - timedelta(hours=since_hours) if since_hours > 0 else None
+    now_utc = datetime.now(tz=UTC)
+    default_order = datetime.min.replace(tzinfo=UTC)
+
+    selected: list[tuple[datetime | None, dict[str, Any]]] = []
+    for raw in jobs_payload:
+        if not _job_matches_cached_client(raw, client_record):
+            continue
+
+        start_dt = _parse_job_datetime(raw.get("start_time"))
+        if cutoff and (start_dt is None or start_dt < cutoff):
+            continue
+
+        if retained_only:
+            retain_dt = _parse_job_datetime(raw.get("retain_until"))
+            if retain_dt is None or retain_dt <= now_utc:
+                continue
+
+        selected.append((start_dt, dict(raw)))
+
+    selected.sort(key=lambda item: item[0] or default_order, reverse=True)
+    jobs = [job for _, job in selected]
+    if job_limit > 0:
+        jobs = jobs[: job_limit]
+
+    stats = _compute_commvault_server_metrics(jobs)
+    metrics_payload = _build_cached_job_metrics(
+        jobs,
+        since_hours=max(0, since_hours),
+        retained_only=retained_only,
+        cache_generated_at=cache_generated_at,
+    )
+    summary_payload = _build_cached_client_summary(client_record)
+    return summary_payload, metrics_payload, jobs, stats
+
+
+def _format_iso_human(value: str | None) -> str:
+    if not value:
+        return "-"
+    dt = _parse_job_datetime(value)
+    if not dt:
+        return "-"
+    return dt.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def _format_percent(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return f"{value:.1f}%"
+
+
+COMMVAULT_SERVER_EXPORT_COLUMNS: list[tuple[str, str]] = [
+    ("job_id", "Job ID"),
+    ("start", "Start"),
+    ("status", "Status"),
+    ("plan", "Plan"),
+    ("app_size", "App Size"),
+    ("media_size", "Media Size"),
+    ("savings", "Savings"),
+]
+
+
+def _commvault_job_table_rows(jobs: list[dict[str, Any]]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for job in jobs:
+        job_id = str(job.get("job_id") or "-")
+        start_label = _format_iso_human(job.get("start_time"))
+        status_label = job.get("localized_status") or job.get("status") or "-"
+        plan_label = job.get("plan_name") or "-"
+        app_size = _format_bytes_for_report(job.get("size_of_application_bytes"))
+        media_size = _format_bytes_for_report(job.get("size_on_media_bytes"))
+        savings_value = job.get("percent_savings")
+        try:
+            savings_float = float(savings_value) if savings_value is not None else None
+        except (TypeError, ValueError):
+            savings_float = None
+        savings_label = _format_percent(savings_float)
+        rows.append(
+            {
+                "job_id": job_id,
+                "start": start_label,
+                "status": status_label,
+                "plan": plan_label,
+                "app_size": app_size,
+                "media_size": media_size,
+                "savings": savings_label,
+            }
+        )
+    return rows
+
+
+def _render_commvault_server_text_report(
+    summary: dict[str, Any],
+    stats: dict[str, Any],
+    jobs: list[dict[str, Any]],
+    metrics_payload: dict[str, Any] | None,
+) -> str:
+    display_name = summary.get("display_name") or summary.get("name") or f"#{summary.get('client_id')}"
+    generated = metrics_payload.get("fetched_at") if metrics_payload else None
+    generated_label = _format_iso_human(generated)
+    window_hours = metrics_payload.get("window_hours") if metrics_payload else None
+    job_rows = _commvault_job_table_rows(jobs)
+
+    lines = [
+        f"Commvault server report for {display_name} (ID {summary.get('client_id')})",
+        f"Generated: {generated_label}",
+    ]
+    if window_hours is not None:
+        lines.append(f"Window: {window_hours}h | Restore points: {stats.get('job_count', 0)}")
+
+    lines.append(
+        f"Application data: {_format_bytes_for_report(stats.get('total_application_bytes'))}"
+        f" | Media: {_format_bytes_for_report(stats.get('total_media_bytes'))}"
+        f" | Savings: {_format_bytes_for_report(stats.get('savings_bytes'))}"
+    )
+
+    reduction_text = stats.get("average_reduction_ratio_text") or "-"
+    savings_percent = _format_percent(stats.get("average_savings_percent"))
+    lines.append(f"Average data reduction: {savings_percent} (≈ {reduction_text})")
+
+    plan_rows = stats.get("plan_breakdown") or []
+    if plan_rows:
+        lines.append("Plan restore points:")
+        for row in plan_rows:
+            label = row.get("label") or row.get("plan") or "Unnamed"
+            count = row.get("restore_points") or 0
+            lines.append(f"  - {label}: {count}")
+
+    subclient_rows = stats.get("subclient_breakdown") or []
+    if subclient_rows:
+        lines.append("Subclients:")
+        for row in subclient_rows:
+            label = row.get("label") or "Unnamed"
+            count = row.get("restore_points") or 0
+            lines.append(f"  - {label}: {count}")
+
+    lines.append("")
+    header = "  ".join(
+        [
+            f"{title:<18}" if title not in {"Job ID", "Plan"} else f"{title:<10}"
+            for _, title in COMMVAULT_SERVER_EXPORT_COLUMNS
+        ]
+    )
+    lines.append(header)
+    lines.append("-" * len(header))
+    for row in job_rows:
+        lines.append(
+            "  ".join(
+                [
+                    f"{row['job_id']:<10}",
+                    f"{row['start']:<20}",
+                    f"{row['status']:<18}",
+                    f"{row['plan']:<18}",
+                    f"{row['app_size']:>12}",
+                    f"{row['media_size']:>12}",
+                    f"{row['savings']:>8}",
+                ]
+            )
+        )
+
+    if not job_rows:
+        lines.append("No jobs found for the selected parameters.")
+
+    return "\n".join(lines)
+
+
+def _render_commvault_server_markdown_report(
+    summary: dict[str, Any],
+    stats: dict[str, Any],
+    jobs: list[dict[str, Any]],
+    metrics_payload: dict[str, Any] | None,
+) -> str:
+    display_name = summary.get("display_name") or summary.get("name") or f"#{summary.get('client_id')}"
+    generated = metrics_payload.get("fetched_at") if metrics_payload else None
+    generated_label = _format_iso_human(generated)
+    window_hours = metrics_payload.get("window_hours") if metrics_payload else None
+    job_rows = _commvault_job_table_rows(jobs)
+
+    lines = [f"# Commvault server report — {display_name}", ""]
+    lines.append(f"*ID*: `{summary.get('client_id')}`")
+    lines.append(f"*Generated*: {generated_label}")
+    if window_hours is not None:
+        lines.append(f"*Window*: {window_hours}h")
+    lines.append(
+        f"*Application data*: {_format_bytes_for_report(stats.get('total_application_bytes'))}"
+        f" — *Media*: {_format_bytes_for_report(stats.get('total_media_bytes'))}"
+        f" — *Savings*: {_format_bytes_for_report(stats.get('savings_bytes'))}"
+    )
+    reduction_text = stats.get("average_reduction_ratio_text") or "-"
+    savings_percent = _format_percent(stats.get("average_savings_percent"))
+    lines.append(f"*Average data reduction*: {savings_percent} (≈ {reduction_text})")
+    lines.append("")
+
+    plan_rows = stats.get("plan_breakdown") or []
+    if plan_rows:
+        lines.append("## Restore points by plan")
+        for row in plan_rows:
+            label = row.get("label") or row.get("plan") or "Unnamed"
+            count = row.get("restore_points") or 0
+            lines.append(f"- **{label}** — {count} restore point(s)")
+        lines.append("")
+
+    lines.append("## Jobs")
+    header = " | ".join(title for _, title in COMMVAULT_SERVER_EXPORT_COLUMNS)
+    lines.append(f"{header}")
+    lines.append(" | ".join(["---"] * len(COMMVAULT_SERVER_EXPORT_COLUMNS)))
+    for row in job_rows:
+        lines.append(
+            " | ".join(
+                [
+                    row["job_id"],
+                    row["start"],
+                    row["status"],
+                    row["plan"],
+                    row["app_size"],
+                    row["media_size"],
+                    row["savings"],
+                ]
+            )
+        )
+    if not job_rows:
+        lines.append("No jobs found for the selected parameters.")
+
+    return "\n".join(lines)
+
+
+def _render_commvault_server_html_report(
+    summary: dict[str, Any],
+    stats: dict[str, Any],
+    jobs: list[dict[str, Any]],
+    metrics_payload: dict[str, Any] | None,
+) -> str:
+    display_name = summary.get("display_name") or summary.get("name") or f"#{summary.get('client_id')}"
+    generated = metrics_payload.get("fetched_at") if metrics_payload else None
+    generated_label = _format_iso_human(generated)
+    window_hours = metrics_payload.get("window_hours") if metrics_payload else None
+    job_rows = _commvault_job_table_rows(jobs)
+
+    plan_rows = stats.get("plan_breakdown") or []
+    plan_html = "".join(
+        f"<li><strong>{html.escape(str(row.get('label') or row.get('plan') or 'Unnamed'))}</strong>: {row.get('restore_points') or 0}</li>"
+        for row in plan_rows
+    )
+
+    job_rows_html = "".join(
+        "<tr>" + "".join(
+            f"<td>{html.escape(row[key])}</td>"
+            for key, _ in COMMVAULT_SERVER_EXPORT_COLUMNS
+        ) + "</tr>"
+        for row in job_rows
+    )
+
+    if not job_rows_html:
+        job_rows_html = "<tr><td colspan=\"7\">No jobs found for the selected parameters.</td></tr>"
+
+    headings = "".join(f"<th>{html.escape(title)}</th>" for _, title in COMMVAULT_SERVER_EXPORT_COLUMNS)
+
+    return f"""
+<!doctype html>
+<html>
+  <head>
+    <meta charset=\"utf-8\" />
+    <title>Commvault report — {html.escape(display_name)}</title>
+    <style>
+      body {{ font-family: system-ui, sans-serif; margin: 24px; color: #0f172a; }}
+      h1 {{ margin-top: 0; }}
+      table {{ border-collapse: collapse; width: 100%; margin-top: 16px; }}
+      th, td {{ border: 1px solid #cbd5f5; padding: 8px 10px; text-align: left; font-size: 13px; }}
+      th {{ background: #eef2ff; }}
+      caption {{ text-align: left; font-weight: 600; margin-bottom: 8px; }}
+    </style>
+  </head>
+  <body>
+    <h1>Commvault server report — {html.escape(display_name)}</h1>
+    <p><strong>ID:</strong> {html.escape(str(summary.get('client_id')))}<br/>
+       <strong>Generated:</strong> {html.escape(generated_label)}<br/>
+       <strong>Window:</strong> {html.escape(str(window_hours) + 'h' if window_hours is not None else 'n/a')}</p>
+    <p><strong>Application data:</strong> {_format_bytes_for_report(stats.get('total_application_bytes'))}<br/>
+       <strong>Media:</strong> {_format_bytes_for_report(stats.get('total_media_bytes'))}<br/>
+       <strong>Savings:</strong> {_format_bytes_for_report(stats.get('savings_bytes'))}<br/>
+       <strong>Average reduction:</strong> {_format_percent(stats.get('average_savings_percent'))} (≈ {stats.get('average_reduction_ratio_text') or '-'})
+    </p>
+    {'<h2>Restore points by plan</h2><ul>' + plan_html + '</ul>' if plan_html else ''}
+    <table>
+      <caption>Commvault jobs</caption>
+      <thead><tr>{headings}</tr></thead>
+      <tbody>{job_rows_html}</tbody>
+    </table>
+  </body>
+</html>
+"""
+
+
+def _render_commvault_server_docx(
+    summary: dict[str, Any],
+    stats: dict[str, Any],
+    jobs: list[dict[str, Any]],
+    metrics_payload: dict[str, Any] | None,
+) -> BytesIO:
+    try:
+        from docx import Document  # type: ignore
+    except ImportError as exc:  # pragma: no cover - optional dependency
+        raise HTTPException(status_code=500, detail="python-docx is required for DOCX export") from exc
+
+    display_name = summary.get("display_name") or summary.get("name") or f"#{summary.get('client_id')}"
+    generated = metrics_payload.get("fetched_at") if metrics_payload else None
+    generated_label = _format_iso_human(generated)
+    window_hours = metrics_payload.get("window_hours") if metrics_payload else None
+    job_rows = _commvault_job_table_rows(jobs)
+
+    doc = Document()
+    doc.add_heading(f"Commvault server report — {display_name}", level=0)
+    doc.add_paragraph(f"Client ID: {summary.get('client_id')}")
+    doc.add_paragraph(f"Generated: {generated_label}")
+    if window_hours is not None:
+        doc.add_paragraph(f"Window: {window_hours}h")
+
+    doc.add_paragraph(
+        "Application data: "
+        + _format_bytes_for_report(stats.get("total_application_bytes"))
+        + "; Media: "
+        + _format_bytes_for_report(stats.get("total_media_bytes"))
+        + "; Savings: "
+        + _format_bytes_for_report(stats.get("savings_bytes"))
+    )
+    doc.add_paragraph(
+        "Average data reduction: "
+        + _format_percent(stats.get("average_savings_percent"))
+        + f" (≈ {stats.get('average_reduction_ratio_text') or '-'})"
+    )
+
+    plan_rows = stats.get("plan_breakdown") or []
+    if plan_rows:
+        doc.add_heading("Restore points by plan", level=1)
+        for row in plan_rows:
+            label = row.get("label") or row.get("plan") or "Unnamed"
+            count = row.get("restore_points") or 0
+            doc.add_paragraph(f"{label}: {count}", style="List Bullet")
+
+    doc.add_heading("Jobs", level=1)
+    table = doc.add_table(rows=1, cols=len(COMMVAULT_SERVER_EXPORT_COLUMNS))
+    header_cells = table.rows[0].cells
+    for idx, (_, title) in enumerate(COMMVAULT_SERVER_EXPORT_COLUMNS):
+        header_cells[idx].text = title
+    for row in job_rows:
+        cells = table.add_row().cells
+        for idx, (key, _) in enumerate(COMMVAULT_SERVER_EXPORT_COLUMNS):
+            cells[idx].text = row.get(key, "")
+    if not job_rows:
+        row = table.add_row().cells
+        row[0].text = "No jobs"
+
+    buffer = BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+
+def _render_commvault_server_xlsx(
+    summary: dict[str, Any],
+    jobs: list[dict[str, Any]],
+) -> BytesIO:
+    try:
+        from openpyxl import Workbook  # type: ignore
+    except ImportError as exc:  # pragma: no cover - dependency managed elsewhere
+        raise HTTPException(status_code=500, detail="openpyxl is required for XLSX export") from exc
+
+    workbook = Workbook()
+    sheet = workbook.active
+    display_name = summary.get("display_name") or summary.get("name") or f"#{summary.get('client_id')}"
+    sheet.title = display_name[:31]
+
+    headers = [
+        "job_id",
+        "job_type",
+        "status",
+        "localized_status",
+        "localized_operation",
+        "client_name",
+        "client_id",
+        "destination_client_name",
+        "subclient_name",
+        "backup_set_name",
+        "application_name",
+        "backup_level_name",
+        "plan_name",
+        "client_groups",
+        "storage_policy_name",
+        "start_time",
+        "end_time",
+        "elapsed_seconds",
+        "size_of_application_bytes",
+        "size_on_media_bytes",
+        "total_num_files",
+        "percent_complete",
+        "percent_savings",
+        "average_throughput_gb_per_hr",
+        "retain_until",
+    ]
+    sheet.append(headers)
+
+    for job in jobs:
+        row = dict(job)
+        groups = row.get("client_groups")
+        if isinstance(groups, list):
+            row["client_groups"] = ";".join(groups)
+        sheet.append([row.get(header, "") for header in headers])
+
+    buffer = BytesIO()
+    workbook.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+
+def _render_commvault_server_csv(jobs: list[dict[str, Any]]) -> StringIO:
+    fieldnames = [
+        "job_id",
+        "job_type",
+        "status",
+        "localized_status",
+        "localized_operation",
+        "client_name",
+        "client_id",
+        "destination_client_name",
+        "subclient_name",
+        "backup_set_name",
+        "application_name",
+        "backup_level_name",
+        "plan_name",
+        "client_groups",
+        "storage_policy_name",
+        "start_time",
+        "end_time",
+        "elapsed_seconds",
+        "size_of_application_bytes",
+        "size_on_media_bytes",
+        "total_num_files",
+        "percent_complete",
+        "percent_savings",
+        "average_throughput_gb_per_hr",
+        "retain_until",
+    ]
+
+    buffer = StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=fieldnames)
+    writer.writeheader()
+    for job in jobs:
+        row = dict(job)
+        groups = row.get("client_groups")
+        if isinstance(groups, list):
+            row["client_groups"] = ";".join(groups)
+        writer.writerow({key: row.get(key, "") for key in fieldnames})
+    buffer.seek(0)
+    return buffer
 
 
 def _mb_to_bytes(value: Any) -> int | None:
@@ -3861,6 +4676,130 @@ def commvault_storage_data(
         return cache
 
     return _refresh_commvault_storage_sync()
+
+
+@app.get("/commvault/servers/search")
+def commvault_servers_search(
+    q: str = Query(..., min_length=1, description="Client name fragment or ID."),
+    limit: int = Query(10, ge=1, le=200, description="Maximum number of matches to return."),
+) -> dict[str, Any]:
+    needle = q.strip().casefold()
+    if not needle:
+        raise HTTPException(status_code=400, detail="Query must not be empty")
+
+    clients, _, _ = _cached_commvault_clients()
+    if not clients:
+        return {"results": []}
+
+    matches: list[dict[str, Any]] = []
+    for record in clients:
+        variants = record.get("name_variants") or set()
+        client_id = record.get("client_id")
+        if needle.isdigit() and client_id == int(needle):
+            matches = [
+                {
+                    "client_id": client_id,
+                    "name": record.get("name"),
+                    "display_name": record.get("display_name"),
+                    "job_count": record.get("job_count", 0),
+                }
+            ]
+            break
+        if any(needle in variant for variant in variants if variant):
+            matches.append(
+                {
+                    "client_id": client_id,
+                    "name": record.get("name"),
+                    "display_name": record.get("display_name"),
+                    "job_count": record.get("job_count", 0),
+                }
+            )
+        if len(matches) >= limit:
+            break
+
+    return {"results": matches[:limit]}
+
+
+@app.get("/commvault/servers/summary")
+def commvault_servers_summary(
+    client: str = Query(..., description="Commvault client name or ID."),
+    job_limit: int = Query(500, ge=0, le=2000, description="Maximum jobs to include (0 = all)."),
+    since_hours: int = Query(0, ge=0, le=24 * 365, description="Lookback window in hours (0 = all)."),
+    retained_only: bool = Query(True, description="Only include jobs with retention metadata."),
+    refresh_cache: bool = Query(False, description="Force bypass of cached job metrics."),
+) -> dict[str, Any]:
+    summary, metrics, jobs, stats = _load_commvault_server_data(
+        client,
+        job_limit=job_limit,
+        since_hours=since_hours,
+        retained_only=retained_only,
+        refresh_cache=refresh_cache,
+    )
+    return {
+        "client": summary,
+        "job_metrics": metrics,
+        "stats": stats,
+        "jobs": jobs,
+    }
+
+
+@app.get("/commvault/servers/export")
+def commvault_servers_export(
+    client: str = Query(..., description="Commvault client name or ID."),
+    file_format: Literal["text", "markdown", "html", "docx", "xlsx", "csv"] = Query(
+        "xlsx", description="Export format"
+    ),
+    job_limit: int = Query(500, ge=0, le=2000, description="Maximum jobs to include (0 = all)."),
+    since_hours: int = Query(0, ge=0, le=24 * 365, description="Lookback window in hours (0 = all)."),
+    retained_only: bool = Query(True, description="Only include jobs with retention metadata."),
+    refresh_cache: bool = Query(False, description="Force bypass of cached job metrics."),
+) -> Response:
+    summary, metrics, jobs, stats = _load_commvault_server_data(
+        client,
+        job_limit=job_limit,
+        since_hours=since_hours,
+        retained_only=retained_only,
+        refresh_cache=refresh_cache,
+    )
+    basename_source = summary.get("display_name") or summary.get("name") or f"client-{summary.get('client_id')}"
+    basename = _slugify_commvault_name(str(basename_source))
+
+    extensions = {
+        "text": "txt",
+        "markdown": "md",
+        "html": "html",
+        "docx": "docx",
+        "xlsx": "xlsx",
+        "csv": "csv",
+    }
+    ext = extensions[file_format]
+    filename = f"{basename}.{ext}"
+    disposition = {"Content-Disposition": f"attachment; filename={filename}"}
+
+    if file_format == "text":
+        content = _render_commvault_server_text_report(summary, stats, jobs, metrics)
+        return PlainTextResponse(content, headers=disposition)
+
+    if file_format == "markdown":
+        content = _render_commvault_server_markdown_report(summary, stats, jobs, metrics)
+        return PlainTextResponse(content, headers=disposition, media_type="text/markdown")
+
+    if file_format == "html":
+        content = _render_commvault_server_html_report(summary, stats, jobs, metrics)
+        return HTMLResponse(content, headers=disposition)
+
+    if file_format == "docx":
+        buffer = _render_commvault_server_docx(summary, stats, jobs, metrics)
+        return StreamingResponse(buffer, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", headers=disposition)
+
+    if file_format == "xlsx":
+        buffer = _render_commvault_server_xlsx(summary, jobs)
+        return StreamingResponse(buffer, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers=disposition)
+
+    buffer = _render_commvault_server_csv(jobs)
+    csv_bytes = BytesIO(buffer.getvalue().encode("utf-8"))
+    csv_bytes.seek(0)
+    return StreamingResponse(csv_bytes, media_type="text/csv", headers=disposition)
 
 
 # ---------------------------

@@ -8,7 +8,7 @@ import sys
 from collections.abc import Iterable, Sequence
 from contextlib import ExitStack
 from dataclasses import asdict
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from getpass import getuser
 from time import monotonic
 from zoneinfo import ZoneInfo
@@ -18,9 +18,6 @@ from fastapi import HTTPException
 from rich import print
 from rich.console import Console
 from rich.table import Table
-
-from pathlib import Path
-from typing import Any
 
 from .api.app import zabbix_problems as zabbix_problems_api
 from .application.context import ServiceContext
