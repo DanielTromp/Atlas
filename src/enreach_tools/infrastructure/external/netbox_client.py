@@ -132,30 +132,111 @@ def _choice_label(value: Any) -> str | None:
     return str(value)
 
 
-def _nested_name(payload: Mapping[str, JSONValue] | None, *path: str) -> str | None:
-    data: Any = payload
-    for key in path:
-        if not isinstance(data, Mapping):
+def _traverse(payload: Any, key: str) -> Any:
+    if payload is None:
+        return None
+    if isinstance(payload, Mapping):
+        return payload.get(key)
+    if hasattr(payload, key):
+        try:
+            return getattr(payload, key)
+        except Exception:  # pragma: no cover - defensive
             return None
-        data = data.get(key)
-    if data is None:
+    return None
+
+
+def _stringify_label(value: Any) -> str | None:
+    def _clean(text: str | None) -> str | None:
+        if text is None:
+            return None
+        candidate = text.strip()
+        if not candidate or candidate.isdigit():
+            return None
+        return candidate
+
+    if value is None:
         return None
-    if isinstance(data, Mapping):
-        for candidate in ("name", "display", "label", "value"):
-            if data.get(candidate):
-                return str(data[candidate])
+    if isinstance(value, str):
+        return _clean(value)
+    if isinstance(value, int | float):
         return None
-    return str(data)
+
+    result: str | None = None
+    if isinstance(value, Mapping):
+        for candidate in ("display", "name", "label", "value", "slug"):
+            result = _stringify_label(value.get(candidate))
+            if result:
+                break
+        return result
+
+    for candidate in ("display", "name", "label", "value", "slug"):
+        if hasattr(value, candidate):
+            result = _stringify_label(getattr(value, candidate))
+            if result:
+                break
+    if result is None and hasattr(value, "__str__"):
+        result = _clean(str(value))
+    return result
+
+
+def _nested_name(payload: Any, *path: str) -> str | None:
+    target = payload
+    for key in path:
+        target = _traverse(target, key)
+        if target is None:
+            return None
+    return _stringify_label(target)
+
+
+def _resolve_related_name(record_obj: Any, data: Mapping[str, JSONValue], *path: str) -> str | None:
+    direct = _nested_name(data, *path)
+    if direct:
+        return direct
+    return _nested_name(record_obj, *path)
+
+
+def _is_id_like(value: str) -> bool:
+    value = value.strip()
+    if not value:
+        return False
+    return value.isdigit()
 
 
 def _stringify_ip(value: Any) -> str | None:
     if value is None:
         return None
     if isinstance(value, Mapping):
-        href = value.get("address") or value.get("ip") or value.get("value")
-        if href:
-            return str(href)
-    return str(value)
+        for key in ("address", "ip", "value", "display"):
+            href = value.get(key)
+            if href:
+                text = str(href).strip()
+                if text and not _is_id_like(text):
+                    return text
+        return None
+    # pynetbox IpAddresses records expose an ``address`` attribute and a useful ``__str__``
+    for attr in ("address", "ip", "value", "display"):
+        if hasattr(value, attr):
+            candidate = getattr(value, attr)
+            if candidate:
+                text = str(candidate).strip()
+                if text and not _is_id_like(text):
+                    return text
+    text = str(value).strip()
+    if not text or text.lower() in {"none", "null"} or _is_id_like(text):
+        return None
+    return text
+
+
+def _resolve_ip(record_obj: Any, data: Mapping[str, JSONValue], attr: str) -> str | None:
+    direct = _stringify_ip(data.get(attr)) if isinstance(data, Mapping) else None
+    if direct:
+        return direct
+    if record_obj is None:
+        return None
+    fallback = getattr(record_obj, attr, None)
+    if fallback is None:
+        return None
+    return _stringify_ip(fallback)
 
 
 def _tags(payload: Any) -> tuple[str, ...]:
@@ -180,8 +261,11 @@ def _custom_fields(payload: Any) -> Mapping[str, JSONValue]:
 def _build_device_record(record: Any) -> NetboxDeviceRecord:
     data = _serialize(record)
     device_type = data.get("device_type") if isinstance(data, Mapping) else None
-    manufacturer = _nested_name(device_type if isinstance(device_type, Mapping) else None, "manufacturer")
-    rack_face = _nested_name(data.get("face") if isinstance(data.get("face"), Mapping) else None)
+    manufacturer = (
+        _resolve_related_name(record, data, "device_type", "manufacturer")
+        or _nested_name(device_type)
+    )
+    rack_face = _resolve_related_name(record, data, "face")
     position = data.get("position")
     rack_unit = None
     if position not in (None, ""):
@@ -192,29 +276,32 @@ def _build_device_record(record: Any) -> NetboxDeviceRecord:
         name=str(data.get("name") or getattr(record, "name", "")),
         status=_nested_name(data.get("status"), "value"),
         status_label=_choice_label(data.get("status")),
-        role=_nested_name(data.get("role")),
-        tenant=_nested_name(data.get("tenant")),
-        tenant_group=_nested_name(data.get("tenant"), "group"),
-        site=_nested_name(data.get("site")),
-        location=_nested_name(data.get("location")),
+        role=_resolve_related_name(record, data, "role"),
+        tenant=_resolve_related_name(record, data, "tenant"),
+        tenant_group=_resolve_related_name(record, data, "tenant", "group"),
+        site=_resolve_related_name(record, data, "site"),
+        location=_resolve_related_name(record, data, "location"),
         tags=_tags(data.get("tags")),
         last_updated=_dt(data.get("last_updated")),
-        primary_ip=_stringify_ip(data.get("primary_ip")),
-        primary_ip4=_stringify_ip(data.get("primary_ip4")),
-        primary_ip6=_stringify_ip(data.get("primary_ip6")),
-        oob_ip=_stringify_ip(data.get("oob_ip")),
+        primary_ip=_resolve_ip(record, data, "primary_ip"),
+        primary_ip4=_resolve_ip(record, data, "primary_ip4"),
+        primary_ip6=_resolve_ip(record, data, "primary_ip6"),
+        oob_ip=_resolve_ip(record, data, "oob_ip"),
         custom_fields=_custom_fields(data.get("custom_fields")),
         raw=data,
         source=record,
         manufacturer=manufacturer,
-        model=_nested_name(device_type if isinstance(device_type, Mapping) else None, "model") or _nested_name(data, "model"),
-        rack=_nested_name(data.get("rack")),
+        model=
+            _resolve_related_name(record, data, "device_type", "model")
+            or _nested_name(device_type, "model")
+            or _resolve_related_name(record, data, "model"),
+        rack=_resolve_related_name(record, data, "rack"),
         rack_unit=rack_unit,
         serial=str(data.get("serial")) if data.get("serial") not in (None, "") else None,
         asset_tag=str(data.get("asset_tag")) if data.get("asset_tag") not in (None, "") else None,
-        cluster=_nested_name(data.get("cluster")),
-        site_group=_nested_name(data.get("site"), "group"),
-        region=_nested_name(data.get("site"), "region"),
+        cluster=_resolve_related_name(record, data, "cluster"),
+        site_group=_resolve_related_name(record, data, "site", "group"),
+        region=_resolve_related_name(record, data, "site", "region"),
         description=str(data.get("description")) if data.get("description") else None,
     )
 
@@ -226,23 +313,25 @@ def _build_vm_record(record: Any) -> NetboxVMRecord:
         name=str(data.get("name") or getattr(record, "name", "")),
         status=_nested_name(data.get("status"), "value"),
         status_label=_choice_label(data.get("status")),
-        role=_nested_name(data.get("role")),
-        tenant=_nested_name(data.get("tenant")),
-        tenant_group=_nested_name(data.get("tenant"), "group"),
-        site=_nested_name(data.get("site")),
-        location=_nested_name(data.get("cluster"), "site"),
+        role=_resolve_related_name(record, data, "role"),
+        tenant=_resolve_related_name(record, data, "tenant"),
+        tenant_group=_resolve_related_name(record, data, "tenant", "group"),
+        site=_resolve_related_name(record, data, "site"),
+        location=
+            _resolve_related_name(record, data, "cluster", "site")
+            or _resolve_related_name(record, data, "site", "name"),
         tags=_tags(data.get("tags")),
         last_updated=_dt(data.get("last_updated")),
-        primary_ip=_stringify_ip(data.get("primary_ip")),
-        primary_ip4=_stringify_ip(data.get("primary_ip4")),
-        primary_ip6=_stringify_ip(data.get("primary_ip6")),
-        oob_ip=_stringify_ip(data.get("oob_ip")),
+        primary_ip=_resolve_ip(record, data, "primary_ip"),
+        primary_ip4=_resolve_ip(record, data, "primary_ip4"),
+        primary_ip6=_resolve_ip(record, data, "primary_ip6"),
+        oob_ip=_resolve_ip(record, data, "oob_ip"),
         custom_fields=_custom_fields(data.get("custom_fields")),
         raw=data,
         source=record,
-        cluster=_nested_name(data.get("cluster")),
+        cluster=_resolve_related_name(record, data, "cluster"),
         role_detail=_choice_label(data.get("role")),
-        platform=_nested_name(data.get("platform")),
+        platform=_resolve_related_name(record, data, "platform"),
         description=str(data.get("description")) if data.get("description") else None,
     )
 

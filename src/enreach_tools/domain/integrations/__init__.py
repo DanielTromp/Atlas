@@ -4,6 +4,15 @@ These dataclasses describe the information exchanged with third-party systems
 so application services can rely on typed, transport-agnostic contracts.
 """
 from .backup import BackupJobSummary
+from .commvault import (
+    CommvaultClientJobMetrics,
+    CommvaultClientReference,
+    CommvaultClientSummary,
+    CommvaultJob,
+    CommvaultJobList,
+    CommvaultStoragePool,
+    CommvaultStoragePoolDetails,
+)
 from .confluence import ConfluenceAttachment
 from .netbox import NetboxDeviceRecord, NetboxVMRecord
 from .zabbix import (
@@ -17,6 +26,13 @@ from .zabbix import (
 
 __all__ = [
     "BackupJobSummary",
+    "CommvaultClientJobMetrics",
+    "CommvaultClientReference",
+    "CommvaultClientSummary",
+    "CommvaultJob",
+    "CommvaultJobList",
+    "CommvaultStoragePool",
+    "CommvaultStoragePoolDetails",
     "ConfluenceAttachment",
     "NetboxDeviceRecord",
     "NetboxVMRecord",

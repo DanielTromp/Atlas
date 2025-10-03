@@ -124,6 +124,7 @@
   const $themeRoot = document.getElementById('theme-toggle-root');
   const $pages = document.getElementById("pages");
   const $pageExport = document.getElementById("page-export");
+  const $pageCommvault = document.getElementById("page-commvault");
   const $pageNetbox = document.getElementById("page-netbox");
   const $pageSearch = document.getElementById("page-search");
   const $pageTools = document.getElementById("page-tools");
@@ -196,6 +197,20 @@
   const $bodyScroll = document.getElementById("body-scroll");
   const $canvas = document.getElementById("canvas");
   const $rows = document.getElementById("rows");
+  const $commvaultTabs = document.getElementById("commvault-tabs");
+  const $commvaultRefresh = document.getElementById("commvault-refresh");
+  const $commvaultSummary = document.getElementById("commvault-summary");
+  const $commvaultStatus = document.getElementById("commvault-status");
+  const $commvaultTableBody = document.getElementById("commvault-table-body");
+  const $commvaultSince = document.getElementById("commvault-since");
+  const $commvaultStatusFilter = document.getElementById("commvault-status-filter");
+  const $commvaultSearch = document.getElementById("commvault-search");
+  const $commvaultStorageSummary = document.getElementById("commvault-storage-summary");
+  const $commvaultStorageStatus = document.getElementById("commvault-storage-status");
+  const $commvaultStorageTableBody = document.getElementById("commvault-storage-table-body");
+  const $commvaultStorageDetail = document.getElementById("commvault-storage-detail");
+  const $commvaultStorageRefresh = document.getElementById("commvault-storage-refresh");
+  const commvaultPanels = Array.from(document.querySelectorAll('[data-commvault-panel]'));
   const $suggestionsButton = document.getElementById("open-suggestions");
   const $suggestionList = document.getElementById("suggestion-list");
   const $suggestionNew = document.getElementById("suggestion-new");
@@ -331,7 +346,51 @@
     menuOpen: false,
     prefDataset: null,
   };
+  const commvaultState = {
+    tab: 'backups',
+    jobs: [],
+    loading: false,
+    lastUpdated: null,
+    totalAvailable: null,
+    error: null,
+    limit: 0,
+    sinceHours: 24,
+    lastFetchMs: 0,
+    lastFetchKey: null,
+    statusFilter: '',
+    statuses: [],
+    search: '',
+    searchTokens: [],
+  };
+  const commvaultStorageState = {
+    pools: [],
+    loading: false,
+    error: null,
+    fetchedAt: null,
+    selectedId: null,
+    lastFetchMs: 0,
+  };
+  let commvaultStatusTimeout = null;
   let currentUser = null;
+
+  function setCommvaultSearch(value) {
+    const text = (value || '').trim();
+    commvaultState.search = text;
+    commvaultState.searchTokens = text ? text.toLowerCase().split(/\s+/).filter(Boolean) : [];
+  }
+
+  setCommvaultSearch(commvaultState.search || '');
+
+  const COMMVAULT_STORAGE_REFRESH_INTERVAL_MS = 60_000;
+  const COMMVAULT_TAB_KEY = 'commvault_active_tab';
+  const storedCommvaultTab = (() => {
+    try {
+      const value = localStorage.getItem(COMMVAULT_TAB_KEY);
+      if (value && ['backups', 'storage', 'reports'].includes(value)) return value;
+    } catch {}
+    return 'backups';
+  })();
+  commvaultState.tab = storedCommvaultTab;
 
   const themeWasStored = (() => {
     try { return !!localStorage.getItem(THEME_STORAGE_KEY); }
@@ -684,6 +743,7 @@
     'confluence',
     'chat',
     'export',
+    'commvault',
     'zhost',
     'suggestions',
     'account',
@@ -2593,6 +2653,7 @@
       confluence: $pageConfluence,
       chat: $pageChat,
       export: $pageExport,
+      commvault: $pageCommvault,
       zhost: $pageZhost,
       suggestions: $pageSuggestions,
       'suggestion-detail': $pageSuggestionDetail,
@@ -2637,6 +2698,8 @@
     // When switching into Export, ensure data is loaded/refreshed
     if (p === 'export') {
       fetchData();
+    } else if (p === 'commvault') {
+      setCommvaultTab(commvaultState.tab || 'backups');
     } else if (p === 'tools') {
       loadTools();
     } else if (p === 'chat') {
@@ -2942,6 +3005,664 @@
     }
   });
   }
+
+  // ---------------------------
+  // Commvault backups
+  // ---------------------------
+  function setCommvaultTab(tab) {
+    if (!['backups', 'storage', 'reports'].includes(tab)) tab = 'backups';
+    commvaultState.tab = tab;
+    if ($commvaultTabs) {
+      $commvaultTabs.querySelectorAll('button[data-commvault-tab]').forEach((btn) => {
+        const btnTab = btn.getAttribute('data-commvault-tab');
+        btn.classList.toggle('active', btnTab === tab);
+      });
+    }
+    commvaultPanels.forEach((panel) => {
+      if (!panel) return;
+      const isActive = panel.dataset.commvaultPanel === tab;
+      panel.classList.toggle('active', isActive);
+      if (isActive) panel.removeAttribute('hidden'); else panel.setAttribute('hidden', '');
+    });
+    try { localStorage.setItem(COMMVAULT_TAB_KEY, tab); } catch {}
+    if (tab === 'backups') {
+      loadCommvaultData(false);
+    } else if (tab === 'storage') {
+      renderCommvaultStorage();
+      loadCommvaultStorage(false);
+    }
+  }
+
+  function applyCommvaultPayload(payload) {
+    const jobs = Array.isArray(payload?.jobs) ? payload.jobs : [];
+    commvaultState.jobs = jobs.filter((job) => job && typeof job === 'object');
+    commvaultState.lastUpdated = payload?.generated_at || null;
+    const totalCached = Number(payload?.total_cached ?? payload?.total_available);
+    commvaultState.totalAvailable = Number.isFinite(totalCached) && totalCached >= 0 ? totalCached : null;
+    if (typeof payload?.limit === 'number') commvaultState.limit = payload.limit;
+    if (typeof payload?.since_hours === 'number') commvaultState.sinceHours = payload.since_hours;
+    commvaultState.sinceHours = Math.round(commvaultState.sinceHours);
+    if (!Number.isFinite(commvaultState.sinceHours) || commvaultState.sinceHours < 1) {
+      commvaultState.sinceHours = 24;
+    } else if (commvaultState.sinceHours > 48) {
+      commvaultState.sinceHours = 48;
+    }
+    commvaultState.error = null;
+
+    if ($commvaultSince) {
+      const desired = String(commvaultState.sinceHours);
+      const hasOption = Array.from($commvaultSince.options || []).some((opt) => opt.value === desired);
+      $commvaultSince.value = hasOption ? desired : '24';
+      if (!hasOption) {
+        commvaultState.sinceHours = Number($commvaultSince.value) || 24;
+      }
+    }
+  }
+
+  function setCommvaultStatus(message, isError = false, autoHideMs = 5000) {
+    if (!$commvaultStatus) return;
+    if (commvaultStatusTimeout) {
+      clearTimeout(commvaultStatusTimeout);
+      commvaultStatusTimeout = null;
+    }
+    if (!message) {
+      $commvaultStatus.hidden = true;
+      $commvaultStatus.textContent = '';
+      $commvaultStatus.classList.remove('error');
+      return;
+    }
+    $commvaultStatus.hidden = false;
+    $commvaultStatus.textContent = message;
+    $commvaultStatus.classList.toggle('error', !!isError);
+    if (!isError && autoHideMs > 0) {
+      commvaultStatusTimeout = setTimeout(() => {
+        if ($commvaultStatus) {
+          $commvaultStatus.hidden = true;
+          $commvaultStatus.textContent = '';
+          $commvaultStatus.classList.remove('error');
+        }
+        commvaultStatusTimeout = null;
+      }, autoHideMs);
+    }
+  }
+
+  function setCommvaultStorageStatus(message, isError = false) {
+    if (!$commvaultStorageStatus) return;
+    if (!message) {
+      $commvaultStorageStatus.hidden = true;
+      $commvaultStorageStatus.textContent = '';
+      $commvaultStorageStatus.classList.remove('error');
+      return;
+    }
+    $commvaultStorageStatus.hidden = false;
+    $commvaultStorageStatus.textContent = message;
+    $commvaultStorageStatus.classList.toggle('error', !!isError);
+  }
+
+  function formatCommvaultDate(value) {
+    if (!value) return '–';
+    try {
+      const d = new Date(value);
+      if (Number.isNaN(d.getTime())) return value;
+      return new Intl.DateTimeFormat(undefined, {
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit',
+      }).format(d);
+    } catch {
+      return value;
+    }
+  }
+
+  function formatCommvaultDuration(seconds) {
+    const value = Number(seconds);
+    if (!Number.isFinite(value) || value <= 0) return '–';
+    const hours = Math.floor(value / 3600);
+    const minutes = Math.floor((value % 3600) / 60);
+    const secs = Math.floor(value % 60);
+    const parts = [];
+    if (hours) parts.push(`${hours}h`);
+    if (minutes) parts.push(`${minutes}m`);
+    if (!hours && secs) parts.push(`${secs}s`);
+    if (!parts.length) parts.push(`${secs}s`);
+    return parts.join(' ');
+  }
+
+  function formatCommvaultBytes(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return '—';
+    if (num === 0) return '0 B';
+    if (num < 0) return '—';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+    let size = num;
+    let idx = 0;
+    while (size >= 1024 && idx < units.length - 1) {
+      size /= 1024;
+      idx += 1;
+    }
+    const precision = size >= 100 ? 0 : size >= 10 ? 1 : 2;
+    return `${size.toFixed(precision)} ${units[idx]}`;
+  }
+
+  function formatCommvaultThroughput(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num) || num <= 0) return '–';
+    const precision = num >= 100 ? 0 : num >= 10 ? 1 : 2;
+    return `${num.toFixed(precision)} GB/h`;
+  }
+
+  function formatCommvaultPercent(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return '–';
+    const precision = Math.abs(num) >= 10 ? 0 : 1;
+    return `${num.toFixed(precision)}%`;
+  }
+
+  function formatCommvaultFiles(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num) || num <= 0) return '–';
+    return Math.round(num).toLocaleString();
+  }
+
+  function getCommvaultStatusClass(label) {
+    const text = (label || '').toLowerCase();
+    if (!text) return '';
+    if (text.includes('fail') || text.includes('error') || text.includes('kill')) return 'status-error';
+    if (text.includes('wait') || text.includes('suspend') || text.includes('queue') || text.includes('running') || text.includes('warning')) return 'status-warning';
+    if (text.includes('success') || text.includes('complete') || text.includes('done')) return 'status-success';
+    return '';
+  }
+
+  function commvaultMatchesSearch(job) {
+    const tokens = commvaultState.searchTokens || [];
+    if (!tokens.length) return true;
+    if (!job || typeof job !== 'object') return false;
+
+    const collector = [];
+    const push = (value) => {
+      if (value == null) return;
+      if (Array.isArray(value)) {
+        for (const item of value) push(item);
+        return;
+      }
+      const str = String(value).toLowerCase();
+      if (str) collector.push(str);
+    };
+
+    push(job.job_id);
+    push(job.job_type);
+    push(job.localized_status);
+    push(job.status);
+    push(job.localized_operation);
+    push(job.client_name);
+    push(job.destination_client_name);
+    push(job.subclient_name);
+    push(job.plan_name);
+    push(job.storage_policy_name);
+    push(job.backup_set_name);
+    push(job.backup_level_name);
+    push(job.application_name);
+    push(job.client_groups);
+
+    const haystack = collector.join(' ');
+    if (!haystack) return false;
+    return tokens.every((token) => haystack.includes(token));
+  }
+
+  function renderCommvaultStatusOptions() {
+    if (!$commvaultStatusFilter) return;
+
+    const jobsForCounts = commvaultState.jobs.filter(commvaultMatchesSearch);
+    const counts = new Map();
+    for (const job of jobsForCounts) {
+      if (!job) continue;
+      const label = (job.localized_status || job.status || 'Unknown') || 'Unknown';
+      counts.set(label, (counts.get(label) || 0) + 1);
+    }
+
+    commvaultState.statuses = Array.from(counts.keys()).sort((a, b) => a.localeCompare(b));
+    commvaultState.statusFilter = (commvaultState.statusFilter || '').trim();
+    if (commvaultState.statusFilter && !counts.has(commvaultState.statusFilter)) {
+      commvaultState.statusFilter = '';
+    }
+
+    $commvaultStatusFilter.innerHTML = '';
+    const frag = document.createDocumentFragment();
+
+    const makeChip = (label, value, total, className = '') => {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'commvault-status-chip';
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.value = value;
+      if (className) button.classList.add(className);
+      button.textContent = label;
+      if ((commvaultState.statusFilter || '') === value) button.classList.add('active');
+      wrapper.append(button);
+      const counter = document.createElement('div');
+      counter.className = 'commvault-status-count';
+      counter.textContent = `${total}`;
+      wrapper.append(counter);
+      return wrapper;
+    };
+
+    const total = jobsForCounts.length;
+    const allChip = makeChip('All statuses', '', total);
+    frag.append(allChip);
+
+    for (const status of commvaultState.statuses) {
+      const count = counts.get(status) || 0;
+      const statusClass = getCommvaultStatusClass(status);
+      const chip = makeChip(status, status, count, statusClass);
+      frag.append(chip);
+    }
+
+    $commvaultStatusFilter.append(frag);
+
+    $commvaultStatusFilter.querySelectorAll('button').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const value = btn.dataset.value || '';
+        if ((commvaultState.statusFilter || '') === value) {
+          commvaultState.statusFilter = '';
+        } else {
+          commvaultState.statusFilter = value;
+        }
+        renderCommvaultTable();
+      });
+    });
+  }
+
+  function commvaultMatchesStatus(job) {
+    const filter = (commvaultState.statusFilter || '').toLowerCase().trim();
+    if (!filter) return true;
+    const label = ((job?.localized_status || job?.status || '') + '').toLowerCase().trim();
+    return label === filter;
+  }
+
+  function updateCommvaultSummary(searchMatchCount, visibleCount) {
+    if (!$commvaultSummary) return;
+    if (commvaultState.loading) {
+      $commvaultSummary.textContent = 'Loading Commvault backups…';
+      return;
+    }
+    const updated = commvaultState.lastUpdated ? formatTimestamp(commvaultState.lastUpdated) : 'never';
+    if (!commvaultState.jobs.length) {
+      $commvaultSummary.textContent = `No Commvault jobs available. Last update: ${updated}.`;
+      return;
+    }
+
+    const windowText = commvaultState.sinceHours > 0 ? `last ${commvaultState.sinceHours}h` : 'all time';
+    const totalText = Number.isFinite(commvaultState.totalAvailable) && commvaultState.totalAvailable !== null
+      ? `${commvaultState.totalAvailable}`
+      : 'unknown';
+    const searchNote = commvaultState.search ? ` (search: "${commvaultState.search}")` : '';
+    const statusNote = commvaultState.statusFilter ? ` (status: ${commvaultState.statusFilter})` : '';
+
+    if (typeof searchMatchCount === 'number') {
+      if (searchMatchCount === 0) {
+        $commvaultSummary.textContent = `No Commvault jobs match the search${searchNote}. Last update: ${updated}.`;
+        return;
+      }
+      if (visibleCount === 0) {
+        $commvaultSummary.textContent = `No Commvault jobs match status “${commvaultState.statusFilter}”${searchNote}. Last update: ${updated}.`;
+        return;
+      }
+      $commvaultSummary.textContent = `Showing ${visibleCount} of ${searchMatchCount} matching job(s)${statusNote}${searchNote} (${windowText}), Commvault reports ${totalText} total — updated ${updated}.`;
+      return;
+    }
+
+    $commvaultSummary.textContent = `Showing ${commvaultState.jobs.length} job(s)${statusNote}${searchNote} (${windowText}), Commvault reports ${totalText} total — updated ${updated}.`;
+  }
+
+  function renderCommvaultTable() {
+    if (!$commvaultTableBody) return;
+    if (!commvaultState.jobs.length) {
+      $commvaultTableBody.innerHTML = '<tr class="empty"><td colspan="14">No Commvault jobs were found for the selected window.</td></tr>';
+      updateCommvaultSummary(0, 0);
+      renderCommvaultStatusOptions();
+      return;
+    }
+
+    const searchFiltered = commvaultState.jobs.filter(commvaultMatchesSearch);
+    const searchCount = searchFiltered.length;
+    if (!searchCount) {
+      $commvaultTableBody.innerHTML = '<tr class="empty"><td colspan="14">No Commvault jobs match the search terms.</td></tr>';
+      updateCommvaultSummary(0, 0);
+      renderCommvaultStatusOptions();
+      return;
+    }
+
+    const filteredJobs = searchFiltered.filter((job) => commvaultMatchesStatus(job));
+    if (!filteredJobs.length) {
+      $commvaultTableBody.innerHTML = '<tr class="empty"><td colspan="14">No Commvault jobs match the selected status filter.</td></tr>';
+      updateCommvaultSummary(searchCount, 0);
+      renderCommvaultStatusOptions();
+      return;
+    }
+
+    const rows = filteredJobs.map((job) => {
+      const jobId = job?.job_id != null ? String(job.job_id) : '–';
+      const jobType = job?.job_type || job?.localized_operation || '';
+      const statusLabel = job?.localized_status || job?.status || 'Unknown';
+      const statusClass = getCommvaultStatusClass(statusLabel);
+      const percentComplete = formatCommvaultPercent(job?.percent_complete);
+      const client = job?.client_name || job?.destination_client_name || '–';
+      const destination = job?.destination_client_name && job.destination_client_name !== job.client_name
+        ? job.destination_client_name
+        : null;
+      const subclient = job?.subclient_name || job?.backup_set_name || '–';
+      const plan = job?.plan_name || '–';
+      const policy = job?.storage_policy_name || '–';
+      const start = formatCommvaultDate(job?.start_time);
+      const end = formatCommvaultDate(job?.end_time);
+      const duration = formatCommvaultDuration(job?.elapsed_seconds);
+      const appSize = formatCommvaultBytes(job?.size_of_application_bytes);
+      const mediaSize = formatCommvaultBytes(job?.size_on_media_bytes);
+      const throughput = formatCommvaultThroughput(job?.average_throughput_gb_per_hr);
+      const files = formatCommvaultFiles(job?.total_num_files);
+      const savings = formatCommvaultPercent(job?.percent_savings);
+      const statusBadge = statusLabel
+        ? `<span class="status-pill${statusClass ? ` ${statusClass}` : ''}">${escapeHtml(statusLabel)}</span>`
+        : '–';
+      const statusExtra = percentComplete !== '–' ? `<span class="muted">${escapeHtml(percentComplete)} complete</span>` : '';
+      const clientExtra = destination ? `<span class="muted">Dest: ${escapeHtml(destination)}</span>` : '';
+      const jobExtra = jobType ? `<span class="muted">${escapeHtml(jobType)}</span>` : '';
+      return `
+        <tr>
+          <td><strong>${escapeHtml(jobId)}</strong>${jobExtra}</td>
+          <td>${statusBadge}${statusExtra}</td>
+          <td>${client !== '–' ? escapeHtml(client) : '–'}${clientExtra}</td>
+          <td>${subclient !== '–' ? escapeHtml(subclient) : '–'}</td>
+          <td>${plan !== '–' ? escapeHtml(plan) : '–'}</td>
+          <td>${policy !== '–' ? escapeHtml(policy) : '–'}</td>
+          <td>${escapeHtml(start)}</td>
+          <td>${escapeHtml(end)}</td>
+          <td>${escapeHtml(duration)}</td>
+          <td>${escapeHtml(appSize)}</td>
+          <td>${escapeHtml(mediaSize)}</td>
+          <td>${escapeHtml(throughput)}</td>
+          <td>${escapeHtml(files)}</td>
+          <td>${escapeHtml(savings)}</td>
+        </tr>`;
+    });
+    $commvaultTableBody.innerHTML = rows.join('');
+    updateCommvaultSummary(searchCount, filteredJobs.length);
+    renderCommvaultStatusOptions();
+  }
+
+  function renderCommvaultStorage() {
+    if (commvaultStorageState.loading) {
+      setCommvaultStorageStatus('Loading storage pools…');
+    } else if (commvaultStorageState.error) {
+      setCommvaultStorageStatus(`Failed to load storage pools: ${commvaultStorageState.error?.message || commvaultStorageState.error}`, true);
+    } else {
+      setCommvaultStorageStatus('');
+    }
+
+    const pools = commvaultStorageState.pools || [];
+    if (pools.length === 0 && !commvaultStorageState.loading) {
+      setCommvaultStorageStatus('No storage pools found.', false);
+    }
+
+    if ($commvaultStorageSummary) {
+      const fetched = commvaultStorageState.fetchedAt ? ` — updated ${commvaultStorageState.fetchedAt}` : '';
+      const totalCapacity = pools.reduce((sum, pool) => sum + (Number(pool.total_capacity_bytes) || 0), 0);
+      const usedCapacity = pools.reduce((sum, pool) => sum + (Number(pool.used_bytes) || 0), 0);
+      const summaryText = `Showing ${pools.length} storage pool(s)${fetched}`;
+      const capacityText = totalCapacity ? ` — total capacity ${formatCommvaultBytes(totalCapacity)}, used ${formatCommvaultBytes(usedCapacity)}` : '';
+      $commvaultStorageSummary.textContent = `${summaryText}${capacityText}`;
+    }
+
+    if ($commvaultStorageTableBody) {
+      if (!pools.length) {
+        $commvaultStorageTableBody.innerHTML = '<tr class="empty"><td colspan="10">Storage metrics not available.</td></tr>';
+      } else {
+        const selectedId = Number(commvaultStorageState.selectedId);
+        const rows = pools.map((pool) => {
+          const usagePct = typeof pool.usage_percent === 'number' && Number.isFinite(pool.usage_percent) && pool.usage_percent >= 0
+            ? pool.usage_percent
+            : null;
+          const usageLabel = usagePct !== null ? `${usagePct.toFixed(1)}%` : '—';
+          const dedupeRatioValue = typeof pool.dedupe_ratio === 'number' && pool.dedupe_ratio > 0 ? pool.dedupe_ratio : null;
+          const dedupeLabel = dedupeRatioValue !== null ? `${dedupeRatioValue.toFixed(2)}x` : '—';
+          const used = formatCommvaultBytes(pool.used_bytes);
+          const free = formatCommvaultBytes(pool.free_bytes);
+          const capacity = formatCommvaultBytes(pool.total_capacity_bytes);
+          const status = escapeHtml(pool.status || 'Unknown');
+          const region = escapeHtml(pool.region_name || '—');
+          const policy = escapeHtml(pool.storage_policy_name || '—');
+          const poolIdNum = Number(pool.pool_id);
+          const rowClasses = [poolIdNum === selectedId ? 'active' : ''].filter(Boolean).join(' ');
+          return `
+            <tr class="${rowClasses}" data-commvault-pool-id="${escapeHtml(pool.pool_id)}">
+              <td>${escapeHtml(pool.name || `Pool ${pool.pool_id}`)}</td>
+              <td>${status}</td>
+              <td>${policy}</td>
+              <td>${region}</td>
+              <td>${capacity}</td>
+              <td>${used}</td>
+              <td>${free}</td>
+              <td>${usageLabel}</td>
+              <td>${dedupeLabel}</td>
+              <td>${escapeHtml(pool.number_of_nodes ?? '—')}</td>
+            </tr>`;
+        }).join('');
+        $commvaultStorageTableBody.innerHTML = rows;
+      }
+    }
+
+    renderCommvaultStorageDetail();
+  }
+
+  function renderCommvaultStorageDetail() {
+    if (!$commvaultStorageDetail) return;
+    const pools = commvaultStorageState.pools || [];
+    if (!pools.length) {
+      $commvaultStorageDetail.innerHTML = '<p class="commvault-placeholder">Select a storage pool to see detailed metrics.</p>';
+      return;
+    }
+    const selectedIdNum = Number(commvaultStorageState.selectedId);
+    let selected = pools.find((pool) => Number(pool.pool_id) === selectedIdNum);
+    if (!selected) {
+      selected = pools[0];
+      commvaultStorageState.selectedId = selected?.pool_id ?? null;
+    }
+    if (!selected) {
+      $commvaultStorageDetail.innerHTML = '<p class="commvault-placeholder">No storage pools available.</p>';
+      return;
+    }
+    const stats = [
+      ['Status', selected.status || 'Unknown'],
+      ['Storage policy', selected.storage_policy_name || '—'],
+      ['Policy ID', selected.storage_policy_id ?? '—'],
+      ['Region', selected.region_name || '—'],
+      ['Capacity', formatCommvaultBytes(selected.total_capacity_bytes)],
+      ['Used', formatCommvaultBytes(selected.used_bytes)],
+      ['Free', formatCommvaultBytes(selected.free_bytes)],
+      ['Logical', formatCommvaultBytes(selected.logical_capacity_bytes)],
+      ['Usage', typeof selected.usage_percent === 'number' && Number.isFinite(selected.usage_percent) && selected.usage_percent >= 0 ? `${selected.usage_percent.toFixed(1)}%` : '—'],
+      ['Dedupe ratio', typeof selected.dedupe_ratio === 'number' && selected.dedupe_ratio > 0 ? `${selected.dedupe_ratio.toFixed(2)}x` : '—'],
+      ['Dedupe savings', formatCommvaultBytes(selected.dedupe_savings_bytes)],
+      ['Nodes', selected.number_of_nodes ?? '—'],
+      ['Archive storage', selected.is_archive_storage ? 'Yes' : 'No'],
+      ['Cloud class', selected.cloud_storage_class_name || '—'],
+      ['Libraries', (selected.library_ids && selected.library_ids.length) ? selected.library_ids.join(', ') : '—'],
+    ];
+
+    const detailRows = stats.map(([label, value]) => `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value ?? '—')}</dd>`).join('');
+    let rawJson = '';
+    try {
+      rawJson = JSON.stringify(selected.details || {}, null, 2);
+    } catch {
+      rawJson = '';
+    }
+
+    $commvaultStorageDetail.innerHTML = `
+      <div>
+        <h3>${escapeHtml(selected.name || `Pool ${selected.pool_id}`)}</h3>
+        <dl>${detailRows}</dl>
+      </div>
+      ${rawJson ? `<pre>${escapeHtml(rawJson)}</pre>` : ''}
+    `;
+  }
+
+  async function loadCommvaultData(force) {
+    if (commvaultState.loading) return;
+    const now = Date.now();
+    const fetchKey = `since:${commvaultState.sinceHours}`;
+    if (!force && commvaultState.lastFetchKey === fetchKey && commvaultState.lastFetchMs && now - commvaultState.lastFetchMs < 30000) {
+      updateCommvaultSummary();
+      renderCommvaultTable();
+      return;
+    }
+    commvaultState.loading = true;
+    commvaultState.error = null;
+    updateCommvaultSummary();
+    setCommvaultStatus('Loading Commvault backups…', false, 0);
+    try {
+      const res = await fetch(`${API_BASE}/commvault/backups?since_hours=${encodeURIComponent(commvaultState.sinceHours || 0)}`);
+      if (!res.ok) {
+        throw new Error(`${res.status} ${res.statusText}`);
+      }
+      const data = await res.json().catch(() => ({}));
+      applyCommvaultPayload(data || {});
+      commvaultState.lastFetchMs = Date.now();
+      commvaultState.lastFetchKey = fetchKey;
+      renderCommvaultTable();
+      setCommvaultStatus('', false);
+    } catch (err) {
+      console.error('Failed to load Commvault data', err);
+      commvaultState.error = err;
+      setCommvaultStatus(`Failed to load Commvault data: ${err?.message || err}`, true, 0);
+      commvaultState.lastFetchKey = null;
+    } finally {
+      commvaultState.loading = false;
+      updateCommvaultSummary();
+    }
+  }
+
+  async function loadCommvaultStorage(force) {
+    if (commvaultStorageState.loading) return;
+    const now = Date.now();
+    if (!force && commvaultStorageState.lastFetchMs && now - commvaultStorageState.lastFetchMs < COMMVAULT_STORAGE_REFRESH_INTERVAL_MS) {
+      renderCommvaultStorage();
+      return;
+    }
+    commvaultStorageState.loading = true;
+    commvaultStorageState.error = null;
+    renderCommvaultStorage();
+    try {
+      const res = await fetch(`${API_BASE}/commvault/storage`);
+      if (!res.ok) {
+        throw new Error(`${res.status} ${res.statusText}`);
+      }
+      const data = await res.json().catch(() => ({}));
+      const pools = Array.isArray(data?.pools) ? data.pools : [];
+      commvaultStorageState.pools = pools;
+      commvaultStorageState.fetchedAt = data?.generated_at || null;
+      const firstId = pools.length ? Number(pools[0]?.pool_id) : NaN;
+      if (!pools.length) {
+        commvaultStorageState.selectedId = null;
+      } else if (!Number.isFinite(Number(commvaultStorageState.selectedId))) {
+        commvaultStorageState.selectedId = Number.isFinite(firstId) ? firstId : null;
+      } else if (!pools.some((pool) => Number(pool?.pool_id) === Number(commvaultStorageState.selectedId))) {
+        commvaultStorageState.selectedId = Number.isFinite(firstId) ? firstId : null;
+      }
+      commvaultStorageState.lastFetchMs = now;
+    } catch (err) {
+      console.error('Failed to load Commvault storage data', err);
+      commvaultStorageState.error = err;
+    } finally {
+      commvaultStorageState.loading = false;
+      renderCommvaultStorage();
+    }
+  }
+
+  async function refreshCommvaultData() {
+    if (commvaultState.loading) return;
+    commvaultState.loading = true;
+    commvaultState.error = null;
+    updateCommvaultSummary();
+    setCommvaultStatus('Updating Commvault backups…', false, 0);
+    try {
+      const params = new URLSearchParams();
+      params.set('limit', String(commvaultState.limit || 0));
+      params.set('since_hours', String(commvaultState.sinceHours || 0));
+      const res = await fetch(`${API_BASE}/commvault/backups/refresh?${params.toString()}`, { method: 'POST' });
+      if (!res.ok) {
+        throw new Error(`${res.status} ${res.statusText}`);
+      }
+      const data = await res.json().catch(() => ({}));
+      applyCommvaultPayload(data || {});
+      commvaultState.lastFetchMs = Date.now();
+      commvaultState.lastFetchKey = `since:${commvaultState.sinceHours}`;
+      renderCommvaultTable();
+      setCommvaultStatus('Commvault backups updated.', false);
+    } catch (err) {
+      console.error('Failed to refresh Commvault data', err);
+      commvaultState.error = err;
+      setCommvaultStatus(`Failed to refresh Commvault data: ${err?.message || err}`, true, 0);
+      commvaultState.lastFetchKey = null;
+    } finally {
+      commvaultState.loading = false;
+      updateCommvaultSummary();
+    }
+  }
+
+  if ($commvaultTabs) {
+    $commvaultTabs.addEventListener('click', (event) => {
+      const btn = event.target.closest('button[data-commvault-tab]');
+      if (!btn) return;
+      const tab = btn.getAttribute('data-commvault-tab') || 'backups';
+      setCommvaultTab(tab);
+    });
+  }
+
+  if ($commvaultRefresh) {
+    $commvaultRefresh.addEventListener('click', (event) => {
+      event.preventDefault();
+      refreshCommvaultData();
+    });
+  }
+
+  if ($commvaultStorageRefresh) {
+    $commvaultStorageRefresh.addEventListener('click', (event) => {
+      event.preventDefault();
+      loadCommvaultStorage(true);
+    });
+  }
+
+  if ($commvaultSince) {
+    $commvaultSince.value = String(commvaultState.sinceHours);
+    $commvaultSince.addEventListener('change', (event) => {
+      const next = Number(event.target.value);
+      if (!Number.isFinite(next) || next < 1 || next > 48) {
+        event.target.value = String(commvaultState.sinceHours);
+        return;
+      }
+      if (next === commvaultState.sinceHours) return;
+      commvaultState.sinceHours = next;
+      updateCommvaultSummary();
+      loadCommvaultData(true);
+    });
+  }
+
+  if ($commvaultSearch) {
+    $commvaultSearch.value = commvaultState.search;
+    const applySearch = debounce(() => {
+      setCommvaultSearch($commvaultSearch.value);
+      renderCommvaultTable();
+    }, 200);
+    $commvaultSearch.addEventListener('input', applySearch);
+  }
+
+  $commvaultStorageTableBody?.addEventListener('click', (event) => {
+    const row = event.target.closest('tr[data-commvault-pool-id]');
+    if (!row) return;
+    const id = Number(row.dataset.commvaultPoolId);
+    if (!Number.isFinite(id)) return;
+    commvaultStorageState.selectedId = id;
+    renderCommvaultStorage();
+  });
 
   // ---------------------------
   // Suggestions

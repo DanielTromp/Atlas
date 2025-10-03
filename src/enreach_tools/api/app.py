@@ -10,7 +10,7 @@ import shutil
 import sys
 import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -57,6 +57,11 @@ from enreach_tools.application.dto import (
 from enreach_tools.application.security import hash_password, verify_password
 from enreach_tools.db import get_sessionmaker, init_database
 from enreach_tools.db.models import ChatMessage, ChatSession, GlobalAPIKey, User, UserAPIKey
+from enreach_tools.domain.integrations.commvault import (
+    CommvaultJob,
+    CommvaultJobList,
+    CommvaultStoragePool,
+)
 from enreach_tools.env import load_env, project_root
 from enreach_tools.infrastructure.external import (
     ZabbixAuthError,
@@ -64,6 +69,11 @@ from enreach_tools.infrastructure.external import (
     ZabbixClientConfig,
     ZabbixConfigError,
     ZabbixError,
+)
+from enreach_tools.infrastructure.external.commvault_client import (
+    CommvaultClient,
+    CommvaultClientConfig,
+    CommvaultError,
 )
 from enreach_tools.infrastructure.logging import get_logger, logging_context, setup_logging
 from enreach_tools.infrastructure.metrics import get_metrics_snapshot, snapshot_to_prometheus
@@ -597,6 +607,442 @@ def _csv_path(name: str) -> Path:
 
 # Simple export log file (appends)
 LOG_PATH = project_root() / "export.log"
+
+COMMVAULT_BACKUPS_JSON = "commvault_backups.json"
+COMMVAULT_STORAGE_JSON = "commvault_storage.json"
+_commvault_backups_lock = Lock()
+_commvault_storage_lock = Lock()
+
+
+def _commvault_client_from_env() -> CommvaultClient:
+    base_url = os.getenv("COMMVAULT_BASE_URL", "").strip()
+    if not base_url:
+        raise RuntimeError("Commvault integration is not configured (COMMVAULT_BASE_URL missing)")
+
+    authtoken = os.getenv("COMMVAULT_API_TOKEN", "").strip() or None
+    username = os.getenv("COMMVAULT_EMAIL", "").strip() or None
+    password = os.getenv("COMMVAULT_PASSWORD", "")
+    if password:
+        password = password.strip()
+    if not authtoken and not (username and password):
+        raise RuntimeError("Commvault credentials are not configured (token or email/password required)")
+
+    verify_tls = _env_flag("COMMVAULT_VERIFY_TLS", True)
+    timeout_raw = os.getenv("COMMVAULT_TIMEOUT", "").strip()
+    try:
+        timeout = float(timeout_raw) if timeout_raw else 30.0
+    except ValueError:
+        timeout = 30.0
+
+    config = CommvaultClientConfig(
+        base_url=base_url,
+        authtoken=authtoken,
+        username=username,
+        password=password or None,
+        verify_tls=verify_tls,
+        timeout=timeout,
+    )
+    return CommvaultClient(config)
+
+
+def _collect_commvault_jobs_for_ui(
+    client: CommvaultClient,
+    *,
+    limit: int,
+    offset: int,
+    since: datetime | None,
+) -> CommvaultJobList:
+    if limit < 0:
+        raise ValueError("limit must be zero or positive")
+
+    job_type = None
+    page_target = 200 if limit == 0 else max(1, min(500, limit))
+    initial = client.list_jobs(limit=1, offset=0, job_type=job_type)
+    total_available = initial.total_available or len(initial.jobs)
+    if not total_available:
+        return CommvaultJobList(total_available=0, jobs=())
+
+    target_end = max(0, total_available - offset)
+    if target_end <= 0:
+        return CommvaultJobList(total_available=total_available, jobs=())
+
+    target_start = 0 if limit == 0 else max(0, target_end - limit)
+    jobs: list[CommvaultJob] = []
+    current_end = target_end
+
+    while current_end > target_start and (limit == 0 or len(jobs) < limit):
+        request_limit = min(page_target, current_end - target_start)
+        response = client.list_jobs(limit=request_limit, offset=current_end - request_limit, job_type=job_type)
+        batch = list(response.jobs)
+        if not batch:
+            break
+        for job in reversed(batch):
+            jobs.append(job)
+        current_end -= len(batch)
+
+        if since:
+            oldest = batch[0].start_time if batch else None
+            if oldest and oldest < since:
+                break
+        if len(batch) < request_limit:
+            break
+
+    if limit > 0 and len(jobs) > limit:
+        jobs = jobs[:limit]
+    return CommvaultJobList(total_available=total_available, jobs=tuple(jobs))
+
+
+def _serialise_commvault_job(job: CommvaultJob) -> dict[str, Any]:
+    def iso(dt: datetime | None) -> str | None:
+        if not dt:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return dt.astimezone(UTC).isoformat()
+
+    return {
+        "job_id": job.job_id,
+        "job_type": job.job_type,
+        "status": job.status,
+        "localized_status": job.localized_status,
+        "localized_operation": job.localized_operation,
+        "client_name": job.client_name,
+        "client_id": job.client_id,
+        "destination_client_name": job.destination_client_name,
+        "subclient_name": job.subclient_name,
+        "backup_set_name": job.backup_set_name,
+        "application_name": job.application_name,
+        "backup_level_name": job.backup_level_name,
+        "plan_name": job.plan_name,
+        "client_groups": list(job.client_groups),
+        "storage_policy_name": job.storage_policy_name,
+        "start_time": iso(job.start_time),
+        "end_time": iso(job.end_time),
+        "elapsed_seconds": job.elapsed_seconds,
+        "size_of_application_bytes": job.size_of_application_bytes,
+        "size_on_media_bytes": job.size_on_media_bytes,
+        "total_num_files": job.total_num_files,
+        "percent_complete": job.percent_complete,
+        "percent_savings": job.percent_savings,
+        "average_throughput_gb_per_hr": job.average_throughput,
+        "retain_until": iso(job.retain_until),
+    }
+
+
+def _write_commvault_backups_json(payload: Mapping[str, Any]) -> None:
+    path = _data_dir() / COMMVAULT_BACKUPS_JSON
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
+    tmp.replace(path)
+
+
+def _write_commvault_storage_json(payload: Mapping[str, Any]) -> None:
+    path = _data_dir() / COMMVAULT_STORAGE_JSON
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
+    tmp.replace(path)
+
+
+def _load_commvault_backups() -> dict[str, Any]:
+    path = _data_dir() / COMMVAULT_BACKUPS_JSON
+    if not path.exists():
+        return {
+            "jobs": [],
+            "generated_at": None,
+            "total_cached": 0,
+            "version": 2,
+        }
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+            if isinstance(data, Mapping):
+                jobs = list(data.get("jobs") or [])
+                generated = data.get("generated_at")
+                total_cached = data.get("total_cached")
+                try:
+                    total_cached = int(total_cached)
+                except (TypeError, ValueError):
+                    total_cached = len(jobs)
+                return {
+                    "jobs": jobs,
+                    "generated_at": generated,
+                    "total_cached": total_cached,
+                    "version": data.get("version", 2),
+                }
+    except Exception:
+        logger.exception("Failed to load cached Commvault backups", extra={"event": "commvault_cache_error"})
+    return {
+        "jobs": [],
+        "generated_at": None,
+        "total_cached": 0,
+        "version": 2,
+    }
+
+
+def _parse_job_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
+
+
+def _filter_commvault_jobs(jobs: Iterable[Mapping[str, Any]], since_hours: int) -> list[dict[str, Any]]:
+    if since_hours <= 0:
+        return [dict(job) for job in jobs]
+    cutoff = datetime.now(tz=UTC) - timedelta(hours=since_hours)
+    filtered: list[dict[str, Any]] = []
+    for job in jobs:
+        start = _parse_job_datetime(job.get("start_time"))
+        if start and start >= cutoff:
+            filtered.append(dict(job))
+    return filtered
+
+
+def _mb_to_bytes(value: Any) -> int | None:
+    number = _safe_int(value)
+    if number is None:
+        return None
+    return number * 1024 * 1024
+
+
+def _normalise_dedupe_ratio(value: Any) -> float | None:
+    ratio = _safe_float(value)
+    if ratio is None:
+        return None
+    if ratio <= 0:
+        return None
+    if ratio > 0 and ratio < 1:
+        return ratio * 100.0
+    return ratio
+
+
+def _safe_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _load_commvault_storage() -> dict[str, Any]:
+    path = _data_dir() / COMMVAULT_STORAGE_JSON
+    if not path.exists():
+        return {
+            "pools": [],
+            "generated_at": None,
+            "total_cached": 0,
+            "version": 1,
+        }
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+            if isinstance(data, Mapping):
+                pools = list(data.get("pools") or [])
+                generated = data.get("generated_at")
+                total_cached = data.get("total_cached")
+                try:
+                    total_cached = int(total_cached)
+                except (TypeError, ValueError):
+                    total_cached = len(pools)
+                return {
+                    "pools": pools,
+                    "generated_at": generated,
+                    "total_cached": total_cached,
+                    "version": data.get("version", 1),
+                }
+    except Exception:
+        logger.exception("Failed to load cached Commvault storage pools", extra={"event": "commvault_storage_cache_error"})
+    return {
+        "pools": [],
+        "generated_at": None,
+        "total_cached": 0,
+        "version": 1,
+    }
+
+
+def _summarise_storage_pool(
+    pool: CommvaultStoragePool, details: Mapping[str, Any] | None
+) -> dict[str, Any]:
+    details = details or {}
+    total_capacity_bytes = _mb_to_bytes(pool.total_capacity_mb)
+    used_bytes = _mb_to_bytes(pool.size_on_disk_mb)
+    free_bytes = _mb_to_bytes(pool.total_free_space_mb)
+    usage_pct: float | None = None
+    if total_capacity_bytes and used_bytes is not None:
+        try:
+            usage_pct = (used_bytes / total_capacity_bytes) * 100.0
+        except ZeroDivisionError:
+            usage_pct = None
+
+    data_reduction = details.get("dataReduction") or details.get("dataReductionInfo")
+    dedupe_ratio = None
+    dedupe_savings_bytes = None
+    if isinstance(data_reduction, Mapping):
+        ratios = [
+            data_reduction.get("dedupeRatio"),
+            data_reduction.get("reductionRatio"),
+            data_reduction.get("globalReductionPercent"),
+        ]
+        for candidate in ratios:
+            dedupe_ratio = _normalise_dedupe_ratio(candidate)
+            if dedupe_ratio is not None:
+                break
+        savings_keys = [
+            data_reduction.get("dedupeSavingsInBytes"),
+            data_reduction.get("totalSavingsInBytes"),
+        ]
+        for candidate in savings_keys:
+            dedupe_savings_bytes = _safe_int(candidate)
+            if dedupe_savings_bytes is not None:
+                break
+
+    logical_capacity_bytes = None
+    if isinstance(details.get("usage"), Mapping):
+        logical_capacity_bytes = _safe_int(details["usage"].get("logicalSpaceUsedInBytes"))
+
+    return {
+        "pool_id": pool.pool_id,
+        "name": pool.name,
+        "status": pool.status,
+        "storage_type_code": pool.storage_type_code,
+        "storage_pool_type_code": pool.storage_pool_type_code,
+        "storage_sub_type_code": pool.storage_sub_type_code,
+        "storage_policy_id": pool.storage_policy_id,
+        "storage_policy_name": pool.storage_policy_name,
+        "region_name": pool.region_display_name or pool.region_name,
+        "total_capacity_bytes": total_capacity_bytes,
+        "used_bytes": used_bytes,
+        "free_bytes": free_bytes,
+        "logical_capacity_bytes": logical_capacity_bytes,
+        "usage_percent": usage_pct,
+        "dedupe_ratio": dedupe_ratio,
+        "dedupe_savings_bytes": dedupe_savings_bytes,
+        "number_of_nodes": pool.number_of_nodes,
+        "is_archive_storage": pool.is_archive_storage,
+        "cloud_storage_class_name": pool.cloud_storage_class_name,
+        "library_ids": list(pool.library_ids),
+        "raw": pool.raw,
+        "details": details,
+    }
+
+
+def _refresh_commvault_storage_sync() -> dict[str, Any]:
+    with _commvault_storage_lock:
+        with task_logging("commvault.storage.refresh") as task_log:
+            try:
+                client = _commvault_client_from_env()
+            except RuntimeError as exc:
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+            try:
+                pools = list(client.list_storage_pools())
+            except CommvaultError as exc:
+                raise HTTPException(status_code=502, detail=f"Commvault error: {exc}") from exc
+
+            summaries: list[dict[str, Any]] = []
+            for pool in pools:
+                details_payload: Mapping[str, Any] | None = None
+                try:
+                    details = client.get_storage_pool_details(pool.pool_id, summary=pool)
+                    details_payload = details.details
+                except CommvaultError as exc:
+                    logger.warning(
+                        "Failed to fetch storage pool details",
+                        extra={"event": "commvault_storage_pool_details_error", "pool_id": pool.pool_id, "error": str(exc)},
+                    )
+                summaries.append(_summarise_storage_pool(pool, details_payload))
+
+            payload: dict[str, Any] = {
+                "pools": summaries,
+                "generated_at": datetime.now(tz=UTC).isoformat(),
+                "total_cached": len(summaries),
+                "version": 1,
+            }
+            _write_commvault_storage_json(payload)
+            task_log.add_success(pools=len(summaries))
+            return payload
+
+
+def _refresh_commvault_backups_sync(limit: int, since_hours: int) -> dict[str, Any]:
+    lookback = max(since_hours, 0)
+    since = datetime.now(tz=UTC) - timedelta(hours=lookback) if lookback > 0 else None
+
+    with _commvault_backups_lock:
+        with task_logging("commvault.backups.refresh", limit=limit, since_hours=since_hours) as task_log:
+            try:
+                client = _commvault_client_from_env()
+            except RuntimeError as exc:
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+            try:
+                job_list = _collect_commvault_jobs_for_ui(client, limit=limit, offset=0, since=since)
+            except CommvaultError as exc:
+                raise HTTPException(status_code=502, detail=f"Commvault error: {exc}") from exc
+
+            cache_snapshot = _load_commvault_backups()
+            jobs_by_id: dict[int, dict[str, Any]] = {}
+            for job in cache_snapshot.get("jobs", []):
+                job_id = job.get("job_id")
+                if job_id is None:
+                    continue
+                try:
+                    key = int(job_id)
+                except (TypeError, ValueError):
+                    continue
+                jobs_by_id[key] = dict(job)
+
+            jobs = list(job_list.jobs)
+            if since:
+                jobs = [job for job in jobs if job.start_time and job.start_time >= since]
+
+            rows = [_serialise_commvault_job(job) for job in jobs]
+            for row in rows:
+                job_id = row.get("job_id")
+                if job_id is None:
+                    continue
+                try:
+                    key = int(job_id)
+                except (TypeError, ValueError):
+                    continue
+                jobs_by_id[key] = row
+
+            merged_jobs = sorted(jobs_by_id.values(), key=lambda job: _parse_job_datetime(job.get("start_time")) or datetime.min.replace(tzinfo=UTC), reverse=True)
+
+            cache_payload: dict[str, Any] = {
+                "jobs": merged_jobs,
+                "generated_at": datetime.now(tz=UTC).isoformat(),
+                "total_cached": len(merged_jobs),
+                "version": 2,
+                "last_refresh_since_hours": since_hours,
+                "last_refresh_limit": limit,
+            }
+            _write_commvault_backups_json(cache_payload)
+
+            filtered_jobs = _filter_commvault_jobs(merged_jobs, since_hours)
+            task_log.add_success(jobs=len(filtered_jobs), cached=len(merged_jobs))
+            return {
+                "jobs": filtered_jobs,
+                "generated_at": cache_payload["generated_at"],
+                "total_cached": cache_payload["total_cached"],
+                "returned": len(filtered_jobs),
+                "since_hours": since_hours,
+                "limit": limit,
+            }
 
 SUGGESTIONS_FILE = "suggestions.csv"
 SUGGESTION_FIELDS = [
@@ -3302,6 +3748,119 @@ async def export_stream(
                     )
 
     return StreamingResponse(runner(), media_type="text/plain")
+
+
+@app.get("/commvault/backups")
+def commvault_backups_data(
+    since_hours: int = Query(24, ge=0, le=24 * 90, description="Only include jobs newer than this window (hours)."),
+) -> dict[str, Any]:
+    """Return cached Commvault backup jobs for the dashboard."""
+
+    cache = _load_commvault_backups()
+    jobs = cache.get("jobs") or []
+    filtered = _filter_commvault_jobs(jobs, since_hours)
+    return {
+        "jobs": filtered,
+        "generated_at": cache.get("generated_at"),
+        "total_cached": cache.get("total_cached", len(jobs)),
+        "returned": len(filtered),
+        "since_hours": since_hours,
+    }
+
+
+@app.post("/commvault/backups/refresh")
+async def commvault_backups_refresh(
+    limit: int = Query(0, ge=0, le=500, description="Maximum number of jobs to retain (0 = all)"),
+    since_hours: int = Query(24, ge=0, le=24 * 90, description="Only include jobs newer than this window (hours)."),
+) -> dict[str, Any]:
+    """Fetch fresh Commvault backup jobs and cache them to disk."""
+
+    return await asyncio.to_thread(_refresh_commvault_backups_sync, limit, since_hours)
+
+
+@app.get("/commvault/backups/file")
+def commvault_backups_file(
+    file_format: Literal["json", "csv"] = Query("json", description="File format to download"),
+) -> FileResponse:
+    if file_format == "json":
+        path = _data_dir() / COMMVAULT_BACKUPS_JSON
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="Commvault export not available")
+        return FileResponse(path, media_type="application/json", filename=path.name)
+
+    # Generate CSV on demand from cached dataset
+    cache = _load_commvault_backups()
+    jobs = cache.get("jobs") or []
+    if not jobs:
+        raise HTTPException(status_code=404, detail="Commvault export not available")
+
+    fieldnames = [
+        "job_id",
+        "job_type",
+        "status",
+        "localized_status",
+        "localized_operation",
+        "client_name",
+        "client_id",
+        "destination_client_name",
+        "subclient_name",
+        "backup_set_name",
+        "application_name",
+        "backup_level_name",
+        "plan_name",
+        "client_groups",
+        "storage_policy_name",
+        "start_time",
+        "end_time",
+        "elapsed_seconds",
+        "size_of_application_bytes",
+        "size_on_media_bytes",
+        "total_num_files",
+        "percent_complete",
+        "percent_savings",
+        "average_throughput_gb_per_hr",
+        "retain_until",
+    ]
+
+    def _iter_rows():
+        import csv as _csv
+        from io import StringIO
+
+        buffer = StringIO()
+        writer = _csv.DictWriter(buffer, fieldnames=fieldnames)
+        writer.writeheader()
+        yield buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate(0)
+
+        writer = _csv.DictWriter(buffer, fieldnames=fieldnames)
+        for job in jobs:
+            row = dict(job)
+            groups = row.get("client_groups")
+            if isinstance(groups, list):
+                row["client_groups"] = ";".join(groups)
+            writer.writerow({k: row.get(k, "") for k in fieldnames})
+            yield buffer.getvalue()
+            buffer.seek(0)
+            buffer.truncate(0)
+
+    return StreamingResponse(_iter_rows(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=commvault_backups.csv"})
+
+
+@app.get("/commvault/storage")
+def commvault_storage_data(
+    refresh: int = Query(0, ge=0, le=1, description="Force refresh of storage pool cache before returning data."),
+) -> dict[str, Any]:
+    """Return cached Commvault storage pool data."""
+
+    if refresh == 1:
+        return _refresh_commvault_storage_sync()
+
+    cache = _load_commvault_storage()
+    if cache.get("pools"):
+        return cache
+
+    return _refresh_commvault_storage_sync()
 
 
 # ---------------------------

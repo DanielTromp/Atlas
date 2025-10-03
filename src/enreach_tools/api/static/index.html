@@ -58,6 +58,7 @@
         <button class="tab" data-page="jira">Jira</button>
         <button class="tab" data-page="confluence">Confluence</button>
         <button class="tab" data-page="export">Export</button>
+        <button class="tab" data-page="commvault">Commvault</button>
         <button class="tabmaintenance" data-page="chat"  title="Under Construction 👷">Chat</button>
         <button class="tabmaintenance" data-page="tools" title="Under Construction 👷">Tools</button>
         <button class="tabmaintenance" data-page="admin" title="Under Construction 👷">Admin</button>
@@ -134,6 +135,126 @@
               <div class="body-scroll" id="body-scroll">
                 <div class="canvas" id="canvas"></div>
                 <div class="rows" id="rows"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Commvault Page -->
+      <section class="page" id="page-commvault" hidden>
+        <div class="panel panel-commvault">
+          <nav class="tabs" id="commvault-tabs" aria-label="Commvault datasets">
+            <button class="tab active" data-commvault-tab="backups">Backups</button>
+            <button class="tab" data-commvault-tab="storage">Storage</button>
+            <button class="tab" data-commvault-tab="reports">Reports</button>
+          </nav>
+          <div class="commvault-panel-group">
+            <div class="commvault-panel active" data-commvault-panel="backups">
+              <div class="commvault-toolbar">
+                <div class="commvault-toolbar-overview">
+                  <h2 class="commvault-title">Backup Jobs</h2>
+                  <span id="commvault-summary" class="commvault-summary">No data loaded.</span>
+                </div>
+                <div class="commvault-actions">
+                  <button id="commvault-refresh" class="btn" type="button">Update data</button>
+                </div>
+              </div>
+              <div class="commvault-filters">
+                <label class="field column">
+                  <span>Look back</span>
+                  <select id="commvault-since">
+                    <option value="1">1 hour</option>
+                    <option value="3">3 hours</option>
+                    <option value="6">6 hours</option>
+                    <option value="12">12 hours</option>
+                    <option value="24" selected>24 hours</option>
+                    <option value="36">36 hours</option>
+                    <option value="48">48 hours</option>
+                  </select>
+                </label>
+                <label class="field column commvault-search-field">
+                  <span>Search</span>
+                  <input id="commvault-search" type="text" placeholder="Filter by job, client, plan…" />
+                </label>
+              </div>
+              <div class="commvault-status-filter" id="commvault-status-filter"></div>
+              <div id="commvault-status" class="commvault-status" hidden></div>
+              <div class="commvault-table-wrapper">
+                <table class="commvault-table compact">
+                  <thead>
+                    <tr>
+                      <th scope="col">Job</th>
+                      <th scope="col">Status</th>
+                      <th scope="col">Client</th>
+                      <th scope="col">Subclient</th>
+                      <th scope="col">Plan</th>
+                      <th scope="col">Policy</th>
+                      <th scope="col">Start</th>
+                      <th scope="col">End</th>
+                      <th scope="col">Duration</th>
+                      <th scope="col">App Size</th>
+                      <th scope="col">Media Size</th>
+                      <th scope="col">Throughput</th>
+                      <th scope="col">Files</th>
+                      <th scope="col">Savings</th>
+                    </tr>
+                  </thead>
+                  <tbody id="commvault-table-body">
+                    <tr class="empty">
+                      <td colspan="14">Commvault backups have not been loaded yet.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="commvault-panel" data-commvault-panel="storage" hidden>
+              <div class="commvault-toolbar">
+                <div class="commvault-toolbar-overview">
+                  <h2 class="commvault-title">Storage Pools</h2>
+                  <span id="commvault-storage-summary" class="commvault-summary">No storage data loaded.</span>
+                </div>
+                <div class="commvault-actions">
+                  <button id="commvault-storage-refresh" class="btn" type="button">Refresh storage</button>
+                </div>
+              </div>
+              <div id="commvault-storage-status" class="commvault-status" hidden></div>
+              <div class="commvault-storage-layout">
+                <div class="commvault-table-wrapper">
+                  <table class="commvault-table compact commvault-storage-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">Pool</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Policy</th>
+                        <th scope="col">Region</th>
+                        <th scope="col">Capacity</th>
+                        <th scope="col">Used</th>
+                        <th scope="col">Free</th>
+                        <th scope="col">Usage</th>
+                        <th scope="col">Dedupe</th>
+                        <th scope="col">Nodes</th>
+                      </tr>
+                    </thead>
+                    <tbody id="commvault-storage-table-body">
+                      <tr class="empty"><td colspan="10">Storage metrics not loaded yet.</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div class="commvault-storage-detail" id="commvault-storage-detail">
+                  <p class="commvault-placeholder">Select a storage pool to see detailed metrics.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="commvault-panel" data-commvault-panel="reports" hidden>
+              <div class="commvault-panel-header">
+                <h2 class="commvault-title">Reports &amp; Trends</h2>
+                <p class="commvault-panel-subtitle">High-level backup health summaries and reporting exports will appear here.</p>
+              </div>
+              <div class="commvault-placeholder">
+                Reporting widgets are under construction. Expect SLA compliance charts, retention drift monitors, and export shortcuts soon.
               </div>
             </div>
           </div>
