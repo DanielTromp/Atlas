@@ -9,12 +9,13 @@ future.
 from __future__ import annotations
 
 from .config import get_database_url, get_engine, get_sessionmaker
-from .models import Base, GlobalAPIKey, User, UserAPIKey
+from .models import Base, GlobalAPIKey, SecureSetting, User, UserAPIKey
 from .setup import init_database
 
 __all__ = [
     "Base",
     "GlobalAPIKey",
+    "SecureSetting",
     "User",
     "UserAPIKey",
     "get_database_url",

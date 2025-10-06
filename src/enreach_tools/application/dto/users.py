@@ -15,6 +15,7 @@ class UserDTO(DomainModel):
     display_name: str | None = None
     email: str | None = None
     role: str
+    permissions: tuple[str, ...] = ()
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -37,7 +38,17 @@ class GlobalAPIKeyDTO(DomainModel):
 
 
 def user_to_dto(entity: UserEntity) -> UserDTO:
-    return UserDTO.model_validate(entity)
+    return UserDTO(
+        id=entity.id,
+        username=entity.username,
+        display_name=entity.display_name,
+        email=entity.email,
+        role=entity.role,
+        permissions=tuple(sorted(entity.permissions)),
+        is_active=entity.is_active,
+        created_at=entity.created_at,
+        updated_at=entity.updated_at,
+    )
 
 
 def users_to_dto(entities: Iterable[UserEntity]) -> list[UserDTO]:

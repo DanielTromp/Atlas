@@ -41,6 +41,7 @@ def test_auth_me_returns_current_user_payload():
         display_name="Alice",
         email="alice@example.com",
         role="admin",
+        permissions=frozenset({"tools.use"}),
         is_active=True,
         created_at=now,
         updated_at=now,
@@ -56,6 +57,7 @@ def test_auth_me_returns_current_user_payload():
         created_at=now,
         updated_at=now,
     )
+    orm_user.permissions = entity.permissions
 
     app = FastAPI()
     app.include_router(router)
@@ -70,3 +72,4 @@ def test_auth_me_returns_current_user_payload():
     assert payload["username"] == "alice"
     assert payload["role"] == "admin"
     assert payload["is_active"] is True
+    assert "tools.use" in payload.get("permissions", [])

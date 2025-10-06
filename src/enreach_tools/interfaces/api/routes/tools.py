@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from enreach_tools.agents import build_tool_registry
 from enreach_tools.interfaces.api.schemas import (
@@ -273,16 +273,28 @@ def _catalog_index() -> dict[str, ToolDefinition]:
     return {tool.key: tool for tool in _CATALOG}
 
 
-@router.get("", response_model=ToolCatalog)
-async def list_tools() -> ToolCatalog:
-    """Return the full tool catalogue."""
+def _ensure_tools_access(request: Request) -> None:
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return
+    if getattr(user, "role", "") == "admin":
+        return
+    permissions = getattr(request.state, "permissions", frozenset())
+    if "tools.use" not in permissions:
+        raise HTTPException(status_code=403, detail="Tools access requires additional permissions")
 
+
+@router.get("", response_model=ToolCatalog)
+async def list_tools(request: Request) -> ToolCatalog:
+    """Return the full tool catalogue."""
+    _ensure_tools_access(request)
     return ToolCatalog(tools=_CATALOG)
 
 
 @router.get("/{tool_key}", response_model=ToolDefinition)
-async def get_tool(tool_key: str) -> ToolDefinition:
+async def get_tool(tool_key: str, request: Request) -> ToolDefinition:
     catalog = _catalog_index()
     if tool_key not in catalog:
         raise HTTPException(status_code=404, detail="Tool not found")
+    _ensure_tools_access(request)
     return catalog[tool_key]

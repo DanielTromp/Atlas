@@ -5,6 +5,8 @@ from pathlib import Path
 
 from dotenv import find_dotenv, load_dotenv
 
+from enreach_tools.infrastructure.security import sync_secure_settings
+
 
 def project_root() -> Path:
     """Return the repo root (directory containing pyproject.toml)."""
@@ -28,6 +30,7 @@ def load_env(override: bool = False, dotenv_path: Path | None = None) -> Path:
         # Fallback to root/.env even if it doesn't exist
         env_path = root / ".env"
     load_dotenv(dotenv_path=str(env_path), override=override)
+    sync_secure_settings()
     return env_path
 
 

@@ -2,9 +2,12 @@
 
 from .admin import (
     AdminGlobalKeyDTO,
+    AdminRoleDTO,
     AdminUserDTO,
     admin_global_key_to_dto,
     admin_global_keys_to_dto,
+    admin_role_to_dto,
+    admin_roles_to_dto,
     admin_user_to_dto,
     admin_users_to_dto,
 )
@@ -43,6 +46,7 @@ from .users import (
 __all__ = [
     "AdminEnvResponseDTO",
     "AdminGlobalKeyDTO",
+    "AdminRoleDTO",
     "AdminUserDTO",
     "BackupInfoDTO",
     "ChatMessageDTO",
@@ -60,6 +64,8 @@ __all__ = [
     "UserDTO",
     "admin_global_key_to_dto",
     "admin_global_keys_to_dto",
+    "admin_role_to_dto",
+    "admin_roles_to_dto",
     "admin_user_to_dto",
     "admin_users_to_dto",
     "chat_message_to_dto",

@@ -316,7 +316,7 @@ def users_list(
 def users_create(
     username: str = typer.Argument(..., help="Username (will be normalised to lowercase)"),
     password: str = typer.Option(..., "--password", help="Initial password (min length 8)"),
-    role: str = typer.Option("member", "--role", help="User role", show_choices=True, case_sensitive=False),
+    role: str = typer.Option("member", "--role", help="User role"),
     display_name: str = typer.Option("", "--display-name", help="Optional display name"),
     email: str = typer.Option("", "--email", help="Optional email address"),
     json_output: bool = typer.Option(False, "--json", help="Output result as JSON"),
@@ -329,13 +329,17 @@ def users_create(
     if len(password.strip()) < 8:
         print("[red]Password must be at least 8 characters[/red]")
         raise typer.Exit(code=1)
-    if role.lower() not in {"admin", "member"}:
-        print("[red]Role must be 'admin' or 'member'[/red]")
-        raise typer.Exit(code=1)
+    role_norm = (role or "member").strip().lower() or "member"
 
     ctx = _service_context()
     with ctx.session_scope() as session:
         service = create_admin_service(session)
+        available_roles = {rp.role for rp in service.list_role_permissions()}
+        if role_norm not in available_roles:
+            formatted = ", ".join(sorted(available_roles)) or "(no roles defined)"
+            print(f"[red]Role '{role_norm}' is not defined[/red]")
+            print(f"[dim]Available roles:[/dim] {formatted}")
+            raise typer.Exit(code=1)
         try:
             service.ensure_username_available(username_norm)
         except ValueError as exc:
@@ -346,7 +350,7 @@ def users_create(
             password=password.strip(),
             display_name=display_name or None,
             email=email or None,
-            role=role.lower(),
+            role=role_norm,
         )
     dto = admin_user_to_dto(entity)
     if json_output:

@@ -13,6 +13,7 @@ from enreach_tools.domain.entities import (
     ChatMessageEntity,
     ChatSessionEntity,
     GlobalAPIKeyEntity,
+    RolePermissionEntity,
     UserAPIKeyEntity,
     UserEntity,
 )
@@ -60,6 +61,39 @@ class _StubGlobalKeyRepository:
         return self.key if self.key.provider == provider else None
 
 
+class _StubRolePermissionRepository:
+    def __init__(self, mapping: dict[str, frozenset[str]]):
+        self.mapping = mapping
+
+    def list_all(self):
+        now = _now()
+        return [
+            RolePermissionEntity(
+                role=role,
+                label=role.title(),
+                description=None,
+                permissions=perms,
+                created_at=now,
+                updated_at=now,
+            )
+            for role, perms in self.mapping.items()
+        ]
+
+    def get(self, role: str):
+        perms = self.mapping.get(role)
+        if perms is None:
+            return None
+        now = _now()
+        return RolePermissionEntity(
+            role=role,
+            label=role.title(),
+            description=None,
+            permissions=perms,
+            created_at=now,
+            updated_at=now,
+        )
+
+
 @dataclass(slots=True)
 class _StubChatRepository:
     session: ChatSessionEntity
@@ -88,6 +122,7 @@ def test_user_service_exposes_repositories():
         display_name="Alice",
         email="alice@example.com",
         role="admin",
+        permissions=frozenset({"export.run", "zabbix.ack"}),
         is_active=True,
         created_at=now,
         updated_at=now,
@@ -114,6 +149,7 @@ def test_user_service_exposes_repositories():
         user_repo=_StubUserRepository(user=user),
         user_key_repo=_StubUserKeyRepository(key=user_key),
         global_key_repo=_StubGlobalKeyRepository(key=global_key),
+        role_permission_repo=_StubRolePermissionRepository({"admin": frozenset({"export.run", "zabbix.ack"})}),
     )
 
     assert service.get_current_user("user-1").username == "alice"
@@ -158,6 +194,7 @@ def test_create_user_service_accepts_custom_factories():
         display_name="Alice",
         email="alice@example.com",
         role="admin",
+        permissions=frozenset({"export.run"}),
         is_active=True,
         created_at=now,
         updated_at=now,
@@ -192,6 +229,9 @@ def test_create_user_service_accepts_custom_factories():
         user_repo_factory=lambda s: user_repo,
         user_key_repo_factory=lambda s: user_key_repo,
         global_key_repo_factory=lambda s: global_repo,
+        role_permission_repo_factory=lambda s: _StubRolePermissionRepository({
+            "admin": frozenset({"export.run"}),
+        }),
     )
 
     assert service.list_users()[0].id == "user-1"

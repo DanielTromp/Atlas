@@ -8,6 +8,7 @@ from .entities import (
     ChatMessageEntity,
     ChatSessionEntity,
     GlobalAPIKeyEntity,
+    RolePermissionEntity,
     UserAPIKeyEntity,
     UserEntity,
 )
@@ -62,9 +63,22 @@ class ChatSessionRepository(Protocol):
         ...
 
 
+class RolePermissionRepository(Protocol):
+    """Access patterns for role permission definitions."""
+
+    def list_all(self) -> list[RolePermissionEntity]:
+        ...
+
+    def get(self, role: str) -> RolePermissionEntity | None:
+        ...
+
+    def upsert(self, role: str, label: str, description: str | None, permissions: Iterable[str]) -> RolePermissionEntity:
+        ...
+
 __all__ = [
     "ChatSessionRepository",
     "GlobalAPIKeyRepository",
+    "RolePermissionRepository",
     "UserAPIKeyRepository",
     "UserRepository",
 ]

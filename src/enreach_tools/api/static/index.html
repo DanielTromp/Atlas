@@ -8,6 +8,21 @@
     <link rel="icon" href="/favicon.ico" type="image/png" />
   </head>
   <body class="theme-enreach-light">
+    <script>
+      (function () {
+        try {
+          var storageKey = 'enreach_theme_v1';
+          var stored = localStorage.getItem(storageKey);
+          var allowed = ['enreach-light', 'nebula', 'default'];
+          var theme = allowed.includes(stored) ? stored : 'enreach-light';
+          var prefix = 'theme-';
+          document.body.classList.remove(prefix + 'enreach-light', prefix + 'nebula', prefix + 'default');
+          document.body.classList.add(prefix + theme);
+        } catch (err) {
+          /* ignore bootstrap theme errors */
+        }
+      })();
+    </script>
     <header class="topbar">
       <div class="topbar-primary">
         <div class="brand-group">
@@ -59,9 +74,9 @@
         <button class="tab" data-page="confluence">Confluence</button>
         <button class="tab" data-page="export">Export</button>
         <button class="tab" data-page="commvault">Commvault</button>
-        <button class="tabmaintenance" data-page="chat"  title="Under Construction 👷">Chat</button>
-        <button class="tabmaintenance" data-page="tools" title="Under Construction 👷">Tools</button>
-        <button class="tabmaintenance" data-page="admin" title="Under Construction 👷">Admin</button>
+        <button class="tab" data-page="chat">Chat</button>
+        <button class="tab" data-page="tools">Tools</button>
+        <button class="tab" data-page="admin">Admin</button>
       </nav>
     </header>
 
@@ -661,6 +676,13 @@
                     <button id="admin-global-cancel" type="button" class="btn ghost">Cancel</button>
                   </div>
                 </form>
+              </div>
+              <div class="admin-role-manager">
+                <div class="admin-users-header">
+                  <h3>Role Permissions</h3>
+                  <span id="admin-role-status" class="form-status"></span>
+                </div>
+                <div id="admin-role-list" class="admin-role-list"></div>
               </div>
             </section>
             <section id="admin-panel-backup" class="admin-panel" data-admin-tab="backup">

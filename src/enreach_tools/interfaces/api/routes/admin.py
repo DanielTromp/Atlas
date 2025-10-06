@@ -8,13 +8,17 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 from enreach_tools.application.dto.admin import (
     admin_global_key_to_dto,
     admin_global_keys_to_dto,
+    admin_role_to_dto,
+    admin_roles_to_dto,
     admin_user_to_dto,
     admin_users_to_dto,
 )
+from enreach_tools.application.role_defaults import ROLE_CAPABILITIES
 from enreach_tools.application.services.admin import AdminService
 from enreach_tools.interfaces.api.dependencies import AdminUserDep, get_admin_service
 from enreach_tools.interfaces.api.schemas import (
     AdminCreateUser,
+    AdminRoleUpdate,
     AdminSetPassword,
     AdminUpdateUser,
     APIKeyPayload,
@@ -26,6 +30,7 @@ AdminServiceDep = Annotated[AdminService, Depends(get_admin_service)]
 AdminCreateUserBody = Annotated[AdminCreateUser, Body(...)]
 AdminUpdateUserBody = Annotated[AdminUpdateUser, Body(...)]
 AdminSetPasswordBody = Annotated[AdminSetPassword, Body(...)]
+AdminRoleUpdateBody = Annotated[AdminRoleUpdate, Body(...)]
 APIKeyPayloadBody = Annotated[APIKeyPayload, Body(...)]
 
 
@@ -57,13 +62,16 @@ def create_user(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    entity = service.create_user(
-        username=username,
-        password=password,
-        display_name=payload.display_name or None,
-        email=payload.email or None,
-        role=payload.role,
-    )
+    try:
+        entity = service.create_user(
+            username=username,
+            password=password,
+            display_name=payload.display_name or None,
+            email=payload.email or None,
+            role=payload.role,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return admin_user_to_dto(entity).dict_clean()
 
 
@@ -95,7 +103,10 @@ def update_user(
     if payload.is_active is not None:
         target.is_active = payload.is_active
 
-    updated = service.save_user(target)
+    try:
+        updated = service.save_user(target)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return admin_user_to_dto(updated).dict_clean()
 
 
@@ -168,3 +179,33 @@ def delete_global_api_key(
     if not service.delete_global_api_key(provider_norm):
         raise HTTPException(status_code=404, detail="API key not found")
     return {"status": "deleted"}
+
+
+@router.get("/roles")
+def list_roles(
+    admin: AdminUserDep,
+    service: AdminServiceDep,
+):
+    entities = service.list_role_permissions()
+    roles = [dto.dict_clean() for dto in admin_roles_to_dto(entities)]
+    capabilities = [dict(cap) for cap in ROLE_CAPABILITIES]
+    return {"roles": roles, "capabilities": capabilities}
+
+
+@router.patch("/roles/{role}")
+def update_role(
+    role: str,
+    admin: AdminUserDep,
+    payload: AdminRoleUpdateBody,
+    service: AdminServiceDep,
+):
+    try:
+        entity = service.update_role_permission(
+            role=role,
+            label=payload.label,
+            description=payload.description,
+            permissions=payload.permissions,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return admin_role_to_dto(entity).dict_clean()

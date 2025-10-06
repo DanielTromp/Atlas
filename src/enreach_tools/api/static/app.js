@@ -124,6 +124,9 @@
   // Page router
   const $themeRoot = document.getElementById('theme-toggle-root');
   const $pages = document.getElementById("pages");
+  const $navChat = document.querySelector('button[data-page="chat"]');
+  const $navTools = document.querySelector('button[data-page="tools"]');
+  const $navAdmin = document.querySelector('button[data-page="admin"]');
   const $pageExport = document.getElementById("page-export");
   const $pageCommvault = document.getElementById("page-commvault");
   const $pageNetbox = document.getElementById("page-netbox");
@@ -132,6 +135,8 @@
   const $pageChat = document.getElementById("page-chat");
   const $pageZabbix = document.getElementById("page-zabbix");
   const $pageZhost = document.getElementById("page-zhost");
+  const $zbxAck = document.getElementById('zbx-ack');
+  const $zhostAck = document.getElementById('zhost-ack');
   const $pageJira = document.getElementById("page-jira");
   const $pageConfluence = document.getElementById("page-confluence");
   const $pageSuggestions = document.getElementById("page-suggestions");
@@ -318,6 +323,8 @@
   const $adminUserPasswordSave = document.getElementById("admin-user-password-save");
   const $adminUserPasswordStatus = document.getElementById("admin-user-password-status");
   const $adminUserDelete = document.getElementById("admin-user-delete");
+  const $adminRoleList = document.getElementById('admin-role-list');
+  const $adminRoleStatus = document.getElementById('admin-role-status');
   const $adminUserCreate = document.getElementById("admin-user-create");
   const $adminUserRefresh = document.getElementById("admin-user-refresh");
   const $adminUserIncludeInactive = document.getElementById("admin-user-include-inactive");
@@ -424,6 +431,28 @@
   let commvaultServerSuggestionTimer = null;
   let commvaultStatusTimeout = null;
   let currentUser = null;
+  const permissionState = {
+    user: new Set(),
+    ready: false,
+  };
+
+  function setUserPermissions(perms) {
+    const next = new Set();
+    if (Array.isArray(perms)) {
+      perms.forEach((code) => {
+        if (code && typeof code === 'string') next.add(code);
+      });
+    }
+    permissionState.user = next;
+    permissionState.ready = true;
+    applyRoleRestrictions();
+  }
+
+  function hasPermission(code) {
+    if (!permissionState.ready) return true;
+    if (!code) return false;
+    return permissionState.user.has(code);
+  }
 
   function setCommvaultSearch(value) {
     const text = (value || '').trim();
@@ -697,9 +726,11 @@
       const data = await res.json();
       currentUser = data;
       accountState.user = data;
+      setUserPermissions(Array.isArray(data?.permissions) ? data.permissions : []);
       updateTopbarUser();
       populateAccountForms();
       refreshAccountApiKeys().catch(() => {});
+      applyRoleRestrictions();
     } catch (_) { /* ignore */ }
   }
 
@@ -927,6 +958,8 @@
     selectedUser: null,
     globalApiKeys: [],
     editingGlobalKey: false,
+    roles: [],
+    roleCapabilities: [],
   };
   const chatConfig = {
     systemPrompt: '',
@@ -2497,6 +2530,10 @@
 
   // Stream export logs to the progress panel
   async function runExportFor(ds) {
+    if (!hasPermission('export.run')) {
+      alert('You do not have permission to run exports.');
+      return;
+    }
     // New stream: default to following the tail
     followTail = true;
     stopLogPolling();
@@ -2773,8 +2810,63 @@
     }
   });
 
+  function canAccessPage(pageKey) {
+    if (!permissionState.ready) return true;
+    const key = (pageKey || '').toLowerCase();
+    if (key === 'tools') return hasPermission('tools.use');
+    if (key === 'chat') return hasPermission('chat.use');
+    if (key === 'admin') return currentUser && currentUser.role === 'admin';
+    return true;
+  }
+
+  function nextAccessiblePage(preferred = 'search') {
+    const candidates = [preferred, 'search', 'export', 'zabbix'];
+    for (const candidate of candidates) {
+      if (canAccessPage(candidate)) return candidate;
+    }
+    return 'search';
+  }
+
+  function applyRoleRestrictions() {
+    if (!permissionState.ready) {
+      return;
+    }
+    const canTools = canAccessPage('tools');
+    const canChat = canAccessPage('chat');
+    const canAdmin = canAccessPage('admin');
+    const canRunExport = hasPermission('export.run');
+    const canAck = hasPermission('zabbix.ack');
+
+    if ($navTools) $navTools.hidden = !canTools;
+    if ($navChat) $navChat.hidden = !canChat;
+    if ($navAdmin) $navAdmin.hidden = !canAdmin;
+
+    if ($updateBtn) $updateBtn.disabled = !canRunExport;
+    if ($zbxAck) $zbxAck.disabled = !canAck;
+    if ($zhostAck) $zhostAck.disabled = !canAck;
+
+    if (!canAccessPage(page)) {
+      const fallback = nextAccessiblePage();
+      if (fallback !== page) {
+        showPage(fallback);
+        return;
+      }
+    }
+  }
+
+  applyRoleRestrictions();
+
   // Page routing
   function showPage(p) {
+    if (!canAccessPage(p)) {
+      const fallback = nextAccessiblePage();
+      if (fallback !== p) {
+        if (permissionState.ready) {
+          alert('You do not have access to that page.');
+        }
+        p = fallback;
+      }
+    }
     page = p;
     setUserMenu(false);
     persistActivePage(p);
@@ -2883,6 +2975,7 @@
     if (p !== 'tools') {
       hideToolPreview();
     }
+    applyRoleRestrictions();
   }
   function parseHashPage() {
     try {
@@ -2940,6 +3033,10 @@
       btn.addEventListener('click', (e) => {
         e.preventDefault();
         const p = btn.getAttribute('data-page') || 'export';
+        if (!canAccessPage(p)) {
+          alert('You do not have access to that page.');
+          return;
+        }
         showPage(p);
       });
     });
@@ -3050,8 +3147,10 @@
       const data = await res.json();
       currentUser = data;
       accountState.user = data;
+      setUserPermissions(Array.isArray(data?.permissions) ? data.permissions : []);
       updateTopbarUser();
       populateAccountForms();
+      applyRoleRestrictions();
       flashStatus($accountProfileStatus, 'Profile updated.');
     } catch (err) {
       flashStatus($accountProfileStatus, 'Unable to save changes.');
@@ -5315,6 +5414,7 @@
     if (tab === 'users') {
       loadAdminUsers($adminUserIncludeInactive?.checked).catch(() => {});
       loadAdminGlobalApiKeys().catch(() => {});
+      loadAdminRoles(adminState.roles.length === 0).catch(() => {});
       showAdminUserEmpty();
     }
     
@@ -5397,6 +5497,239 @@
     $adminUserList.appendChild(frag);
   }
 
+  function collectRoleSelections(card) {
+    return Array.from(card.querySelectorAll('input[data-permission]'))
+      .filter((input) => input instanceof HTMLInputElement && input.checked && input.dataset.permission)
+      .map((input) => input.dataset.permission);
+  }
+
+  function rolePermissionSet(role) {
+    return new Set(Array.isArray(role?.permissions) ? role.permissions : []);
+  }
+
+  function updateRoleCardState(card, role) {
+    if (!card || !role) return;
+    const saveBtn = card.querySelector('[data-role-save]');
+    if (!saveBtn) return;
+    const selected = new Set(collectRoleSelections(card));
+    const baseline = rolePermissionSet(role);
+    let dirty = selected.size !== baseline.size;
+    if (!dirty) {
+      baseline.forEach((perm) => {
+        if (!selected.has(perm)) dirty = true;
+      });
+    }
+    saveBtn.disabled = !dirty;
+    card.dataset.dirty = dirty ? '1' : '0';
+  }
+
+  function renderAdminRoles() {
+    if (!$adminRoleList) return;
+    $adminRoleList.innerHTML = '';
+
+    if (!adminState.roles.length) {
+      const empty = document.createElement('div');
+      empty.className = 'account-empty';
+      empty.textContent = 'No roles defined yet.';
+      $adminRoleList.appendChild(empty);
+      return;
+    }
+
+    const capabilities = Array.isArray(adminState.roleCapabilities) ? adminState.roleCapabilities : [];
+    const frag = document.createDocumentFragment();
+
+    adminState.roles.forEach((role) => {
+      const card = document.createElement('section');
+      card.className = 'admin-role-card';
+      card.dataset.role = role.role;
+
+      const header = document.createElement('div');
+      header.className = 'admin-role-card-header';
+      const title = document.createElement('h4');
+      title.textContent = role.label || humanizeRole(role.role);
+      header.appendChild(title);
+      const keyBadge = document.createElement('span');
+      keyBadge.className = 'badge role-key';
+      keyBadge.textContent = role.role;
+      header.appendChild(keyBadge);
+      card.appendChild(header);
+
+      const description = (role.description || '').trim();
+      if (description) {
+        const para = document.createElement('p');
+        para.className = 'admin-role-desc';
+        para.textContent = description;
+        card.appendChild(para);
+      }
+
+      const perms = rolePermissionSet(role);
+      const capabilitiesContainer = document.createElement('div');
+      capabilitiesContainer.className = 'admin-role-capabilities';
+      if (!capabilities.length) {
+        const warning = document.createElement('div');
+        warning.className = 'admin-role-empty';
+        warning.textContent = 'No capabilities available.';
+        capabilitiesContainer.appendChild(warning);
+      } else {
+        capabilities.forEach((cap) => {
+          if (!cap?.id) return;
+          const label = document.createElement('label');
+          label.className = 'admin-role-capability';
+          const checkbox = document.createElement('input');
+          checkbox.type = 'checkbox';
+          checkbox.dataset.permission = cap.id;
+          checkbox.checked = perms.has(cap.id);
+          label.appendChild(checkbox);
+          const span = document.createElement('span');
+          const titleText = cap.label || cap.id;
+          const descText = cap.description ? ` – ${cap.description}` : '';
+          span.innerHTML = `<strong>${titleText}</strong>${descText}`;
+          label.appendChild(span);
+          checkbox.addEventListener('change', () => updateRoleCardState(card, role));
+          capabilitiesContainer.appendChild(label);
+        });
+      }
+      card.appendChild(capabilitiesContainer);
+
+      const actions = document.createElement('div');
+      actions.className = 'admin-role-actions';
+      const saveBtn = document.createElement('button');
+      saveBtn.type = 'button';
+      saveBtn.className = 'btn ghost';
+      saveBtn.textContent = 'Save';
+      saveBtn.dataset.roleSave = '1';
+      saveBtn.addEventListener('click', () => saveRolePermissions(role.role, card));
+      actions.appendChild(saveBtn);
+      card.appendChild(actions);
+
+      updateRoleCardState(card, role);
+      frag.appendChild(card);
+    });
+
+    $adminRoleList.appendChild(frag);
+  }
+
+  async function loadAdminRoles(force = false) {
+    if (!force && adminState.roles.length) {
+      renderAdminRoles();
+      refreshAdminRoleOptions();
+      return;
+    }
+    try {
+      if ($adminRoleStatus) $adminRoleStatus.textContent = 'Loading roles…';
+      const res = await fetch(`${API_BASE}/admin/roles`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.detail || res.statusText);
+      }
+      const payload = await res.json();
+      const roles = Array.isArray(payload?.roles) ? payload.roles : [];
+      adminState.roles = roles.map((role) => ({
+        ...role,
+        permissions: Array.isArray(role?.permissions) ? role.permissions : [],
+      }));
+      adminState.roleCapabilities = Array.isArray(payload?.capabilities) ? payload.capabilities : [];
+      renderAdminRoles();
+      refreshAdminRoleOptions();
+      if ($adminRoleStatus) $adminRoleStatus.textContent = '';
+    } catch (err) {
+      console.error('Failed to load roles', err);
+      flashStatus($adminRoleStatus, err?.message || 'Unable to load roles.');
+    }
+  }
+
+  async function saveRolePermissions(roleKey, card) {
+    if (!roleKey || !card) return;
+    const role = adminState.roles.find((entry) => entry.role === roleKey);
+    if (!role) {
+      flashStatus($adminRoleStatus, `Role '${roleKey}' is not defined.`);
+      return;
+    }
+    const selected = collectRoleSelections(card);
+    const currentSet = new Set(selected);
+    const baseline = rolePermissionSet(role);
+    let changed = currentSet.size !== baseline.size;
+    if (!changed) {
+      baseline.forEach((perm) => {
+        if (!currentSet.has(perm)) changed = true;
+      });
+    }
+    if (!changed) {
+      flashStatus($adminRoleStatus, 'No changes to save.');
+      updateRoleCardState(card, role);
+      return;
+    }
+
+    const saveBtn = card.querySelector('[data-role-save]');
+    if (saveBtn) saveBtn.disabled = true;
+    flashStatus($adminRoleStatus, 'Saving…');
+
+    try {
+      const payload = {
+        permissions: selected,
+        label: role.label || role.role,
+        description: role.description || null,
+      };
+      const res = await fetch(`${API_BASE}/admin/roles/${encodeURIComponent(roleKey)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.detail || res.statusText);
+      }
+      const data = await res.json();
+      if (data && typeof data === 'object') {
+        adminState.roles = adminState.roles.map((entry) => (entry.role === data.role ? {
+          ...entry,
+          ...data,
+          permissions: Array.isArray(data.permissions) ? data.permissions : [],
+        } : entry));
+        adminState.users = adminState.users.map((user) => (user.role === data.role ? {
+          ...user,
+          permissions: Array.isArray(data.permissions) ? data.permissions : [],
+        } : user));
+        if (adminState.selectedUser && adminState.selectedUser.role === data.role) {
+          adminState.selectedUser = {
+            ...adminState.selectedUser,
+            permissions: Array.isArray(data.permissions) ? data.permissions : [],
+          };
+          showAdminUserDetail(adminState.selectedUser);
+        }
+        if (currentUser && currentUser.role === data.role) {
+          currentUser.permissions = Array.isArray(data.permissions) ? data.permissions : [];
+          setUserPermissions(currentUser.permissions);
+          applyRoleRestrictions();
+          updateTopbarUser();
+        }
+        renderAdminRoles();
+        flashStatus($adminRoleStatus, 'Permissions updated.');
+      }
+    } catch (err) {
+      console.error('Failed to update role permissions', err);
+      flashStatus($adminRoleStatus, err?.message || 'Failed to update role permissions.');
+    } finally {
+      if (saveBtn) saveBtn.disabled = false;
+    }
+  }
+
+  function refreshAdminRoleOptions(preselect = null) {
+    if (!$adminUserRole) return;
+    const currentValue = preselect ?? $adminUserRole.value;
+    $adminUserRole.innerHTML = '';
+    const roles = adminState.roles.length ? adminState.roles : [{ role: 'member', label: 'Member' }, { role: 'admin', label: 'Admin' }];
+    roles.forEach((role) => {
+      if (!role?.role) return;
+      const opt = document.createElement('option');
+      opt.value = role.role;
+      opt.textContent = role.label || humanizeRole(role.role);
+      $adminUserRole.appendChild(opt);
+    });
+    const desired = currentValue || (roles[0] && roles[0].role) || 'member';
+    $adminUserRole.value = desired;
+  }
+
   function selectAdminUser(user) {
     adminState.selectedUser = user;
     renderAdminUserList(); // Re-render to update active state
@@ -5417,6 +5750,7 @@
 
     // Populate form
     if ($adminUserFormTitle) $adminUserFormTitle.textContent = `Edit User: ${user.display_name || user.username}`;
+    refreshAdminRoleOptions(user.role);
     if ($adminUserUsername) $adminUserUsername.value = user.username || '';
     if ($adminUserDisplay) $adminUserDisplay.value = user.display_name || '';
     if ($adminUserEmail) $adminUserEmail.value = user.email || '';
@@ -5464,6 +5798,7 @@
     if ($adminUserDisplay) $adminUserDisplay.value = '';
     if ($adminUserEmail) $adminUserEmail.value = '';
     if ($adminUserNewPassword) $adminUserNewPassword.value = '';
+    refreshAdminRoleOptions('member');
     if ($adminUserRole) $adminUserRole.value = 'member';
     if ($adminUserActive) $adminUserActive.checked = true;
 
@@ -5553,10 +5888,21 @@
       
       // Refresh user list and select the saved user
       await loadAdminUsers($adminUserIncludeInactive?.checked);
+      if (savedUser && typeof savedUser === 'object') {
+        if (currentUser && savedUser.id === currentUser.id) {
+          currentUser = savedUser;
+          accountState.user = savedUser;
+          setUserPermissions(Array.isArray(savedUser.permissions) ? savedUser.permissions : []);
+          updateTopbarUser();
+          populateAccountForms();
+          applyRoleRestrictions();
+        }
+      }
       if (isCreate) {
         showAdminUserEmpty();
       } else {
-        selectAdminUser(savedUser);
+        const matched = adminState.users.find((user) => user.id === savedUser.id) || savedUser;
+        selectAdminUser(matched);
       }
     } catch (err) {
       console.error('Failed to save user', err);
@@ -6626,6 +6972,10 @@
   // Ack selected events on main Zabbix page
   document.getElementById('zbx-ack')?.addEventListener('click', async (e) => {
     e.preventDefault();
+    if (!hasPermission('zabbix.ack')) {
+      alert('You do not have permission to acknowledge Zabbix problems.');
+      return;
+    }
     try {
       const feed = document.getElementById('zbx-feed');
       if (!feed) { alert('No list loaded.'); return; }
@@ -6862,6 +7212,10 @@
   // Ack selected events on host details page
   document.getElementById('zhost-ack')?.addEventListener('click', async (e) => {
     e.preventDefault();
+    if (!hasPermission('zabbix.ack')) {
+      alert('You do not have permission to acknowledge Zabbix problems.');
+      return;
+    }
     try {
       const boxes = Array.from($zhostProblems.querySelectorAll('input.zhost-ev[type="checkbox"]'));
       const ids = boxes.filter(b => b.checked).map(b => b.dataset.eventid).filter(Boolean);

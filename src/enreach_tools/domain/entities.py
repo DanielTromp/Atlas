@@ -19,6 +19,7 @@ class UserEntity:
     display_name: str | None
     email: str | None
     role: str
+    permissions: frozenset[str]
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -45,6 +46,18 @@ class GlobalAPIKeyEntity:
     provider: str
     label: str | None
     secret: str
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(slots=True)
+class RolePermissionEntity:
+    """Domain representation of an assignable role's capabilities."""
+
+    role: str
+    label: str
+    description: str | None
+    permissions: frozenset[str]
     created_at: datetime
     updated_at: datetime
 

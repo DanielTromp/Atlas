@@ -10,6 +10,7 @@ from enreach_tools.db import models
 from enreach_tools.domain.repositories import (
     ChatSessionRepository,
     GlobalAPIKeyRepository,
+    RolePermissionRepository,
     UserAPIKeyRepository,
     UserRepository,
 )
@@ -112,9 +113,55 @@ class SqlAlchemyChatSessionRepository(ChatSessionRepository):
         return mappers.iter_chat_messages(result)
 
 
+class SqlAlchemyRolePermissionRepository(RolePermissionRepository):
+    """Repository for role permission definitions."""
+
+    def __init__(self, session: Session):
+        self._session = session
+
+    def list_all(self):
+        stmt = select(models.RolePermission).order_by(models.RolePermission.role.asc())
+        records = self._session.execute(stmt).scalars().all()
+        return [mappers.role_permission_to_entity(record) for record in records]
+
+    def get(self, role: str):
+        record = self._session.get(models.RolePermission, role)
+        return mappers.role_permission_to_entity(record) if record else None
+
+    def upsert(self, role: str, label: str, description: str | None, permissions):
+        label_clean = (label or role).strip() or role
+        description_clean = description.strip() if isinstance(description, str) and description.strip() else None
+        cleaned_set: set[str] = set()
+        for perm in permissions:
+            if perm is None:
+                continue
+            text = str(perm).strip()
+            if not text:
+                continue
+            cleaned_set.add(text)
+        cleaned = sorted(cleaned_set)
+        record = self._session.get(models.RolePermission, role)
+        if record is None:
+            record = models.RolePermission(
+                role=role,
+                label=label_clean,
+                description=description_clean,
+                permissions=cleaned,
+            )
+            self._session.add(record)
+        else:
+            record.label = label_clean
+            record.description = description_clean
+            record.permissions = cleaned
+        self._session.commit()
+        self._session.refresh(record)
+        return mappers.role_permission_to_entity(record)
+
+
 __all__ = [
     "SqlAlchemyChatSessionRepository",
     "SqlAlchemyGlobalAPIKeyRepository",
+    "SqlAlchemyRolePermissionRepository",
     "SqlAlchemyUserAPIKeyRepository",
     "SqlAlchemyUserRepository",
 ]

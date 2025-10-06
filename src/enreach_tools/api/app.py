@@ -58,9 +58,17 @@ from enreach_tools.application.dto import (
     suggestion_to_dto,
     suggestions_to_dto,
 )
+from enreach_tools.application.role_defaults import DEFAULT_ROLE_DEFINITIONS, ROLE_CAPABILITIES
 from enreach_tools.application.security import hash_password, verify_password
 from enreach_tools.db import get_sessionmaker, init_database
-from enreach_tools.db.models import ChatMessage, ChatSession, GlobalAPIKey, User, UserAPIKey
+from enreach_tools.db.models import (
+    ChatMessage,
+    ChatSession,
+    GlobalAPIKey,
+    RolePermission,
+    User,
+    UserAPIKey,
+)
 from enreach_tools.domain.integrations.commvault import (
     CommvaultJob,
     CommvaultJobList,
@@ -216,6 +224,47 @@ METRICS_TOKEN = os.getenv("ENREACH_METRICS_TOKEN", "").strip()
 METRICS_MEDIA_TYPE = "text/plain; version=0.0.4; charset=utf-8"
 
 
+def ensure_default_role_permissions() -> None:
+    with SessionLocal() as db:
+        existing = {
+            record.role: record
+            for record in db.execute(select(RolePermission)).scalars()
+        }
+        changed = False
+        for role, spec in DEFAULT_ROLE_DEFINITIONS.items():
+            label = (spec.get("label") or role).strip() or role
+            description = spec.get("description") or None
+            default_perms = sorted({str(p).strip() for p in spec.get("permissions", []) if str(p).strip()})
+            record = existing.get(role)
+            if record is None:
+                record = RolePermission(
+                    role=role,
+                    label=label,
+                    description=description,
+                    permissions=default_perms,
+                )
+                db.add(record)
+                changed = True
+            else:
+                updated = False
+                if not record.label:
+                    record.label = label
+                    updated = True
+                if description and not record.description:
+                    record.description = description
+                    updated = True
+                current = set(record.permissions or [])
+                desired = current.union(default_perms)
+                if desired != current:
+                    record.permissions = sorted(desired)
+                    updated = True
+                if updated:
+                    db.add(record)
+                    changed = True
+        if changed:
+            db.commit()
+
+
 def ensure_default_admin() -> None:
     with SessionLocal() as db:
         existing = db.execute(select(User.id).limit(1)).scalar_one_or_none()
@@ -247,6 +296,7 @@ def ensure_default_admin() -> None:
         )
 
 
+ensure_default_role_permissions()
 ensure_default_admin()
 
 
@@ -404,15 +454,24 @@ class AuthMiddleware(BaseHTTPMiddleware):
         path = request.url.path or "/"
 
         request.state.user = None
+        request.state.permissions = frozenset()
         user_id = request.session.get(SESSION_USER_KEY) if hasattr(request, "session") else None
         if user_id:
             with SessionLocal() as db:
                 user = db.get(User, user_id)
                 if user and user.is_active:
+                    perms_record = db.get(RolePermission, user.role)
+                    perms = frozenset((perms_record.permissions or []) if perms_record else [])
                     request.state.user = user
+                    request.state.permissions = perms
+                    try:
+                        setattr(user, "permissions", perms)
+                    except Exception:
+                        pass
                 else:
                     request.session.pop(SESSION_USER_KEY, None)
                     request.state.user = None
+                    request.state.permissions = frozenset()
 
         # Public endpoints
         if path in ("/favicon.ico", "/health"):
@@ -459,6 +518,17 @@ def _has_ui_session(request: Request) -> bool:
         return bool(request.session.get(SESSION_USER_KEY))
     except Exception:
         return False
+
+
+def require_permission(request: Request, permission: str) -> None:
+    user = getattr(request.state, "user", None)
+    if user is None:
+        return
+    if getattr(user, "role", "") == "admin":
+        return
+    permissions = getattr(request.state, "permissions", frozenset())
+    if permission not in permissions:
+        raise HTTPException(status_code=403, detail="Forbidden: missing permission")
 
 
 def _is_api_path(path: str) -> bool:
@@ -3554,7 +3624,8 @@ def _build_data_context(dataset: str, query: str, max_rows: int = 6, max_chars: 
 
 
 @app.get("/chat/providers")
-def chat_providers(user: CurrentUserDep, db: DbSessionDep):
+def chat_providers(request: Request, user: CurrentUserDep, db: DbSessionDep):
+    require_permission(request, "chat.use")
     env = _chat_env(db=db, user=user)
     out = []
     for pid in ["openai", "openrouter", "claude", "gemini"]:
@@ -3572,7 +3643,12 @@ def chat_providers(user: CurrentUserDep, db: DbSessionDep):
 
 
 @app.get("/chat/history")
-def chat_history(db: DbSessionDep, session_id: str = Query(...)):
+def chat_history(
+    request: Request,
+    db: DbSessionDep,
+    session_id: str = Query(...),
+):
+    require_permission(request, "chat.use")
     session = _get_chat_session(db, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Chat session not found")
@@ -3586,7 +3662,13 @@ def chat_history(db: DbSessionDep, session_id: str = Query(...)):
 
 
 @app.get("/chat/sessions")
-def chat_sessions(db: DbSessionDep, user: OptionalUserDep, limit: int | None = Query(None, ge=1, le=200)):
+def chat_sessions(
+    request: Request,
+    db: DbSessionDep,
+    user: OptionalUserDep,
+    limit: int | None = Query(None, ge=1, le=200),
+):
+    require_permission(request, "chat.use")
     from sqlalchemy import select
 
     stmt = select(ChatSession).order_by(ChatSession.updated_at.desc())
@@ -3600,7 +3682,13 @@ def chat_sessions(db: DbSessionDep, user: OptionalUserDep, limit: int | None = Q
 
 
 @app.post("/chat/session")
-def chat_session_create(db: DbSessionDep, user: OptionalUserDep, req: ChatSessionCreateBody = None):
+def chat_session_create(
+    request: Request,
+    db: DbSessionDep,
+    user: OptionalUserDep,
+    req: ChatSessionCreateBody = None,
+):
+    require_permission(request, "chat.use")
     title = (req.name if req else "") or "New chat"
     variables = req.variables if req else None
     session = _create_chat_session(
@@ -3613,8 +3701,14 @@ def chat_session_create(db: DbSessionDep, user: OptionalUserDep, req: ChatSessio
 
 
 @app.delete("/chat/session/{session_id}")
-def chat_session_delete(session_id: str, db: DbSessionDep, user: OptionalUserDep):
+def chat_session_delete(
+    request: Request,
+    session_id: str,
+    db: DbSessionDep,
+    user: OptionalUserDep,
+):
     """Delete a chat session and all its messages."""
+    require_permission(request, "chat.use")
     session = _get_chat_session(db, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Chat session not found")
@@ -3632,10 +3726,12 @@ def chat_session_delete(session_id: str, db: DbSessionDep, user: OptionalUserDep
 
 @app.post("/chat/complete")
 def chat_complete(
+    request: Request,
     req: ChatRequestBody,
     user: OptionalUserDep,
     db: DbSessionDep,
 ):
+    require_permission(request, "chat.use")
     env = _chat_env(db=db, user=user)
     pid = req.provider
     if pid not in env:
@@ -3968,12 +4064,14 @@ def _stream_openrouter_text(
 
 @app.post("/chat/stream")
 def chat_stream(
+    request: Request,
     req: ChatRequestBody,
     user: OptionalUserDep,
     db: DbSessionDep,
 ):
+    require_permission(request, "chat.use")
     try:
-        result = chat_complete(req, user, db)
+        result = chat_complete(req, user, db, request)
     except HTTPException:
         raise
     except Exception as exc:  # pragma: no cover - defensive fallback
@@ -4001,10 +4099,12 @@ def tools_run_sample(
     tool_key: str,
     user: OptionalUserDep,
     db: DbSessionDep,
+    request: Request,
     payload: ToolSamplePayloadBody = None,
     provider: str | None = Query(None, description="Override the provider used for the sample run."),
     model: str | None = Query(None, description="Override the model used for the sample run."),
 ):
+    require_permission(request, "tools.use")
     catalog = tools_router._catalog_index()
     definition = catalog.get(tool_key)
     if definition is None:
@@ -4257,11 +4357,12 @@ class ZabbixAckRequest(BaseModel):
 
 
 @app.post("/zabbix/ack")
-def zabbix_ack(req: ZabbixAckRequest):
+def zabbix_ack(req: ZabbixAckRequest, request: Request):
     """Acknowledge one or more events in Zabbix.
 
     Uses event.acknowledge with action=6 (acknowledge + message). Requires API token.
     """
+    require_permission(request, "zabbix.ack")
     ids = [str(x) for x in (req.eventids or []) if str(x).strip()]
     if not ids:
         raise HTTPException(status_code=400, detail="No event IDs provided")
@@ -4493,6 +4594,7 @@ def logs_tail(n: int = Query(200, ge=1, le=5000)) -> dict:
 
 @app.get("/export/stream")
 async def export_stream(
+    request: Request,
     dataset: Literal["devices", "vms", "all"] = "devices",
     user: OptionalUserDep = None,
 ):
@@ -4502,6 +4604,8 @@ async def export_stream(
     - vms     -> uv run enreach export vms
     - all     -> uv run enreach export update
     """
+    require_permission(request, "export.run")
+
     args_map = {
         "devices": ["enreach", "export", "devices"],
         "vms": ["enreach", "export", "vms"],

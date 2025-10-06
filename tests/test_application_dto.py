@@ -32,6 +32,7 @@ def test_user_dto_conversions_roundtrip():
         display_name="Alice",
         email="alice@example.com",
         role="admin",
+        permissions=frozenset({"chat.use"}),
         is_active=True,
         created_at=_now(),
         updated_at=_now(),

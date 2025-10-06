@@ -2,6 +2,7 @@
 
 from .account import (
     AdminCreateUser,
+    AdminRoleUpdate,
     AdminSetPassword,
     AdminUpdateUser,
     APIKeyPayload,
@@ -13,6 +14,7 @@ from .tools import ToolCatalog, ToolDefinition, ToolLink, ToolParameter
 __all__ = [
     "APIKeyPayload",
     "AdminCreateUser",
+    "AdminRoleUpdate",
     "AdminSetPassword",
     "AdminUpdateUser",
     "PasswordChange",

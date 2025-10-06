@@ -8,6 +8,7 @@ from enreach_tools.domain.entities import (
     ChatMessageEntity,
     ChatSessionEntity,
     GlobalAPIKeyEntity,
+    RolePermissionEntity,
     UserAPIKeyEntity,
     UserEntity,
 )
@@ -20,6 +21,7 @@ def user_to_entity(record: models.User) -> UserEntity:
         display_name=record.display_name,
         email=record.email,
         role=record.role,
+        permissions=frozenset(),
         is_active=record.is_active,
         created_at=record.created_at,
         updated_at=record.updated_at,
@@ -73,3 +75,14 @@ def chat_message_to_entity(record: models.ChatMessage) -> ChatMessageEntity:
 def iter_chat_messages(records: Iterable[models.ChatMessage]) -> Iterator[ChatMessageEntity]:
     for record in records:
         yield chat_message_to_entity(record)
+
+
+def role_permission_to_entity(record: models.RolePermission) -> RolePermissionEntity:
+    return RolePermissionEntity(
+        role=record.role,
+        label=record.label,
+        description=record.description,
+        permissions=frozenset(record.permissions or []),
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+    )

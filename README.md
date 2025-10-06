@@ -99,6 +99,7 @@ Publish VMs Table
 -------------
 
 - The CLI automatically loads `.env` from the project root (toggle overriding existing env with `--override-env`).
+- Set `ENREACH_SECRET_KEY` (Fernet base64, 32 bytes) to enable the encrypted secret store; when present, values you keep in `.env` are synchronised into the database and missing entries are restored from there.
 - Required variables for NetBox: `NETBOX_URL`, `NETBOX_TOKEN`.
 - Optional Confluence envs: `CONFLUENCE_CMDB_PAGE_ID`, `CONFLUENCE_DEVICES_PAGE_ID`, `CONFLUENCE_VMS_PAGE_ID` (defaults provided), and `CONFLUENCE_ENABLE_TABLE_FILTER/SORT` to toggle macros.
 - Optional logging envs: `LOG_LEVEL` (API logging), `ENREACH_LOG_LEVEL`/`ENREACH_LOG_STRUCTURED` for CLI/background structured output.
