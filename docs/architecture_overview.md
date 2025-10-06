@@ -94,3 +94,4 @@ breakdown.
 ## NetBox Exports
 - `NetboxExportService` orchestrates NetBox device/VM exports, merges CSVs, and builds the Excel workbook (when pandas/openpyxl are installed).
 - CLI (`enreach export update`) now calls the service directly; legacy scripts remain only for the in-process export steps.
+- `enreach export cache` refreshes the JSON snapshot (`data/netbox_cache.json`) used for change detection without touching the CSV/Excel outputs, and the full update flow can reuse those records via `enreach export update --no-refresh-cache` for faster turnaround when the snapshot is already fresh.

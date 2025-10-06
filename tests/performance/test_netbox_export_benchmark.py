@@ -140,6 +140,7 @@ def _export_paths(root: Path) -> ExportPaths:
         excel_path=data_dir / "Systems CMDB.xlsx",
         scripts_root=REPO_ROOT,
         manifest_path=data_dir / "netbox_export_manifest.json",
+        cache_json=data_dir / "netbox_cache.json",
     )
 
 

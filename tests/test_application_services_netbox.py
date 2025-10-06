@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import types
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -25,6 +26,13 @@ class _FakeNetboxClient:
         self.calls["devices"] += 1
         now = datetime.fromisoformat("2024-01-01T00:00:00+00:00")
         return [self._device_record(now)]
+
+    def list_device_metadata(self):
+        entries = {}
+        for record in self.list_devices():
+            last = record.last_updated.isoformat().replace("+00:00", "Z") if record.last_updated else ""
+            entries[str(record.id)] = last
+        return entries
 
     def _device_record(self, now):
         return NetboxDeviceRecord(
@@ -62,6 +70,13 @@ class _FakeNetboxClient:
         now = datetime.fromisoformat("2024-01-02T00:00:00+00:00")
         return [self._vm_record(now)]
 
+    def list_vm_metadata(self):
+        entries = {}
+        for record in self.list_vms():
+            last = record.last_updated.isoformat().replace("+00:00", "Z") if record.last_updated else ""
+            entries[str(record.id)] = last
+        return entries
+
     def _vm_record(self, now):
         return NetboxVMRecord(
                 id=2,
@@ -90,8 +105,14 @@ class _FakeNetboxClient:
     def get_device(self, device_id):
         return self._device_record(datetime.fromisoformat("2024-01-01T00:00:00+00:00"))
 
+    def get_devices_by_ids(self, identifiers):
+        return [self.get_device(identifier) for identifier in identifiers]
+
     def get_vm(self, vm_id):
         return self._vm_record(datetime.fromisoformat("2024-01-02T00:00:00+00:00"))
+
+    def get_vms_by_ids(self, identifiers):
+        return [self.get_vm(identifier) for identifier in identifiers]
 
 
 def test_export_service_writes_minimal_csv():
@@ -105,6 +126,7 @@ def test_export_service_writes_minimal_csv():
             excel_path=Path(tmp) / "cmdb.xlsx",
             scripts_root=Path(tmp),
             manifest_path=Path(tmp) / "manifest.json",
+            cache_json=Path(tmp) / "cache.json",
         )
         service = NetboxExportService(client=_FakeNetboxClient(), paths=paths)
         service._write_devices_csv(service._client.list_devices())
@@ -128,6 +150,7 @@ def test_merge_csv_combines_devices_and_vms():
             excel_path=tmp_path / "cmdb.xlsx",
             scripts_root=tmp_path,
             manifest_path=tmp_path / "manifest.json",
+            cache_json=tmp_path / "cache.json",
         )
         service = NetboxExportService(client=_FakeNetboxClient(), paths=paths)
 
@@ -152,10 +175,17 @@ def test_netbox_export_job_handler_completes(tmp_path):
         excel_path=tmp_path / "cmdb.xlsx",
         scripts_root=tmp_path,
         manifest_path=tmp_path / "manifest.json",
+        cache_json=tmp_path / "cache.json",
     )
     service = NetboxExportService(client=_FakeNetboxClient(), paths=paths)
 
-    async def _fake_export_all_async(self, *, force: bool = False, verbose: bool = False) -> None:
+    async def _fake_export_all_async(
+        self,
+        *,
+        force: bool = False,
+        verbose: bool = False,
+        refresh_cache: bool = True,
+    ) -> None:
         await asyncio.sleep(0)
 
     service.export_all_async = types.MethodType(_fake_export_all_async, service)  # type: ignore[assignment]
@@ -193,6 +223,7 @@ def test_native_exporter_persists_manifest(tmp_path, monkeypatch):
         excel_path=tmp_path / "cmdb.xlsx",
         scripts_root=tmp_path,
         manifest_path=tmp_path / "manifest.json",
+        cache_json=tmp_path / "cache.json",
     )
     monkeypatch.setattr("enreach_tools.backup_sync.sync_paths", lambda *args, **kwargs: None)
     exporter = NativeNetboxExporter(client, paths)
@@ -203,3 +234,56 @@ def test_native_exporter_persists_manifest(tmp_path, monkeypatch):
     manifest = json.loads(paths.manifest_path.read_text())
     assert manifest.get("devices", {}).get("1")
     assert manifest.get("vms", {}).get("2")
+
+
+def test_refresh_cache_updates_json_and_diff(tmp_path):
+    client = _FakeNetboxClient()
+    paths = ExportPaths(
+        data_dir=tmp_path,
+        devices_csv=tmp_path / "devices.csv",
+        vms_csv=tmp_path / "vms.csv",
+        merged_csv=tmp_path / "merged.csv",
+        excel_path=tmp_path / "cmdb.xlsx",
+        scripts_root=tmp_path,
+        manifest_path=tmp_path / "manifest.json",
+        cache_json=tmp_path / "cache.json",
+    )
+    service = NetboxExportService(client=client, paths=paths)
+
+    first = service.refresh_cache(force=False, verbose=False)
+    assert paths.cache_json.exists()
+    snapshot = json.loads(paths.cache_json.read_text())
+    assert snapshot["resources"]["devices"]["count"] == 1
+    assert snapshot["resources"]["vms"]["count"] == 1
+    assert first.summaries["devices"].added == 1
+    assert first.summaries["vms"].added == 1
+
+    second = service.refresh_cache(force=False, verbose=False)
+    assert second.summaries["devices"].added == 0
+    assert second.summaries["devices"].updated == 0
+    assert second.summaries["vms"].added == 0
+    cached = service.load_cache()
+    assert cached is not None
+    assert len(cached.devices) == 1
+    assert len(cached.vms) == 1
+
+    changed_device = replace(
+        client._device_record(datetime.fromisoformat("2024-01-01T00:00:00+00:00")),
+        name="device-1-renamed",
+        last_updated=datetime.fromisoformat("2024-01-03T00:00:00+00:00"),
+        raw={"id": 1, "name": "device-1-renamed"},
+    )
+
+    def _changed_devices(*, force_refresh: bool = False):
+        return [changed_device]
+
+    client.list_devices = _changed_devices  # type: ignore[assignment]
+    client.list_device_metadata = lambda: {"1": changed_device.last_updated.isoformat().replace("+00:00", "Z")}  # type: ignore[assignment]
+    client.get_device = lambda device_id: changed_device  # type: ignore[assignment]
+    client.get_devices_by_ids = lambda identifiers: [changed_device]  # type: ignore[assignment]
+
+    third = service.refresh_cache(force=False, verbose=False)
+    assert third.summaries["devices"].updated == 1
+    data = json.loads(paths.cache_json.read_text())
+    devices = data["resources"]["devices"]["items"]
+    assert devices[0]["name"] == "device-1-renamed"

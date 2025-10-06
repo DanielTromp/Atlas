@@ -13,10 +13,11 @@ import time
 import uuid
 import warnings
 from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 from io import BytesIO, StringIO
 from pathlib import Path
 from threading import Lock
@@ -113,6 +114,8 @@ except Exception:  # pragma: no cover - urllib3 optional
     _InsecureRequestWarning = None  # type: ignore[assignment]
 
 load_env()
+
+AMS_TZ = ZoneInfo("Europe/Amsterdam")
 
 logger = get_logger(__name__)
 if tracing_enabled():
@@ -744,13 +747,43 @@ def _collect_commvault_jobs_for_ui(
     limit: int,
     offset: int,
     since: datetime | None,
+    tracked_job_ids: Collection[int] | None = None,
+    latest_start: datetime | None = None,
 ) -> CommvaultJobList:
     if limit < 0:
         raise ValueError("limit must be zero or positive")
 
     job_type = None
     page_target = 200 if limit == 0 else max(1, min(500, limit))
-    initial = client.list_jobs(limit=1, offset=0, job_type=job_type)
+    tracked_remaining: set[int] = {int(job_id) for job_id in (tracked_job_ids or [])}
+    threshold: datetime | None = since
+    if latest_start and (threshold is None or latest_start < threshold):
+        threshold = latest_start
+
+    def _list_jobs_with_retry(*, fetch_limit: int, fetch_offset: int) -> CommvaultJobList:
+        attempt_limit = max(1, fetch_limit)
+        last_error: CommvaultError | None = None
+        while attempt_limit >= 1:
+            try:
+                return client.list_jobs(
+                    limit=attempt_limit,
+                    offset=fetch_offset,
+                    job_type=job_type,
+                )
+            except CommvaultError as exc:
+                last_error = exc
+                if attempt_limit <= 25:
+                    break
+                attempt_limit = max(25, attempt_limit // 2)
+        if last_error is not None:
+            raise last_error
+        return CommvaultJobList(total_available=0, jobs=())
+
+    try:
+        initial = _list_jobs_with_retry(fetch_limit=1, fetch_offset=0)
+    except CommvaultError:
+        initial = _list_jobs_with_retry(fetch_limit=25, fetch_offset=0)
+
     total_available = initial.total_available or len(initial.jobs)
     if not total_available:
         return CommvaultJobList(total_available=0, jobs=())
@@ -761,21 +794,44 @@ def _collect_commvault_jobs_for_ui(
 
     target_start = 0 if limit == 0 else max(0, target_end - limit)
     jobs: list[CommvaultJob] = []
+    seen: set[int] = set()
     current_end = target_end
 
     while current_end > target_start and (limit == 0 or len(jobs) < limit):
         request_limit = min(page_target, current_end - target_start)
-        response = client.list_jobs(limit=request_limit, offset=current_end - request_limit, job_type=job_type)
+        try:
+            response = _list_jobs_with_retry(
+                fetch_limit=request_limit,
+                fetch_offset=current_end - request_limit,
+            )
+        except CommvaultError:
+            break
+
         batch = list(response.jobs)
         if not batch:
             break
+
         for job in reversed(batch):
+            try:
+                job_id = int(job.job_id)
+            except (TypeError, ValueError):
+                job_id = None
+            if job_id is not None and job_id in seen:
+                continue
             jobs.append(job)
+            if job_id is not None:
+                seen.add(job_id)
+                tracked_remaining.discard(job_id)
+
         current_end -= len(batch)
 
-        if since:
+        if limit > 0 and len(jobs) >= limit:
+            break
+        if tracked_remaining:
+            continue
+        if threshold:
             oldest = batch[0].start_time if batch else None
-            if oldest and oldest < since:
+            if oldest and oldest < threshold:
                 break
         if len(batch) < request_limit:
             break
@@ -898,6 +954,30 @@ def _filter_commvault_jobs(jobs: Iterable[Mapping[str, Any]], since_hours: int) 
         if start and start >= cutoff:
             filtered.append(dict(job))
     return filtered
+
+
+_ACTIVE_STATUS_KEYWORDS = ("running", "pending", "waiting", "queued", "active", "suspended", "in progress")
+
+
+def _commvault_job_is_active(job: Mapping[str, Any]) -> bool:
+    status_raw = job.get("localized_status") or job.get("status") or ""
+    status = str(status_raw).strip().lower()
+    if not status:
+        return True
+    for keyword in _ACTIVE_STATUS_KEYWORDS:
+        if keyword in status:
+            return True
+    end_time = _parse_job_datetime(job.get("end_time"))
+    return end_time is None
+
+
+def _latest_commvault_start_time(jobs: Iterable[Mapping[str, Any]]) -> datetime | None:
+    latest: datetime | None = None
+    for job in jobs:
+        start = _parse_job_datetime(job.get("start_time"))
+        if start and (latest is None or start > latest):
+            latest = start
+    return latest
 
 
 def _safe_commvault_client_id(value: Any) -> int | None:
@@ -1278,7 +1358,9 @@ def _format_iso_human(value: str | None) -> str:
     dt = _parse_job_datetime(value)
     if not dt:
         return "-"
-    return dt.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
+    local_dt = dt.astimezone(AMS_TZ)
+    tz_label = local_dt.tzname() or "CET"
+    return f"{local_dt.strftime('%Y-%m-%d %H:%M')} {tz_label}"
 
 
 def _format_percent(value: float | None) -> str:
@@ -1874,11 +1956,6 @@ def _refresh_commvault_backups_sync(limit: int, since_hours: int) -> dict[str, A
             except RuntimeError as exc:
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-            try:
-                job_list = _collect_commvault_jobs_for_ui(client, limit=limit, offset=0, since=since)
-            except CommvaultError as exc:
-                raise HTTPException(status_code=502, detail=f"Commvault error: {exc}") from exc
-
             cache_snapshot = _load_commvault_backups()
             jobs_by_id: dict[int, dict[str, Any]] = {}
             for job in cache_snapshot.get("jobs", []):
@@ -1890,6 +1967,23 @@ def _refresh_commvault_backups_sync(limit: int, since_hours: int) -> dict[str, A
                 except (TypeError, ValueError):
                     continue
                 jobs_by_id[key] = dict(job)
+
+            tracked_job_ids = {
+                job_id for job_id, payload in jobs_by_id.items() if _commvault_job_is_active(payload)
+            }
+            latest_cached_start = _latest_commvault_start_time(jobs_by_id.values())
+
+            try:
+                job_list = _collect_commvault_jobs_for_ui(
+                    client,
+                    limit=limit,
+                    offset=0,
+                    since=since,
+                    tracked_job_ids=tracked_job_ids,
+                    latest_start=latest_cached_start,
+                )
+            except CommvaultError as exc:
+                raise HTTPException(status_code=502, detail=f"Commvault error: {exc}") from exc
 
             jobs = list(job_list.jobs)
             if since:

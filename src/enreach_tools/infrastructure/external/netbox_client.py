@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 try:  # optional dependency
@@ -59,6 +59,12 @@ class NetboxClient:
     async def list_vms_async(self, *, force_refresh: bool = False) -> Sequence[NetboxVMRecord]:
         return await asyncio.to_thread(self.list_vms, force_refresh=force_refresh)
 
+    def list_device_metadata(self) -> Mapping[str, str]:
+        return self._fetch_metadata(self._nb.dcim.devices)
+
+    def list_vm_metadata(self) -> Mapping[str, str]:
+        return self._fetch_metadata(self._nb.virtualization.virtual_machines)
+
     def get_device(self, device_id: str | int) -> NetboxDeviceRecord:
         raw = self._nb.dcim.devices.get(device_id)
         if raw is None:
@@ -70,6 +76,26 @@ class NetboxClient:
         if raw is None:
             raise LookupError(f"Virtual machine {vm_id} not found")
         return _build_vm_record(raw)
+
+    def get_devices_by_ids(self, identifiers: Iterable[int]) -> Sequence[NetboxDeviceRecord]:
+        results: list[NetboxDeviceRecord] = []
+        for identifier in identifiers:
+            try:
+                results.append(self.get_device(identifier))
+            except Exception:
+                continue
+        dedup: dict[int, NetboxDeviceRecord] = {int(record.id): record for record in results}
+        return tuple(dedup[idx] for idx in sorted(dedup))
+
+    def get_vms_by_ids(self, identifiers: Iterable[int]) -> Sequence[NetboxVMRecord]:
+        results: list[NetboxVMRecord] = []
+        for identifier in identifiers:
+            try:
+                results.append(self.get_vm(identifier))
+            except Exception:
+                continue
+        dedup: dict[int, NetboxVMRecord] = {int(record.id): record for record in results}
+        return tuple(dedup[idx] for idx in sorted(dedup))
 
     @property
     def api(self):  # pragma: no cover - convenience for legacy paths
@@ -92,6 +118,34 @@ class NetboxClient:
     def _fetch_vms(self) -> Sequence[NetboxVMRecord]:
         records: Iterable[Any] = self._nb.virtualization.virtual_machines.all()  # type: ignore[attr-defined]
         return tuple(_build_vm_record(it) for it in records)
+
+    def _fetch_metadata(self, endpoint) -> dict[str, str]:
+        metadata: dict[str, str] = {}
+        iterator: Iterable[Any] | None = None
+        try:
+            iterator = endpoint.values("id", "last_updated")
+        except Exception:
+            iterator = None
+        if iterator is None:
+            try:
+                iterator = endpoint.filter(limit=0, fields="id,last_updated")
+            except Exception:
+                iterator = None
+        if iterator is None:
+            return metadata
+        for item in iterator:
+            if isinstance(item, Mapping):
+                identifier = item.get("id")
+                last_updated = item.get("last_updated")
+            elif isinstance(item, (tuple, list)) and len(item) >= 2:
+                identifier, last_updated = item[0], item[1]
+            else:
+                identifier = getattr(item, "id", None)
+                last_updated = getattr(item, "last_updated", None)
+            if identifier is None:
+                continue
+            metadata[str(identifier)] = _normalize_last_updated(last_updated)
+        return metadata
 
 
 def _serialize(record: Any) -> Mapping[str, JSONValue]:
@@ -121,6 +175,27 @@ def _dt(value: Any) -> datetime | None:
         return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except Exception:
         return None
+
+
+def _normalize_last_updated(value: Any) -> str:
+    if not value:
+        return ""
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        text = str(value).strip()
+        if not text:
+            return ""
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            dt = datetime.fromisoformat(text)
+        except Exception:
+            return str(value)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    normalized = dt.astimezone(timezone.utc).replace(microsecond=0)
+    return normalized.isoformat().replace("+00:00", "Z")
 
 
 def _choice_label(value: Any) -> str | None:

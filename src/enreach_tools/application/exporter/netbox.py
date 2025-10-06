@@ -32,6 +32,7 @@ class ExportPaths:
     excel_path: Path
     scripts_root: Path
     manifest_path: Path
+    cache_json: Path
 
 
 @dataclass(slots=True)
@@ -55,7 +56,14 @@ class ExportManifest:
 class NetboxExporter:
     """Abstract exporter interface."""
 
-    def export(self, *, force: bool = False, verbose: bool = False) -> ExportArtifacts:  # pragma: no cover - interface
+    def export(
+        self,
+        *,
+        force: bool = False,
+        verbose: bool = False,
+        devices: Sequence[NetboxDeviceRecord] | None = None,
+        vms: Sequence[NetboxVMRecord] | None = None,
+    ) -> ExportArtifacts:  # pragma: no cover - interface
         raise NotImplementedError
 
 
@@ -65,7 +73,14 @@ class LegacyScriptNetboxExporter(NetboxExporter):
     def __init__(self, paths: ExportPaths) -> None:
         self._paths = paths
 
-    def export(self, *, force: bool = False, verbose: bool = False) -> ExportArtifacts:
+    def export(
+        self,
+        *,
+        force: bool = False,
+        verbose: bool = False,
+        devices: Sequence[NetboxDeviceRecord] | None = None,
+        vms: Sequence[NetboxVMRecord] | None = None,
+    ) -> ExportArtifacts:
         self._run_script("netbox-export/bin/get_netbox_devices.py", force=force)
         self._run_script("netbox-export/bin/get_netbox_vms.py", force=force)
         return ExportArtifacts(
@@ -94,14 +109,21 @@ class NativeNetboxExporter(NetboxExporter):
         self._verbose = False
         self._manifest: ExportManifest = ExportManifest.empty()
 
-    def export(self, *, force: bool = False, verbose: bool = False) -> ExportArtifacts:
+    def export(
+        self,
+        *,
+        force: bool = False,
+        verbose: bool = False,
+        devices: Sequence[NetboxDeviceRecord] | None = None,
+        vms: Sequence[NetboxVMRecord] | None = None,
+    ) -> ExportArtifacts:
         self._verbose = verbose
         self._paths.data_dir.mkdir(parents=True, exist_ok=True)
         self._manifest = _load_export_manifest(self._paths.manifest_path)
         success = False
         try:
-            self._export_devices(force)
-            self._export_vms(force)
+            self._export_devices(force, records=devices)
+            self._export_vms(force, records=vms)
             success = True
         finally:
             if success:
@@ -112,8 +134,15 @@ class NativeNetboxExporter(NetboxExporter):
             merged_csv=self._paths.merged_csv,
         )
 
-    def _export_devices(self, force: bool) -> None:
-        records = list(self._client.list_devices(force_refresh=force))
+    def _export_devices(
+        self,
+        force: bool,
+        *,
+        records: Sequence[NetboxDeviceRecord] | None = None,
+    ) -> None:
+        if records is None:
+            records = self._client.list_devices(force_refresh=force)
+        records = list(records)
         record_lookup = {str(record.id): record for record in records}
         metadata = {str(record.id): _to_iso(record.last_updated) for record in records}
         existing = _load_existing_csv(self._paths.devices_csv)
@@ -188,8 +217,15 @@ class NativeNetboxExporter(NetboxExporter):
         for device_id in to_delete:
             self._manifest.devices.pop(str(device_id), None)
 
-    def _export_vms(self, force: bool) -> None:
-        records = list(self._client.list_vms(force_refresh=force))
+    def _export_vms(
+        self,
+        force: bool,
+        *,
+        records: Sequence[NetboxVMRecord] | None = None,
+    ) -> None:
+        if records is None:
+            records = self._client.list_vms(force_refresh=force)
+        records = list(records)
         metadata = {int(record.id): _to_iso(record.last_updated) for record in records}
         existing = _load_existing_vm_csv(self._paths.vms_csv)
         to_add, to_update, to_delete = _identify_vm_changes(

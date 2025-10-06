@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import os
 import subprocess
@@ -382,6 +383,42 @@ def users_set_password(
     print(f"[green]Password updated for[/green] {username_norm}")
 
 
+@export.command("cache")
+def netbox_cache(
+    force: bool = typer.Option(False, "--force", help="Force refresh from NetBox and bypass in-memory cache"),
+    verbose: bool = typer.Option(False, "--verbose/--no-verbose", help="Log detailed cache diff results"),
+):
+    """Refresh the NetBox JSON cache without rewriting CSV or Excel exports."""
+
+    require_env(["NETBOX_URL", "NETBOX_TOKEN"])
+    if tracing_enabled():
+        init_tracing("enreach-cli")
+    with logging_context(command="export.cache", force=force, verbose=verbose), span(
+        "cli.export.cache", force=force, verbose=verbose
+    ):
+        service = NetboxExportService.from_env()
+        result = service.refresh_cache(force=force, verbose=verbose)
+        print(f"[green]Cache updated[/green] {result.path.as_posix()}")
+        timestamp = result.generated_at.astimezone().isoformat(timespec="seconds")
+        print(f"[dim]Generated at:[/dim] {timestamp}")
+        summaries = result.summaries
+        if not summaries:
+            print("[yellow]No cacheable resources were returned[/yellow]")
+            return
+        for name, summary in summaries.items():
+            diffs: list[str] = []
+            if summary.added:
+                diffs.append(f"{summary.added} new")
+            if summary.updated:
+                diffs.append(f"{summary.updated} updated")
+            if summary.removed:
+                diffs.append(f"{summary.removed} removed")
+            diff_label = ", ".join(diffs) if diffs else "no changes"
+            print(
+                f"[cyan]{name}[/cyan]: {summary.total} total ({diff_label})",
+            )
+
+
 @export.command("devices")
 def netbox_devices(
     force: bool = typer.Option(False, "--force", help="Re-fetch all devices and rewrite CSV"),
@@ -454,6 +491,11 @@ def netbox_update(
     use_queue: bool = typer.Option(False, "--queue/--no-queue", help="Schedule export via the in-memory job queue"),
     legacy: bool = typer.Option(False, "--legacy/--no-legacy", help="Use legacy exporter scripts"),
     verbose: bool = typer.Option(False, "--verbose/--no-verbose", help="Log verbose exporter progress"),
+    refresh_cache: bool = typer.Option(
+        True,
+        "--refresh-cache/--no-refresh-cache",
+        help="Refresh the NetBox JSON cache before exporting (disable to reuse the existing snapshot)",
+    ),
 ):
     """Run devices, vms, then merge exports in sequence."""
     require_env(["NETBOX_URL", "NETBOX_TOKEN"])  # token needed for export endpoints
@@ -478,7 +520,14 @@ def netbox_update(
             async def _run_job() -> JobStatus:
                 await runner.start()
                 try:
-                    record = await queue.enqueue(service.build_job_spec(force=force, verbose=verbose))
+                    build_kwargs = {"force": force, "verbose": verbose}
+                    try:
+                        spec_signature = inspect.signature(service.build_job_spec)
+                    except (TypeError, ValueError):
+                        spec_signature = None
+                    if spec_signature and "refresh_cache" in spec_signature.parameters:
+                        build_kwargs["refresh_cache"] = refresh_cache
+                    record = await queue.enqueue(service.build_job_spec(**build_kwargs))
                     while True:
                         job = await queue.get_job(record.job_id)
                         if job and job.status in {JobStatus.COMPLETED, JobStatus.FAILED}:
@@ -498,6 +547,8 @@ def netbox_update(
             args = ["--force"] if force else []
             if verbose:
                 args.append("--verbose")
+            if not refresh_cache:
+                args.append("--no-refresh-cache")
             try:
                 code = _run_script("netbox-export/bin/netbox_update.py", *args)
                 if code != 0:

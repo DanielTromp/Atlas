@@ -17,6 +17,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run NetBox exports and merge")
     parser.add_argument("--force", action="store_true", help="Re-fetch all devices and VMs before merge")
     parser.add_argument("--verbose", action="store_true", help="Log verbose exporter progress")
+    parser.add_argument(
+        "--no-refresh-cache",
+        dest="refresh_cache",
+        action="store_false",
+        help="Reuse the existing NetBox cache snapshot without contacting the API",
+    )
+    parser.set_defaults(refresh_cache=True)
     args = parser.parse_args()
     load_env()
     require_env(["NETBOX_URL", "NETBOX_TOKEN"])  # token needed for export endpoints
@@ -24,7 +31,7 @@ def main() -> int:
     print("[bold]Running NetBox export service...[/bold]")
     service = NetboxExportService.from_env()
     try:
-        service.export_all(force=args.force, verbose=args.verbose)
+        service.export_all(force=args.force, verbose=args.verbose, refresh_cache=args.refresh_cache)
     except Exception as exc:
         print(f"[red]NetBox export failed:[/red] {exc}")
         return 1

@@ -12,7 +12,8 @@ Usage
   - `uv run enreach export devices` (add `--force` to re-fetch all)
   - `uv run enreach export vms` (add `--force` to re-fetch all)
   - `uv run enreach export merge`
-  - `uv run enreach export update` (runs devices → vms → merge; supports `--force` to re-fetch all before merge and `--queue` to execute via the built-in job runner instead of legacy scripts)
+  - `uv run enreach export cache` (refreshes the NetBox JSON cache in `data/netbox_cache.json` without touching CSV/Excel outputs)
+  - `uv run enreach export update` (runs devices → vms → merge; supports `--force` to re-fetch all before merge, `--no-refresh-cache` to reuse the existing JSON snapshot, and `--queue` to execute via the in-memory job runner instead of legacy scripts)
   - After `update`, if Confluence publishing is configured via `.env` (`ATLASSIAN_*` + `CONFLUENCE_CMDB_PAGE_ID`), it automatically uploads the CMDB Excel as an attachment and refreshes the NetBox devices table on Confluence.
   - API server (HTTP): `uv run enreach api serve --host 127.0.0.1 --port 8000`
   - API server (HTTPS): `uv run enreach api serve --host 127.0.0.1 --port 8443 --ssl-certfile certs/localhost.pem --ssl-keyfile certs/localhost-key.pem`
@@ -65,6 +66,7 @@ uv run python scripts/update_commvault_cache.py --since 24 --limit 0
 - `--since` controls the look-back window (0 keeps every cached job).
 - `--limit` caps the number of records requested from the Commvault API (0 lets the API decide).
 - Add `--skip-storage` if you only need the job cache warmed.
+- Subsequent runs only pull new jobs plus any still in progress from the previous refresh, so the command finishes quickly while keeping active jobs current.
 - The CLI commands and the web UI share this cache, so updating it here refreshes all surfaces.
 
 Confluence Upload
@@ -108,6 +110,7 @@ Service-driven NetBox exports
 -----------------------------
 
 - CLI commands resolve to `NetboxExportService`, which orchestrates the device and VM exports, CSV merge, Excel build, and post-run cache invalidation. The service is also exposed to background workers (`--queue`) via an in-memory job queue.
+- `uv run enreach export cache` stores the latest devices/VMs snapshot (with per-record hashes and metadata) in `data/netbox_cache.json`. Subsequent `export update` runs can reuse that snapshot with `--no-refresh-cache`, so the full CSV/Excel pipeline only needs to run when publishing.
 - Named TTL caches (`netbox.devices`, `netbox.vms`) provide per-process caching with hit/miss instrumentation. Inspect their state with `uv run enreach cache-stats [--json --include-empty --prime-netbox]`.
 - As we migrate the legacy scripts, the same service hooks (and caching) will back the FastAPI endpoints, CLI, and scheduled jobs.
 

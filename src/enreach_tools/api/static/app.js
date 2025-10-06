@@ -1989,14 +1989,21 @@
   }
   function amsDateString(date) {
     const p = partsToObj(amsParts(date));
-    return `${p.year || '0000'}-${(p.month || '00')}-${(p.day || '00')}`;
+    const day = p.day || '00';
+    const month = p.month || '00';
+    const year = p.year || '0000';
+    return `${day}-${month}-${year}`;
   }
-  function amsTimeString(date) {
+  function amsTimeString(date, options = {}) {
+    const includeSeconds = options.includeSeconds ?? false;
     const p = partsToObj(amsParts(date));
-    return `${(p.hour || '00')}:${(p.minute || '00')}:${(p.second || '00')}`;
+    const hour = p.hour || '00';
+    const minute = p.minute || '00';
+    const second = p.second || '00';
+    return includeSeconds ? `${hour}:${minute}:${second}` : `${hour}:${minute}`;
   }
-  function amsDateTimeString(date) {
-    return `${amsDateString(date)} ${amsTimeString(date)}`;
+  function amsDateTimeString(date, options = {}) {
+    return `${amsDateString(date)} ${amsTimeString(date, options)}`;
   }
   function sameAmsDay(a, b) {
     return amsDateString(a) === amsDateString(b);
@@ -3347,10 +3354,7 @@
     try {
       const d = new Date(value);
       if (Number.isNaN(d.getTime())) return value;
-      return new Intl.DateTimeFormat(undefined, {
-        year: 'numeric', month: '2-digit', day: '2-digit',
-        hour: '2-digit', minute: '2-digit',
-      }).format(d);
+      return `${amsDateTimeString(d)} ${amsTzShort(d)}`.trim();
     } catch {
       return value;
     }
@@ -3361,12 +3365,15 @@
     try {
       const d = new Date(value);
       if (Number.isNaN(d.getTime())) return '';
-      return new Intl.DateTimeFormat(undefined, {
+      const formatter = new Intl.DateTimeFormat('nl-NL', {
+        timeZone: AMSTERDAM_TZ,
         month: 'short',
-        day: 'numeric',
+        day: '2-digit',
         hour: '2-digit',
         minute: '2-digit',
-      }).format(d);
+        hour12: false,
+      });
+      return formatter.format(d);
     } catch {
       return '';
     }
@@ -4611,7 +4618,7 @@
   const formatSuggestionDate = (value) => {
     const d = parseSuggestionDate(value);
     if (!d) return value || '';
-    try { return d.toLocaleString(); }
+    try { return `${amsDateTimeString(d)} ${amsTzShort(d)}`.trim(); }
     catch { return d.toISOString(); }
   };
 
@@ -6354,7 +6361,7 @@
     try {
       const d = new Date(ts);
       if (Number.isNaN(d.getTime())) return ts;
-      return d.toLocaleString();
+      return `${amsDateTimeString(d)} ${amsTzShort(d)}`.trim();
     } catch {
       return ts;
     }
