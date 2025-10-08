@@ -77,10 +77,14 @@ def main() -> None:
         returned = len(payload.get("jobs") or [])
     total_cached = payload.get("total_cached")
     generated_at = payload.get("generated_at")
+    new_jobs = payload.get("new_jobs")
+    updated_jobs = payload.get("updated_jobs")
 
     summary = f"cached {returned} job(s) within last {args.since_hours}h"
     if isinstance(total_cached, int):
         summary += f"; {total_cached} total stored"
+    if isinstance(new_jobs, int) or isinstance(updated_jobs, int):
+        summary += f"; {new_jobs or 0} new / {updated_jobs or 0} updated"
     print(f"[green]Commvault cache updated:[/green] {summary}")
     if generated_at:
         print(f"[dim]Cache timestamp: {generated_at}[/dim]")

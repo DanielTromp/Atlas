@@ -4864,7 +4864,7 @@
         throw new Error(problem?.detail || res.statusText);
       }
       const data = await res.json();
-      updateSuggestionMeta(data);
+      updateSuggestionMeta(data?.meta);
       if (Array.isArray(data?.items)) {
         suggestionState.items = data.items.slice();
         if (!skipRender) renderSuggestionsList();
@@ -4917,7 +4917,7 @@
         throw new Error(problem?.detail || res.statusText);
       }
       const data = await res.json();
-      updateSuggestionMeta(data);
+      updateSuggestionMeta(data?.meta);
       if (data?.item) {
         suggestionState.current = data.item;
         updateSuggestionStateItem(data.item);

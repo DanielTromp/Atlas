@@ -749,6 +749,8 @@ def _collect_commvault_jobs_for_ui(
     since: datetime | None,
     tracked_job_ids: Collection[int] | None = None,
     latest_start: datetime | None = None,
+    cached_recent_count: int | None = None,
+    cutoff_start: datetime | None = None,
 ) -> CommvaultJobList:
     if limit < 0:
         raise ValueError("limit must be zero or positive")
@@ -759,6 +761,8 @@ def _collect_commvault_jobs_for_ui(
     threshold: datetime | None = since
     if latest_start and (threshold is None or latest_start < threshold):
         threshold = latest_start
+    if cutoff_start and (threshold is None or cutoff_start < threshold):
+        threshold = cutoff_start
 
     def _list_jobs_with_retry(*, fetch_limit: int, fetch_offset: int) -> CommvaultJobList:
         attempt_limit = max(1, fetch_limit)
@@ -792,7 +796,15 @@ def _collect_commvault_jobs_for_ui(
     if target_end <= 0:
         return CommvaultJobList(total_available=total_available, jobs=())
 
-    target_start = 0 if limit == 0 else max(0, target_end - limit)
+    approximate_needed = page_target
+    if cached_recent_count is not None:
+        approximate_needed = max(approximate_needed, min(total_available, cached_recent_count + page_target))
+    if tracked_remaining:
+        approximate_needed = max(approximate_needed, min(total_available, len(tracked_remaining) + page_target))
+    if limit > 0:
+        approximate_needed = max(approximate_needed, min(total_available, limit + page_target))
+
+    target_start = max(0, target_end - approximate_needed)
     jobs: list[CommvaultJob] = []
     seen: set[int] = set()
     current_end = target_end
@@ -957,6 +969,13 @@ def _filter_commvault_jobs(jobs: Iterable[Mapping[str, Any]], since_hours: int) 
 
 
 _ACTIVE_STATUS_KEYWORDS = ("running", "pending", "waiting", "queued", "active", "suspended", "in progress")
+
+
+def _commvault_job_digest(job: Mapping[str, Any]) -> str:
+    try:
+        return json.dumps(job, sort_keys=True, default=str)
+    except Exception:
+        return repr(sorted(job.items()))
 
 
 def _commvault_job_is_active(job: Mapping[str, Any]) -> bool:
@@ -1958,6 +1977,7 @@ def _refresh_commvault_backups_sync(limit: int, since_hours: int) -> dict[str, A
 
             cache_snapshot = _load_commvault_backups()
             jobs_by_id: dict[int, dict[str, Any]] = {}
+            prev_digests: dict[int, str] = {}
             for job in cache_snapshot.get("jobs", []):
                 job_id = job.get("job_id")
                 if job_id is None:
@@ -1966,12 +1986,41 @@ def _refresh_commvault_backups_sync(limit: int, since_hours: int) -> dict[str, A
                     key = int(job_id)
                 except (TypeError, ValueError):
                     continue
-                jobs_by_id[key] = dict(job)
+                payload = dict(job)
+                jobs_by_id[key] = payload
+                prev_digests[key] = _commvault_job_digest(payload)
 
             tracked_job_ids = {
                 job_id for job_id, payload in jobs_by_id.items() if _commvault_job_is_active(payload)
             }
             latest_cached_start = _latest_commvault_start_time(jobs_by_id.values())
+
+            fetch_cutoff = since
+            if latest_cached_start and (fetch_cutoff is None or latest_cached_start < fetch_cutoff):
+                fetch_cutoff = latest_cached_start
+
+            tracked_min_time: datetime | None = None
+            if tracked_job_ids:
+                for job_id in tracked_job_ids:
+                    payload = jobs_by_id.get(job_id)
+                    if not isinstance(payload, Mapping):
+                        continue
+                    start_dt = _parse_job_datetime(payload.get("start_time"))
+                    if start_dt and (tracked_min_time is None or start_dt < tracked_min_time):
+                        tracked_min_time = start_dt
+            if tracked_min_time and (fetch_cutoff is None or tracked_min_time < fetch_cutoff):
+                fetch_cutoff = tracked_min_time
+
+            cached_recent_count: int | None = None
+            if fetch_cutoff is not None:
+                recent_counter = 0
+                for payload in jobs_by_id.values():
+                    if not isinstance(payload, Mapping):
+                        continue
+                    start_dt = _parse_job_datetime(payload.get("start_time"))
+                    if start_dt and start_dt >= fetch_cutoff:
+                        recent_counter += 1
+                cached_recent_count = recent_counter
 
             try:
                 job_list = _collect_commvault_jobs_for_ui(
@@ -1981,6 +2030,8 @@ def _refresh_commvault_backups_sync(limit: int, since_hours: int) -> dict[str, A
                     since=since,
                     tracked_job_ids=tracked_job_ids,
                     latest_start=latest_cached_start,
+                    cached_recent_count=cached_recent_count,
+                    cutoff_start=fetch_cutoff,
                 )
             except CommvaultError as exc:
                 raise HTTPException(status_code=502, detail=f"Commvault error: {exc}") from exc
@@ -1990,6 +2041,8 @@ def _refresh_commvault_backups_sync(limit: int, since_hours: int) -> dict[str, A
                 jobs = [job for job in jobs if job.start_time and job.start_time >= since]
 
             rows = [_serialise_commvault_job(job) for job in jobs]
+            new_jobs_count = 0
+            updated_jobs_count = 0
             for row in rows:
                 job_id = row.get("job_id")
                 if job_id is None:
@@ -1998,7 +2051,14 @@ def _refresh_commvault_backups_sync(limit: int, since_hours: int) -> dict[str, A
                     key = int(job_id)
                 except (TypeError, ValueError):
                     continue
+                digest = _commvault_job_digest(row)
+                previous_digest = prev_digests.get(key)
+                if previous_digest is None:
+                    new_jobs_count += 1
+                elif previous_digest != digest:
+                    updated_jobs_count += 1
                 jobs_by_id[key] = row
+                prev_digests[key] = digest
 
             merged_jobs = sorted(jobs_by_id.values(), key=lambda job: _parse_job_datetime(job.get("start_time")) or datetime.min.replace(tzinfo=UTC), reverse=True)
 
@@ -2009,6 +2069,10 @@ def _refresh_commvault_backups_sync(limit: int, since_hours: int) -> dict[str, A
                 "version": 2,
                 "last_refresh_since_hours": since_hours,
                 "last_refresh_limit": limit,
+                "last_refresh_stats": {
+                    "new_jobs": new_jobs_count,
+                    "updated_jobs": updated_jobs_count,
+                },
             }
             _write_commvault_backups_json(cache_payload)
 
@@ -2021,6 +2085,8 @@ def _refresh_commvault_backups_sync(limit: int, since_hours: int) -> dict[str, A
                 "returned": len(filtered_jobs),
                 "since_hours": since_hours,
                 "limit": limit,
+                "new_jobs": new_jobs_count,
+                "updated_jobs": updated_jobs_count,
             }
 
 SUGGESTIONS_FILE = "suggestions.csv"
