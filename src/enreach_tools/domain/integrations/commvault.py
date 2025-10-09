@@ -82,6 +82,21 @@ class CommvaultStoragePoolDetails:
 
 
 @dataclass(slots=True)
+class CommvaultPlan:
+    """Summary information for a Commvault plan."""
+
+    plan_id: int | None
+    name: str
+    plan_type: str | None
+    associated_entities: int | None
+    rpo: str | None
+    copy_count: int | None
+    status: str | None
+    tags: tuple[str, ...]
+    raw: Mapping[str, object]
+
+
+@dataclass(slots=True)
 class CommvaultClientReference:
     """Lightweight identifier for a Commvault client/server."""
 

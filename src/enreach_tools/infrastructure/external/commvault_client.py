@@ -15,6 +15,7 @@ from enreach_tools.domain.integrations.commvault import (
     CommvaultClientSummary,
     CommvaultJob,
     CommvaultJobList,
+    CommvaultPlan,
     CommvaultStoragePool,
     CommvaultStoragePoolDetails,
 )
@@ -257,6 +258,48 @@ class CommvaultClient:
                 )
             )
         return tuple(refs)
+
+    def list_plans(
+        self,
+        *,
+        limit: int = 200,
+        offset: int = 0,
+        plan_type: str | None = None,
+    ) -> tuple[CommvaultPlan, ...]:
+        """Return summary information for Commvault plans."""
+
+        params: dict[str, Any] = {"limit": max(1, limit)}
+        if offset:
+            params["offset"] = max(0, offset)
+        if plan_type:
+            params["planType"] = plan_type
+
+        data = self._request("GET", "Plan", params=params)
+        plans_payload = _extract_plans_payload(data)
+        plans: list[CommvaultPlan] = []
+        for payload in plans_payload:
+            if not isinstance(payload, Mapping):
+                continue
+            plan = _parse_plan_summary(payload)
+            if plan is not None:
+                plans.append(plan)
+        return tuple(plans)
+
+    def get_plan_details(self, plan_id: int) -> Mapping[str, Any]:
+        """Return detailed information for a specific Commvault plan."""
+
+        data = self._request("GET", f"Plan/{plan_id}")
+        if not isinstance(data, Mapping):
+            return {}
+        detail = data.get("planDetail")
+        if isinstance(detail, Mapping):
+            return detail
+        details = data.get("planDetails")
+        if isinstance(details, Sequence) and details:
+            first = details[0]
+            if isinstance(first, Mapping):
+                return first
+        return data
 
     def _get_client_job_metrics(
         self,
@@ -618,6 +661,276 @@ def _extract_plan_name(summary: Mapping[str, Any], client_groups: tuple[str, ...
     if fallback:
         return fallback[0]
     return client_groups[0] if client_groups else None
+
+
+_PLAN_TYPE_LABELS: dict[int, str] = {
+    2: "Server",
+}
+
+
+def _extract_plans_payload(data: Mapping[str, Any]) -> Sequence[Any]:
+    if isinstance(data, Sequence):
+        return data
+    for key in (
+        "plans",
+        "planList",
+        "planDetails",
+        "planSummary",
+        "planSummaryList",
+        "plan",
+        "items",
+        "plansList",
+    ):
+        value = data.get(key)
+        if isinstance(value, Sequence):
+            return value
+    single = data.get("planDetail") or data.get("plan")
+    if isinstance(single, Mapping):
+        return [single]
+    return []
+
+
+def _parse_plan_summary(payload: Mapping[str, Any]) -> CommvaultPlan | None:
+    merged = dict(payload)
+    for key in (
+        "planDetail",
+        "planInfo",
+        "planProperties",
+        "planSummary",
+        "plan",
+        "summary",
+    ):
+        nested = payload.get(key)
+        if isinstance(nested, Mapping):
+            for nested_key, nested_value in nested.items():
+                merged.setdefault(nested_key, nested_value)
+
+    plan_id = _to_int(
+        merged.get("planId")
+        or merged.get("planID")
+        or merged.get("id")
+        or merged.get("planGuid")
+    )
+    name = _to_optional_str(
+        merged.get("planName")
+        or merged.get("name")
+        or merged.get("displayName")
+        or merged.get("plan")
+    )
+    if not name:
+        if plan_id is not None:
+            name = f"Plan {plan_id}"
+        else:
+            name = "Unnamed plan"
+
+    plan_type_text = _to_optional_str(
+        merged.get("planType")
+        or merged.get("plan_type")
+        or merged.get("planCategory")
+    )
+    plan_type_code = _to_int(
+        merged.get("type")
+        or merged.get("planType")
+        or merged.get("plan_type_code")
+    )
+    if plan_type_code is not None:
+        plan_type_text = _PLAN_TYPE_LABELS.get(plan_type_code, plan_type_text or str(plan_type_code))
+    elif plan_type_text and plan_type_text.isdigit():
+        plan_type_text = _PLAN_TYPE_LABELS.get(int(plan_type_text), plan_type_text)
+
+    summary_fields: dict[str, str] = {}
+    plan_section = merged.get("plan")
+    if isinstance(plan_section, Mapping):
+        summary_fields = _parse_plan_summary_text(plan_section.get("planSummary"))
+
+    associated_entities = _to_int(
+        merged.get("associatedEntitiesCount")
+        or merged.get("associatedEntities")
+        or merged.get("noOfAssociations")
+        or merged.get("numberOfClients")
+        or merged.get("numberOfSubclients")
+        or merged.get("entityCount")
+        or merged.get("entitiesCount")
+        or merged.get("numAssocEntities")
+    )
+    if associated_entities is None and summary_fields.get("AssociatedEntitiesCount"):
+        associated_entities = _to_int(summary_fields.get("AssociatedEntitiesCount"))
+
+    copy_count = _to_int(
+        merged.get("numberOfCopies")
+        or merged.get("copiesCount")
+        or merged.get("copyCount")
+        or merged.get("numCopies")
+    )
+    if copy_count is None:
+        copies = merged.get("storagePolicies") or merged.get("storageCopyPolicies")
+        if isinstance(copies, Sequence):
+            copy_count = len(copies)
+    if copy_count is None and summary_fields.get("NumberOfCopies"):
+        copy_count = _to_int(summary_fields.get("NumberOfCopies"))
+
+    status = _to_optional_str(
+        merged.get("status")
+        or merged.get("planStatus")
+        or merged.get("state")
+        or merged.get("statusName")
+    )
+
+    rpo = _extract_plan_rpo(merged)
+    tags = _extract_plan_tags(payload, merged)
+
+    return CommvaultPlan(
+        plan_id=plan_id,
+        name=name,
+        plan_type=plan_type_text,
+        associated_entities=associated_entities,
+        rpo=rpo,
+        copy_count=copy_count,
+        status=status,
+        tags=tags,
+        raw=payload,
+    )
+
+
+def _extract_plan_rpo(payload: Mapping[str, Any]) -> str | None:
+    plan_section = payload.get("plan")
+    summary_fields: dict[str, str] = {}
+    if isinstance(plan_section, Mapping):
+        summary_fields = _parse_plan_summary_text(plan_section.get("planSummary"))
+    result: str | None = None
+    if summary_fields:
+        rpo_hours = _to_int(summary_fields.get("RPOHours"))
+        if rpo_hours is not None:
+            result = _format_hours_label(rpo_hours)
+        if result is None:
+            rpo_minutes_field = summary_fields.get("RPOInMinutes") or summary_fields.get("RpoInMinutes")
+            if rpo_minutes_field is not None:
+                rpo_minutes = _to_int(rpo_minutes_field)
+                if rpo_minutes is not None:
+                    result = _format_minutes_label(rpo_minutes)
+
+    if result is None:
+        for key in ("formattedRpo", "displayRpo", "rpo", "rpoLabel", "planRpo", "rpoText"):
+            value = payload.get(key)
+            text = _normalise_plan_string(value)
+            if text:
+                result = text
+                break
+
+    if result is None:
+        plan_sla = payload.get("planSla") or payload.get("sla") or payload.get("slaInfo")
+        if isinstance(plan_sla, Mapping):
+            for key in ("formattedRpo", "displayValue", "displayString", "rpoString", "rpoLabel", "rpo"):
+                value = plan_sla.get(key)
+                text = _normalise_plan_string(value)
+                if text:
+                    result = text
+                    break
+            if result is None:
+                hours = _to_int(plan_sla.get("rpoInHours") or plan_sla.get("rpoHours"))
+                if hours is not None:
+                    result = _format_hours_label(hours)
+                else:
+                    minutes = _to_int(plan_sla.get("rpoInMinutes"))
+                    if minutes is not None:
+                        result = _format_minutes_label(minutes)
+
+    if result is None:
+        hours = _to_int(payload.get("rpoInHours") or payload.get("rpoHours"))
+        if hours is not None:
+            result = _format_hours_label(hours)
+        else:
+            minutes = _to_int(payload.get("rpoInMinutes"))
+            if minutes is not None:
+                result = _format_minutes_label(minutes)
+
+    return result
+
+
+def _normalise_plan_string(value: Any) -> str | None:
+    if isinstance(value, Mapping):
+        for key in ("displayValue", "displayString", "name", "value", "label", "text"):
+            nested = value.get(key)
+            if nested:
+                return str(nested)
+        return None
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _format_hours_label(hours: int) -> str:
+    if hours < 0:
+        hours = abs(hours)
+    if hours == 0:
+        return "0 hours"
+    if hours % 24 == 0:
+        days = hours // 24
+        return f"{days} day" if days == 1 else f"{days} days"
+    return f"{hours} hour" if hours == 1 else f"{hours} hours"
+
+
+def _format_minutes_label(minutes: int) -> str:
+    if minutes < 0:
+        minutes = abs(minutes)
+    if minutes == 0:
+        return "0 minutes"
+    if minutes % 1440 == 0:
+        days = minutes // 1440
+        return f"{days} day" if days == 1 else f"{days} days"
+    if minutes % 60 == 0:
+        hours = minutes // 60
+        return _format_hours_label(hours)
+    return f"{minutes} minute" if minutes == 1 else f"{minutes} minutes"
+
+
+def _parse_plan_summary_text(value: Any) -> dict[str, str]:
+    if not isinstance(value, str):
+        return {}
+    result: dict[str, str] = {}
+    for segment in value.split(","):
+        if ":" not in segment:
+            continue
+        key, raw_val = segment.split(":", 1)
+        key = key.strip()
+        val = raw_val.strip()
+        if key:
+            result[key] = val
+    return result
+
+
+def _extract_plan_tags(*payloads: Mapping[str, Any]) -> tuple[str, ...]:
+    tags: list[str] = []
+    seen: set[str] = set()
+
+    def _add(tag_value: Any) -> None:
+        text = _normalise_plan_string(tag_value)
+        if not text:
+            return
+        key = text.casefold()
+        if key in seen:
+            return
+        seen.add(key)
+        tags.append(text)
+
+    for payload in payloads:
+        for key in ("planTags", "tags", "tagList"):
+            value = payload.get(key)
+            if isinstance(value, Sequence):
+                for entry in value:
+                    if isinstance(entry, Mapping):
+                        for nested_key in ("name", "tagName", "displayName", "value", "label"):
+                            nested_value = entry.get(nested_key)
+                            if nested_value is not None:
+                                _add(nested_value)
+                                break
+                    elif entry is not None:
+                        _add(entry)
+            elif value is not None:
+                _add(value)
+
+    return tuple(tags)
 
 
 def _to_str(value: Any) -> str:

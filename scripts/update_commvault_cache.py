@@ -11,7 +11,11 @@ from typing import Any
 from fastapi import HTTPException
 from rich import print
 
-from enreach_tools.api.app import _refresh_commvault_backups_sync, _refresh_commvault_storage_sync
+from enreach_tools.api.app import (
+    _refresh_commvault_backups_sync,
+    _refresh_commvault_plans_sync,
+    _refresh_commvault_storage_sync,
+)
 
 try:  # optional dependency; only present when TLS warnings emitted
     from urllib3 import disable_warnings
@@ -57,6 +61,11 @@ def main() -> None:
         action="store_true",
         help="Skip refreshing Commvault storage pool cache.",
     )
+    parser.add_argument(
+        "--skip-plans",
+        action="store_true",
+        help="Skip refreshing Commvault plan cache.",
+    )
     args = parser.parse_args()
 
     if args.since_hours < 0:
@@ -89,30 +98,54 @@ def main() -> None:
     if generated_at:
         print(f"[dim]Cache timestamp: {generated_at}[/dim]")
 
-    if args.skip_storage:
+    if args.skip_storage and args.skip_plans:
+        return
+
+    if not args.skip_storage:
+        try:
+            storage_payload: dict[str, Any] = _refresh_commvault_storage_sync()
+        except HTTPException as exc:
+            detail = exc.detail if hasattr(exc, "detail") else str(exc)
+            print(f"[yellow]Storage cache refresh failed:[/yellow] {detail}")
+            print('[dim]Storage cache was not refreshed; existing cache (if any) remains untouched.[/dim]')
+        else:
+            pools = storage_payload.get("pools") or []
+            total_cached_pools = storage_payload.get("total_cached", len(pools))
+            storage_generated_at = storage_payload.get("generated_at")
+
+            total_capacity = sum(p.get("total_capacity_bytes") or 0 for p in pools)
+            used_capacity = sum(p.get("used_bytes") or 0 for p in pools)
+
+            print(
+                f"[green]Commvault storage cache updated:[/green] {total_cached_pools} pool(s)"
+                f" — total capacity {format_bytes(total_capacity)}, used {format_bytes(used_capacity)}"
+            )
+            if storage_generated_at:
+                print(f"[dim]Storage cache timestamp: {storage_generated_at}[/dim]")
+
+    if args.skip_plans:
         return
 
     try:
-        storage_payload: dict[str, Any] = _refresh_commvault_storage_sync()
+        plans_payload: dict[str, Any] = _refresh_commvault_plans_sync()
     except HTTPException as exc:
         detail = exc.detail if hasattr(exc, "detail") else str(exc)
-        print(f"[yellow]Storage cache refresh failed:[/yellow] {detail}")
-        print('[dim]Storage cache was not refreshed; existing cache (if any) remains untouched.[/dim]')
+        print(f"[yellow]Plan cache refresh failed:[/yellow] {detail}")
+        print('[dim]Plan cache was not refreshed; existing cache (if any) remains untouched.[/dim]')
         return
 
-    pools = storage_payload.get("pools") or []
-    total_cached_pools = storage_payload.get("total_cached", len(pools))
-    storage_generated_at = storage_payload.get("generated_at")
+    plans = plans_payload.get("plans") or []
+    total_cached_plans = plans_payload.get("total_cached", len(plans))
+    plan_generated_at = plans_payload.get("generated_at")
+    plan_types = plans_payload.get("plan_types") or []
 
-    total_capacity = sum(p.get("total_capacity_bytes") or 0 for p in pools)
-    used_capacity = sum(p.get("used_bytes") or 0 for p in pools)
+    summary_bits = [f"{total_cached_plans} plan(s)"]
+    if plan_types:
+        summary_bits.append(f"types: {', '.join(str(t) for t in plan_types[:6])}{'…' if len(plan_types) > 6 else ''}")
 
-    print(
-        f"[green]Commvault storage cache updated:[/green] {total_cached_pools} pool(s)"
-        f" — total capacity {format_bytes(total_capacity)}, used {format_bytes(used_capacity)}"
-    )
-    if storage_generated_at:
-        print(f"[dim]Storage cache timestamp: {storage_generated_at}[/dim]")
+    print(f"[green]Commvault plan cache updated:[/green] {' — '.join(summary_bits)}")
+    if plan_generated_at:
+        print(f"[dim]Plan cache timestamp: {plan_generated_at}[/dim]")
 
 
 def format_bytes(value: int | None) -> str:

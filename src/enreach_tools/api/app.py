@@ -13,15 +13,15 @@ import time
 import uuid
 import warnings
 from collections import Counter
-from collections.abc import Collection, Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from zoneinfo import ZoneInfo
 from io import BytesIO, StringIO
 from pathlib import Path
 from threading import Lock
 from typing import Annotated, Any, Literal
+from zoneinfo import ZoneInfo
 
 import duckdb
 import numpy as np
@@ -59,7 +59,7 @@ from enreach_tools.application.dto import (
     suggestion_to_dto,
     suggestions_to_dto,
 )
-from enreach_tools.application.role_defaults import DEFAULT_ROLE_DEFINITIONS, ROLE_CAPABILITIES
+from enreach_tools.application.role_defaults import DEFAULT_ROLE_DEFINITIONS
 from enreach_tools.application.security import hash_password, verify_password
 from enreach_tools.db import get_sessionmaker, init_database
 from enreach_tools.db.models import (
@@ -73,6 +73,7 @@ from enreach_tools.db.models import (
 from enreach_tools.domain.integrations.commvault import (
     CommvaultJob,
     CommvaultJobList,
+    CommvaultPlan,
     CommvaultStoragePool,
 )
 from enreach_tools.env import load_env, project_root
@@ -468,7 +469,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     request.state.user = user
                     request.state.permissions = perms
                     try:
-                        setattr(user, "permissions", perms)
+                        user.permissions = perms
                     except Exception:
                         pass
                 else:
@@ -694,8 +695,14 @@ LOG_PATH = project_root() / "export.log"
 
 COMMVAULT_BACKUPS_JSON = "commvault_backups.json"
 COMMVAULT_STORAGE_JSON = "commvault_storage.json"
+COMMVAULT_PLANS_JSON = "commvault_plans.json"
+COMMVAULT_DEFAULT_PLAN_NAME = "Unassigned"
+COMMVAULT_PLAN_TYPE_LABELS: dict[int, str] = {
+    2: "Server",
+}
 _commvault_backups_lock = Lock()
 _commvault_storage_lock = Lock()
+_commvault_plans_lock = Lock()
 
 
 def _commvault_client_from_env() -> CommvaultClient:
@@ -890,6 +897,20 @@ def _serialise_commvault_job(job: CommvaultJob) -> dict[str, Any]:
     }
 
 
+def _serialise_commvault_plan(plan: CommvaultPlan) -> dict[str, Any]:
+    return {
+        "plan_id": plan.plan_id,
+        "name": plan.name,
+        "plan_type": plan.plan_type,
+        "associated_entities": plan.associated_entities,
+        "rpo": plan.rpo,
+        "copy_count": plan.copy_count,
+        "status": plan.status,
+        "tags": list(plan.tags),
+        "raw": plan.raw,
+    }
+
+
 def _write_commvault_backups_json(payload: Mapping[str, Any]) -> None:
     path = _data_dir() / COMMVAULT_BACKUPS_JSON
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -900,6 +921,14 @@ def _write_commvault_backups_json(payload: Mapping[str, Any]) -> None:
 
 def _write_commvault_storage_json(payload: Mapping[str, Any]) -> None:
     path = _data_dir() / COMMVAULT_STORAGE_JSON
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
+    tmp.replace(path)
+
+
+def _write_commvault_plans_json(payload: Mapping[str, Any]) -> None:
+    path = _data_dir() / COMMVAULT_PLANS_JSON
     tmp = path.with_suffix(path.suffix + ".tmp")
     with tmp.open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2)
@@ -942,6 +971,40 @@ def _load_commvault_backups() -> dict[str, Any]:
     }
 
 
+def _load_commvault_plans() -> dict[str, Any]:
+    path = _data_dir() / COMMVAULT_PLANS_JSON
+    if not path.exists():
+        return {
+            "plans": [],
+            "generated_at": None,
+            "total_cached": 0,
+            "plan_types": [],
+            "version": 1,
+        }
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+            if isinstance(data, Mapping):
+                plans = list(data.get("plans") or [])
+                plan_types = list(data.get("plan_types") or [])
+                return {
+                    "plans": plans,
+                    "generated_at": data.get("generated_at"),
+                    "total_cached": data.get("total_cached", len(plans)),
+                    "plan_types": plan_types,
+                    "version": data.get("version", 1),
+                }
+    except Exception:
+        logger.exception("Failed to load cached Commvault plans", extra={"event": "commvault_plan_cache_error"})
+    return {
+        "plans": [],
+        "generated_at": None,
+        "total_cached": 0,
+        "plan_types": [],
+        "version": 1,
+    }
+
+
 def _parse_job_datetime(value: Any) -> datetime | None:
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=UTC)
@@ -970,6 +1033,10 @@ def _filter_commvault_jobs(jobs: Iterable[Mapping[str, Any]], since_hours: int) 
 
 _ACTIVE_STATUS_KEYWORDS = ("running", "pending", "waiting", "queued", "active", "suspended", "in progress")
 
+_FAILURE_STATUS_KEYWORDS = ("fail", "error", "denied", "invalid", "timeout", "timed out", "kill")
+_SUCCESS_STATUS_KEYWORDS = ("complete", "success", "ok", "done")
+_WARNING_STATUS_KEYWORDS = ("warning", "partial", "skipped")
+
 
 def _commvault_job_digest(job: Mapping[str, Any]) -> str:
     try:
@@ -988,6 +1055,242 @@ def _commvault_job_is_active(job: Mapping[str, Any]) -> bool:
             return True
     end_time = _parse_job_datetime(job.get("end_time"))
     return end_time is None
+
+
+def _normalise_commvault_plan_name(value: Any) -> str:
+    if isinstance(value, str):
+        text = value.strip()
+        if text:
+            return text
+    if value is None:
+        return COMMVAULT_DEFAULT_PLAN_NAME
+    text = str(value).strip()
+    return text or COMMVAULT_DEFAULT_PLAN_NAME
+
+
+def _normalise_commvault_status(value: Any) -> str:
+    if isinstance(value, str):
+        text = value.strip()
+        if text:
+            return text
+    if value is None:
+        return "Unknown"
+    text = str(value).strip()
+    return text or "Unknown"
+
+
+def _commvault_status_failed(status: str) -> bool:
+    lowered = status.casefold()
+    return any(keyword in lowered for keyword in _FAILURE_STATUS_KEYWORDS)
+
+
+def _commvault_status_successful(status: str) -> bool:
+    if _commvault_status_failed(status):
+        return False
+    lowered = status.casefold()
+    return any(keyword in lowered for keyword in _SUCCESS_STATUS_KEYWORDS)
+
+
+def _commvault_status_warning(status: str) -> bool:
+    if _commvault_status_failed(status) or _commvault_status_successful(status):
+        return False
+    lowered = status.casefold()
+    return any(keyword in lowered for keyword in _WARNING_STATUS_KEYWORDS)
+
+
+def _summarise_commvault_plans(jobs: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    plan_records: dict[str, Any] = {}
+    total_jobs = 0
+    active_jobs = 0
+    global_status = Counter()
+    global_success = 0
+    global_failure = 0
+    unique_clients: set[str] = set()
+    now = datetime.now(tz=UTC)
+
+    for payload in jobs:
+        if not isinstance(payload, Mapping):
+            continue
+
+        total_jobs += 1
+        plan_display = _normalise_commvault_plan_name(payload.get("plan_name"))
+        plan_key = plan_display.casefold()
+        bucket = plan_records.setdefault(
+            plan_key,
+            {
+                "plan_name": plan_display,
+                "job_count": 0,
+                "clients": Counter(),
+                "applications": Counter(),
+                "subclients": Counter(),
+                "status_counts": Counter(),
+                "success_count": 0,
+                "failed_count": 0,
+                "warning_count": 0,
+                "active_jobs": 0,
+                "retained_jobs": 0,
+                "total_application_bytes": 0,
+                "total_media_bytes": 0,
+                "savings_total": 0.0,
+                "savings_samples": 0,
+                "latest_start": None,
+                "latest_job": None,
+            },
+        )
+        if bucket["plan_name"] == COMMVAULT_DEFAULT_PLAN_NAME and plan_display != COMMVAULT_DEFAULT_PLAN_NAME:
+            bucket["plan_name"] = plan_display
+
+        bucket["job_count"] += 1
+
+        status_label = _normalise_commvault_status(payload.get("localized_status") or payload.get("status"))
+        bucket["status_counts"][status_label] += 1
+        global_status[status_label] += 1
+        if _commvault_status_failed(status_label):
+            bucket["failed_count"] += 1
+            global_failure += 1
+        elif _commvault_status_successful(status_label):
+            bucket["success_count"] += 1
+            global_success += 1
+        elif _commvault_status_warning(status_label):
+            bucket["warning_count"] += 1
+
+        if _commvault_job_is_active(payload):
+            bucket["active_jobs"] += 1
+            active_jobs += 1
+
+        client_label = payload.get("client_name") or payload.get("destination_client_name")
+        if client_label:
+            client_name = str(client_label).strip()
+            if client_name:
+                bucket["clients"][client_name] += 1
+                unique_clients.add(client_name)
+
+        application = payload.get("application_name")
+        if application:
+            app_name = str(application).strip()
+            if app_name:
+                bucket["applications"][app_name] += 1
+
+        subclient_label = payload.get("subclient_name") or payload.get("backup_set_name")
+        if subclient_label:
+            subclient_name = str(subclient_label).strip()
+            if subclient_name:
+                bucket["subclients"][subclient_name] += 1
+
+        retain_until = _parse_job_datetime(payload.get("retain_until"))
+        if retain_until and retain_until > now:
+            bucket["retained_jobs"] += 1
+
+        try:
+            bucket["total_application_bytes"] += int(payload.get("size_of_application_bytes") or 0)
+        except (TypeError, ValueError):
+            pass
+        try:
+            bucket["total_media_bytes"] += int(payload.get("size_on_media_bytes") or 0)
+        except (TypeError, ValueError):
+            pass
+
+        try:
+            savings_value = float(payload.get("percent_savings"))
+        except (TypeError, ValueError):
+            savings_value = None
+        if savings_value is not None:
+            bucket["savings_total"] += savings_value
+            bucket["savings_samples"] += 1
+
+        start_dt = _parse_job_datetime(payload.get("start_time"))
+        if start_dt and (bucket["latest_start"] is None or start_dt > bucket["latest_start"]):
+            bucket["latest_start"] = start_dt
+            bucket["latest_job"] = {
+                "job_id": payload.get("job_id"),
+                "job_type": payload.get("job_type"),
+                "status": payload.get("status"),
+                "localized_status": payload.get("localized_status"),
+                "client_name": payload.get("client_name"),
+                "destination_client_name": payload.get("destination_client_name"),
+                "subclient_name": payload.get("subclient_name"),
+                "application_name": payload.get("application_name"),
+                "backup_level_name": payload.get("backup_level_name"),
+                "plan_name": plan_display,
+                "start_time": payload.get("start_time"),
+                "end_time": payload.get("end_time"),
+                "size_of_application_bytes": payload.get("size_of_application_bytes"),
+                "size_on_media_bytes": payload.get("size_on_media_bytes"),
+                "percent_savings": payload.get("percent_savings"),
+            }
+
+    plans: list[dict[str, Any]] = []
+    for bucket in plan_records.values():
+        clients_counter: Counter[str] = bucket["clients"]
+        applications_counter: Counter[str] = bucket["applications"]
+        subclients_counter: Counter[str] = bucket["subclients"]
+        status_counter: Counter[str] = bucket["status_counts"]
+        savings_count = bucket["savings_samples"] or 0
+        average_savings = bucket["savings_total"] / savings_count if savings_count else None
+        job_count = bucket["job_count"] or 0
+
+        plans.append(
+            {
+                "plan_name": bucket["plan_name"],
+                "job_count": job_count,
+                "client_count": len(clients_counter),
+                "clients": [
+                    {"name": name, "count": count}
+                    for name, count in sorted(
+                        clients_counter.items(), key=lambda item: (-item[1], item[0].casefold())
+                    )
+                ],
+                "applications": [
+                    {"name": name, "count": count}
+                    for name, count in sorted(
+                        applications_counter.items(), key=lambda item: (-item[1], item[0].casefold())
+                    )
+                ],
+                "subclients": [
+                    {"name": name, "count": count}
+                    for name, count in sorted(
+                        subclients_counter.items(), key=lambda item: (-item[1], item[0].casefold())
+                    )
+                ],
+                "status_counts": [
+                    {"status": name, "count": count}
+                    for name, count in sorted(
+                        status_counter.items(), key=lambda item: (-item[1], item[0].casefold())
+                    )
+                ],
+                "success_count": bucket["success_count"],
+                "failed_count": bucket["failed_count"],
+                "warning_count": bucket["warning_count"],
+                "active_jobs": bucket["active_jobs"],
+                "retained_jobs": bucket["retained_jobs"],
+                "total_application_bytes": bucket["total_application_bytes"],
+                "total_media_bytes": bucket["total_media_bytes"],
+                "average_savings_percent": average_savings,
+                "latest_job": bucket["latest_job"],
+                "latest_job_start": bucket["latest_start"].isoformat() if bucket["latest_start"] else None,
+                "success_rate": (bucket["success_count"] / job_count * 100.0) if job_count else None,
+                "failure_rate": (bucket["failed_count"] / job_count * 100.0) if job_count else None,
+            }
+        )
+
+    plans.sort(key=lambda plan: (-plan["job_count"], plan["plan_name"].casefold()))
+
+    total_success = sum(plan["success_count"] for plan in plans)
+    total_failure = sum(plan["failed_count"] for plan in plans)
+
+    return {
+        "plans": plans,
+        "total_plans": len(plans),
+        "total_jobs": total_jobs,
+        "active_jobs": active_jobs,
+        "unique_clients": len(unique_clients),
+        "status_counts": [
+            {"status": name, "count": count}
+            for name, count in sorted(global_status.items(), key=lambda item: (-item[1], item[0].casefold()))
+        ],
+        "success_rate": (total_success / total_jobs * 100.0) if total_jobs else None,
+        "failure_rate": (total_failure / total_jobs * 100.0) if total_jobs else None,
+    }
 
 
 def _latest_commvault_start_time(jobs: Iterable[Mapping[str, Any]]) -> datetime | None:
@@ -1193,6 +1496,46 @@ def _format_bytes_for_report(value: int | float | None) -> str:
         idx += 1
     precision = 0 if size >= 100 else 1 if size >= 10 else 2
     return f"{size:.{precision}f} {units[idx]}"
+
+
+def _format_minutes_label(value: int | None) -> str | None:
+    if value is None:
+        return None
+    minutes = int(value)
+    if minutes < 0:
+        minutes = abs(minutes)
+    if minutes == 0:
+        return "0 minutes"
+    if minutes % 1440 == 0:
+        days = minutes // 1440
+        return f"{days} day" if days == 1 else f"{days} days"
+    if minutes % 60 == 0:
+        hours = minutes // 60
+        return f"{hours} hour" if hours == 1 else f"{hours} hours"
+    return f"{minutes} minute" if minutes == 1 else f"{minutes} minutes"
+
+
+def _plan_status_from_flag(flag: int | None) -> str | None:
+    if flag is None:
+        return None
+    if flag == 0:
+        return "Enabled"
+    if flag == 1:
+        return "Disabled"
+    if flag == 2:
+        return "Retired"
+    return f"Flag {flag}"
+
+
+def _label_commvault_plan_type(code: int | None, fallback: str | None = None) -> str | None:
+    if code is None:
+        return fallback
+    label = COMMVAULT_PLAN_TYPE_LABELS.get(code)
+    if label:
+        return label
+    if fallback:
+        return fallback
+    return str(code)
 
 
 def _compute_commvault_server_metrics(jobs: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1925,6 +2268,106 @@ def _summarise_storage_pool(
         "raw": pool.raw,
         "details": details,
     }
+
+
+def _enrich_commvault_plan_row(row: dict[str, Any], detail: Mapping[str, Any]) -> None:
+    plan_section = detail.get("plan") if isinstance(detail.get("plan"), Mapping) else detail
+    summary = plan_section.get("summary") if isinstance(plan_section.get("summary"), Mapping) else {}
+    plan_info = summary.get("plan") if isinstance(summary.get("plan"), Mapping) else {}
+
+    plan_type_code = _safe_int(plan_info.get("planType") or summary.get("type"))
+    if plan_type_code is not None:
+        row["plan_type"] = _label_commvault_plan_type(plan_type_code, row.get("plan_type"))
+    elif isinstance(row.get("plan_type"), str) and row["plan_type"].isdigit():
+        row["plan_type"] = _label_commvault_plan_type(_safe_int(row["plan_type"]), row["plan_type"])
+
+    status_flag = _safe_int(summary.get("planStatusFlag"))
+    status_label = _plan_status_from_flag(status_flag)
+    if status_label:
+        row["status"] = status_label
+
+    rpo_minutes = _safe_int(summary.get("rpoInMinutes"))
+    if rpo_minutes is None:
+        rpo_minutes = _safe_int(summary.get("slaInMinutes"))
+    rpo_label = _format_minutes_label(rpo_minutes)
+    if rpo_label:
+        row["rpo"] = rpo_label
+
+    if not row.get("associated_entities"):
+        assoc = plan_section.get("associatedEntitiesCount")
+        total = 0
+        if isinstance(assoc, Mapping):
+            all_clients = assoc.get("allClients")
+            if isinstance(all_clients, Sequence):
+                for item in all_clients:
+                    if not isinstance(item, Mapping):
+                        continue
+                    count = _safe_int(item.get("count"))
+                    if count:
+                        total += count
+        if total:
+            row["associated_entities"] = total
+
+    if not row.get("copy_count"):
+        num_copies = _safe_int(plan_section.get("numCopies")) or _safe_int(summary.get("numCopies"))
+        if num_copies:
+            row["copy_count"] = num_copies
+
+
+def _refresh_commvault_plans_sync(limit: int | None = None, plan_type: str | None = None) -> dict[str, Any]:
+    fetch_limit = 500 if limit is None else max(1, limit)
+
+    with _commvault_plans_lock:
+        with task_logging("commvault.plans.refresh", limit=fetch_limit, plan_type=plan_type) as task_log:
+            try:
+                client = _commvault_client_from_env()
+            except RuntimeError as exc:
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+            try:
+                plans = client.list_plans(limit=fetch_limit, plan_type=plan_type)
+            except CommvaultError as exc:
+                raise HTTPException(status_code=502, detail=f"Commvault error: {exc}") from exc
+
+            plan_details: dict[int, Mapping[str, Any]] = {}
+            for plan in plans:
+                if plan.plan_id is None:
+                    continue
+                try:
+                    plan_details[plan.plan_id] = client.get_plan_details(plan.plan_id)
+                except CommvaultError as exc:
+                    logger.warning(
+                        "Failed to load plan details",
+                        extra={"event": "commvault_plan_detail_error", "plan_id": plan.plan_id, "error": str(exc)},
+                    )
+
+            rows: list[dict[str, Any]] = []
+            for plan in plans:
+                row = _serialise_commvault_plan(plan)
+                detail = plan_details.get(plan.plan_id or -1)
+                if detail:
+                    _enrich_commvault_plan_row(row, detail)
+                rows.append(row)
+
+            plan_types = sorted(
+                {
+                    str(row.get("plan_type")).strip()
+                    for row in rows
+                    if isinstance(row.get("plan_type"), str) and str(row.get("plan_type")).strip()
+                },
+                key=str.casefold,
+            )
+
+            payload: dict[str, Any] = {
+                "plans": rows,
+                "generated_at": datetime.now(tz=UTC).isoformat(),
+                "total_cached": len(rows),
+                "plan_types": plan_types,
+                "version": 1,
+            }
+            _write_commvault_plans_json(payload)
+            task_log.add_success(plans=len(rows), plan_types=len(plan_types))
+            return payload
 
 
 def _refresh_commvault_storage_sync() -> dict[str, Any]:
@@ -4845,6 +5288,61 @@ def commvault_backups_data(
         "returned": len(filtered),
         "since_hours": since_hours,
     }
+
+
+@app.get("/commvault/plans")
+def commvault_plans_data(
+    refresh: int = Query(0, ge=0, le=1, description="Force refresh of the Commvault plan cache."),
+    plan_type: str | None = Query(None, description="Optional case-insensitive plan type filter."),
+    limit: int | None = Query(None, ge=1, le=1000, description="Maximum number of plans to return."),
+) -> dict[str, Any]:
+    """Return cached Commvault plan definitions for the dashboard."""
+
+    cache = _load_commvault_plans()
+    if refresh == 1 or not cache.get("plans"):
+        try:
+            cache = _refresh_commvault_plans_sync(limit=None, plan_type=None)
+        except HTTPException as exc:
+            if cache.get("plans"):
+                logger.warning(
+                    "Commvault plan refresh failed; serving cached data",
+                    extra={"event": "commvault_plan_refresh_failed", "error": exc.detail if hasattr(exc, "detail") else str(exc)},
+                )
+            else:
+                raise
+
+    plans_payload = list(cache.get("plans") or [])
+    plan_type_norm = plan_type.strip().casefold() if plan_type else None
+    filtered: list[Mapping[str, Any]] = []
+    if plan_type_norm:
+        for plan in plans_payload:
+            plan_type_value = str(plan.get("plan_type") or "").strip().casefold()
+            if plan_type_value == plan_type_norm:
+                filtered.append(plan)
+    else:
+        filtered = plans_payload
+
+    if limit is not None:
+        filtered = filtered[:limit]
+
+    return {
+        "plans": filtered,
+        "total_cached": cache.get("total_cached", len(plans_payload)),
+        "generated_at": cache.get("generated_at"),
+        "plan_types": cache.get("plan_types") or [],
+        "requested_plan_type": plan_type,
+        "returned": len(filtered),
+        "version": cache.get("version", 1),
+    }
+
+
+@app.post("/commvault/plans/refresh")
+async def commvault_plans_refresh(
+    limit: int = Query(0, ge=0, le=1000, description="Maximum number of plans to fetch (0 = default)."),
+    plan_type: str | None = Query(None, description="Restrict refresh to a specific plan type."),
+) -> dict[str, Any]:
+    fetch_limit = None if limit == 0 else limit
+    return await asyncio.to_thread(_refresh_commvault_plans_sync, fetch_limit, plan_type)
 
 
 @app.post("/commvault/backups/refresh")

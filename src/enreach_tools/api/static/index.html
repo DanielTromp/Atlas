@@ -161,6 +161,7 @@
         <div class="panel panel-commvault">
           <nav class="tabs" id="commvault-tabs" aria-label="Commvault datasets">
             <button class="tab active" data-commvault-tab="backups">Backups</button>
+            <button class="tab" data-commvault-tab="plans">Plans</button>
             <button class="tab" data-commvault-tab="storage">Storage</button>
             <button class="tab" data-commvault-tab="servers">Servers</button>
           </nav>
@@ -218,6 +219,47 @@
                   <tbody id="commvault-table-body">
                     <tr class="empty">
                       <td colspan="14">Commvault backups have not been loaded yet.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="commvault-panel" data-commvault-panel="plans" hidden>
+              <div class="commvault-toolbar">
+                <div class="commvault-toolbar-overview">
+                  <h2 class="commvault-title">Plans</h2>
+                  <span id="commvault-plans-summary" class="commvault-summary">No plan data loaded.</span>
+                </div>
+                <div class="commvault-actions">
+                  <button id="commvault-plans-refresh" class="btn" type="button">Refresh plans</button>
+                </div>
+              </div>
+              <div class="commvault-filters">
+                <label class="field column">
+                  <span>Plan type</span>
+                  <select id="commvault-plans-type">
+                    <option value="all" selected>All plan types</option>
+                  </select>
+                </label>
+              </div>
+              <div id="commvault-plans-status" class="commvault-status" hidden></div>
+              <div class="commvault-table-wrapper">
+                <table class="commvault-table compact commvault-plan-table">
+                  <thead>
+                    <tr>
+                      <th class="plan-name">Plan</th>
+                      <th>Type</th>
+                      <th>Entities</th>
+                      <th>RPO</th>
+                      <th>Copies</th>
+                      <th>Status</th>
+                      <th>Tags</th>
+                    </tr>
+                  </thead>
+                  <tbody id="commvault-plans-table-body">
+                    <tr class="empty">
+                      <td colspan="7">Commvault plan data not loaded yet.</td>
                     </tr>
                   </tbody>
                 </table>

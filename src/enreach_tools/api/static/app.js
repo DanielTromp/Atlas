@@ -216,6 +216,11 @@
   const $commvaultStorageTableBody = document.getElementById("commvault-storage-table-body");
   const $commvaultStorageDetail = document.getElementById("commvault-storage-detail");
   const $commvaultStorageRefresh = document.getElementById("commvault-storage-refresh");
+  const $commvaultPlansSummary = document.getElementById("commvault-plans-summary");
+  const $commvaultPlansStatus = document.getElementById("commvault-plans-status");
+  const $commvaultPlansTableBody = document.getElementById("commvault-plans-table-body");
+  const $commvaultPlansRefresh = document.getElementById("commvault-plans-refresh");
+  const $commvaultPlansType = document.getElementById("commvault-plans-type");
   const $commvaultServerSummary = document.getElementById("commvault-server-summary");
   const $commvaultServerQuery = document.getElementById("commvault-server-query");
   const $commvaultServerSearchBtn = document.getElementById("commvault-server-search");
@@ -396,6 +401,17 @@
     search: '',
     searchTokens: [],
   };
+  const commvaultPlansState = {
+    plans: [],
+    loading: false,
+    error: null,
+    lastFetchMs: 0,
+    lastFetchKey: null,
+    generatedAt: null,
+    totalPlans: 0,
+    planType: 'all',
+    planTypes: [],
+  };
   const commvaultStorageState = {
     pools: [],
     loading: false,
@@ -430,6 +446,7 @@
   let commvaultChartTooltip = null;
   let commvaultServerSuggestionTimer = null;
   let commvaultStatusTimeout = null;
+  let commvaultPlansStatusTimeout = null;
   let currentUser = null;
   const permissionState = {
     user: new Set(),
@@ -550,7 +567,7 @@
     try {
       const value = localStorage.getItem(COMMVAULT_TAB_KEY);
       if (value === 'reports') return 'servers';
-      if (value && ['backups', 'storage', 'servers'].includes(value)) return value;
+      if (value && ['backups', 'plans', 'storage', 'servers'].includes(value)) return value;
     } catch {}
     return 'backups';
   })();
@@ -3251,7 +3268,7 @@
   // Commvault backups
   // ---------------------------
   function setCommvaultTab(tab) {
-    if (!['backups', 'storage', 'servers'].includes(tab)) tab = 'backups';
+    if (!['backups', 'plans', 'storage', 'servers'].includes(tab)) tab = 'backups';
     commvaultState.tab = tab;
     if ($commvaultTabs) {
       $commvaultTabs.querySelectorAll('button[data-commvault-tab]').forEach((btn) => {
@@ -3268,6 +3285,9 @@
     try { localStorage.setItem(COMMVAULT_TAB_KEY, tab); } catch {}
     if (tab === 'backups') {
       loadCommvaultData(false);
+    } else if (tab === 'plans') {
+      renderCommvaultPlans();
+      loadCommvaultPlans(false);
     } else if (tab === 'storage') {
       renderCommvaultStorage();
       loadCommvaultStorage(false);
@@ -3332,6 +3352,33 @@
           $commvaultStatus.classList.remove('error');
         }
         commvaultStatusTimeout = null;
+      }, autoHideMs);
+    }
+  }
+
+  function setCommvaultPlansStatus(message, isError = false, autoHideMs = 5000) {
+    if (!$commvaultPlansStatus) return;
+    if (commvaultPlansStatusTimeout) {
+      clearTimeout(commvaultPlansStatusTimeout);
+      commvaultPlansStatusTimeout = null;
+    }
+    if (!message) {
+      $commvaultPlansStatus.hidden = true;
+      $commvaultPlansStatus.textContent = '';
+      $commvaultPlansStatus.classList.remove('error');
+      return;
+    }
+    $commvaultPlansStatus.hidden = false;
+    $commvaultPlansStatus.textContent = message;
+    $commvaultPlansStatus.classList.toggle('error', !!isError);
+    if (!isError && autoHideMs > 0) {
+      commvaultPlansStatusTimeout = setTimeout(() => {
+        if ($commvaultPlansStatus) {
+          $commvaultPlansStatus.hidden = true;
+          $commvaultPlansStatus.textContent = '';
+          $commvaultPlansStatus.classList.remove('error');
+        }
+        commvaultPlansStatusTimeout = null;
       }, autoHideMs);
     }
   }
@@ -3653,6 +3700,185 @@
     $commvaultTableBody.innerHTML = rows.join('');
     updateCommvaultSummary(searchCount, filteredJobs.length);
     renderCommvaultStatusOptions();
+  }
+
+  function getFilteredCommvaultPlans(plans) {
+    const list = Array.isArray(plans) ? plans : [];
+    const typeFilter = (commvaultPlansState.planType || 'all').trim().toLowerCase();
+    if (!typeFilter || typeFilter === 'all') return list;
+    return list.filter((plan) => {
+      if (!plan || typeof plan !== 'object') return false;
+      const planTypeValue = (plan.plan_type || '').toString().trim().toLowerCase();
+      return planTypeValue === typeFilter;
+    });
+  }
+
+  function populateCommvaultPlanTypeOptions() {
+    if (!$commvaultPlansType) return;
+    const types = Array.isArray(commvaultPlansState.planTypes) ? commvaultPlansState.planTypes.slice() : [];
+    const desiredValues = ['all', ...types.map((type) => type)];
+    const existingValues = Array.from($commvaultPlansType.options || []).map((opt) => opt.value);
+    let needsUpdate = desiredValues.length !== existingValues.length;
+    if (!needsUpdate) {
+      for (let i = 0; i < desiredValues.length; i += 1) {
+        if (desiredValues[i] !== existingValues[i]) {
+          needsUpdate = true;
+          break;
+        }
+      }
+    }
+    if (!needsUpdate) {
+      if (!desiredValues.includes(commvaultPlansState.planType)) {
+        commvaultPlansState.planType = 'all';
+        $commvaultPlansType.value = 'all';
+      }
+      return;
+    }
+    $commvaultPlansType.innerHTML = '';
+    desiredValues.forEach((value) => {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = value === 'all' ? 'All plan types' : value;
+      $commvaultPlansType.append(option);
+    });
+    if (!desiredValues.includes(commvaultPlansState.planType)) {
+      commvaultPlansState.planType = 'all';
+    }
+    $commvaultPlansType.value = commvaultPlansState.planType;
+  }
+
+  function renderCommvaultPlans() {
+    populateCommvaultPlanTypeOptions();
+    const plans = Array.isArray(commvaultPlansState.plans) ? commvaultPlansState.plans : [];
+    const filteredPlans = getFilteredCommvaultPlans(plans);
+    if ($commvaultPlansSummary) {
+      const total = Number.isFinite(Number(commvaultPlansState.totalPlans))
+        ? Number(commvaultPlansState.totalPlans)
+        : plans.length;
+      const updated = commvaultPlansState.generatedAt ? formatTimestamp(commvaultPlansState.generatedAt) : 'never';
+      const filterNote = commvaultPlansState.planType && commvaultPlansState.planType !== 'all'
+        ? ` (type: ${commvaultPlansState.planType})`
+        : '';
+      if (commvaultPlansState.loading) {
+        $commvaultPlansSummary.textContent = 'Loading Commvault plans…';
+      } else if (!plans.length) {
+        $commvaultPlansSummary.textContent = `No Commvault plans are cached. Last update: ${updated}.`;
+      } else {
+        $commvaultPlansSummary.textContent = `Showing ${filteredPlans.length} plan(s)${filterNote} of ${total} cached — updated ${updated}.`;
+      }
+    }
+
+    if (!$commvaultPlansTableBody) return;
+
+    if (commvaultPlansState.loading) {
+      $commvaultPlansTableBody.innerHTML = '<tr class="loading"><td colspan="7">Loading Commvault plans…</td></tr>';
+      return;
+    }
+
+    if (commvaultPlansState.error) {
+      $commvaultPlansTableBody.innerHTML = '<tr class="empty"><td colspan="7">Failed to load Commvault plan data.</td></tr>';
+      return;
+    }
+
+    if (!plans.length) {
+      $commvaultPlansTableBody.innerHTML = '<tr class="empty"><td colspan="7">No Commvault plans available.</td></tr>';
+      return;
+    }
+
+    if (!filteredPlans.length) {
+      $commvaultPlansTableBody.innerHTML = '<tr class="empty"><td colspan="7">No Commvault plans match the selected type.</td></tr>';
+      return;
+    }
+
+    const rows = filteredPlans.map((plan) => {
+      if (!plan || typeof plan !== 'object') return '';
+      const name = plan.name ? String(plan.name) : 'Unnamed plan';
+      const planId = Number(plan.plan_id);
+      const planTypeLabel = plan.plan_type ? String(plan.plan_type) : '—';
+      const entitiesValue = Number(plan.associated_entities);
+      const entitiesLabel = Number.isFinite(entitiesValue) ? entitiesValue.toLocaleString() : '—';
+      const rpoLabel = plan.rpo ? String(plan.rpo) : '—';
+      const copyValue = Number(plan.copy_count);
+      const copyLabel = Number.isFinite(copyValue) ? copyValue.toLocaleString() : '—';
+      const statusLabelRaw = plan.status ? String(plan.status) : '';
+      const statusClass = statusLabelRaw ? getCommvaultStatusClass(statusLabelRaw) : '';
+      const statusCell = statusLabelRaw
+        ? `<span class="status-pill${statusClass ? ` ${statusClass}` : ''}">${escapeHtml(statusLabelRaw)}</span>`
+        : '<span class="muted">Unknown</span>';
+      const tags = Array.isArray(plan.tags) ? plan.tags.filter((tag) => tag && typeof tag === 'string') : [];
+      const tagsCell = tags.length
+        ? `<div class="commvault-plan-tags">${tags.map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}</div>`
+        : '<span class="muted">No tags</span>';
+      const metaPieces = [];
+      if (Number.isFinite(planId)) {
+        metaPieces.push(`ID ${planId}`);
+      }
+      const metaLine = metaPieces.length ? `<span class="muted">${escapeHtml(metaPieces.join(' · '))}</span>` : '';
+
+      return `
+        <tr>
+          <td class="plan-name"><strong>${escapeHtml(name)}</strong>${metaLine}</td>
+          <td>${planTypeLabel !== '—' ? escapeHtml(planTypeLabel) : '—'}</td>
+          <td>${entitiesLabel}</td>
+          <td>${rpoLabel !== '—' ? escapeHtml(rpoLabel) : '—'}</td>
+          <td>${copyLabel}</td>
+          <td>${statusCell}</td>
+          <td>${tagsCell}</td>
+        </tr>`;
+    }).filter(Boolean);
+
+    $commvaultPlansTableBody.innerHTML = rows.join('');
+  }
+
+  async function loadCommvaultPlans(force) {
+    if (commvaultPlansState.loading) return;
+    const now = Date.now();
+    const fetchKey = 'plans';
+    if (
+      !force &&
+      commvaultPlansState.lastFetchKey === fetchKey &&
+      commvaultPlansState.lastFetchMs &&
+      now - commvaultPlansState.lastFetchMs < 30000
+    ) {
+      renderCommvaultPlans();
+      return;
+    }
+
+    commvaultPlansState.loading = true;
+    commvaultPlansState.error = null;
+    setCommvaultPlansStatus('Loading Commvault plans…', false, 0);
+    renderCommvaultPlans();
+
+    try {
+      const params = new URLSearchParams();
+      if (force) params.set('refresh', '1');
+      const query = params.toString();
+      const url = query ? `${API_BASE}/commvault/plans?${query}` : `${API_BASE}/commvault/plans`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        throw new Error(`${res.status} ${res.statusText}`);
+      }
+      const data = await res.json().catch(() => ({}));
+      const plans = Array.isArray(data?.plans) ? data.plans : [];
+      commvaultPlansState.plans = plans.filter((plan) => plan && typeof plan === 'object');
+      commvaultPlansState.generatedAt = data?.generated_at || null;
+      commvaultPlansState.totalPlans = Number(data?.total_cached) || commvaultPlansState.plans.length;
+      const types = Array.isArray(data?.plan_types)
+        ? data.plan_types.filter((type) => typeof type === 'string' && type.trim())
+        : [];
+      commvaultPlansState.planTypes = types.sort((a, b) => a.localeCompare(b));
+      commvaultPlansState.lastFetchMs = now;
+      commvaultPlansState.lastFetchKey = fetchKey;
+      setCommvaultPlansStatus('', false);
+    } catch (err) {
+      console.error('Failed to load Commvault plans', err);
+      commvaultPlansState.error = err;
+      commvaultPlansState.lastFetchKey = null;
+      setCommvaultPlansStatus(`Failed to load Commvault plans: ${err?.message || err}`, true, 0);
+    } finally {
+      commvaultPlansState.loading = false;
+      renderCommvaultPlans();
+    }
   }
 
   function renderCommvaultStorage() {
@@ -4483,6 +4709,20 @@
       loadCommvaultData(true);
     });
   }
+
+  if ($commvaultPlansType) {
+    $commvaultPlansType.addEventListener('change', (event) => {
+      const value = (event.target.value || 'all').trim();
+      commvaultPlansState.planType = value || 'all';
+      renderCommvaultPlans();
+    });
+  }
+
+  if ($commvaultPlansRefresh) {
+    $commvaultPlansRefresh.addEventListener('click', () => loadCommvaultPlans(true));
+  }
+
+  renderCommvaultPlans();
 
   if ($commvaultSearch) {
     $commvaultSearch.value = commvaultState.search;
