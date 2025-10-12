@@ -12,6 +12,13 @@ from .commvault_client import (
 )
 from .confluence_client import ConfluenceClient, ConfluenceClientConfig
 from .netbox_client import NetboxClient, NetboxClientConfig
+from .vcenter_client import (
+    VCenterAPIError,
+    VCenterAuthError,
+    VCenterClient,
+    VCenterClientConfig,
+    VCenterClientError,
+)
 from .zabbix_client import (
     ZabbixAuthError,
     ZabbixClient,
@@ -33,6 +40,11 @@ __all__ = [
     "ConfluenceClientConfig",
     "NetboxClient",
     "NetboxClientConfig",
+    "VCenterAPIError",
+    "VCenterAuthError",
+    "VCenterClient",
+    "VCenterClientConfig",
+    "VCenterClientError",
     "ZabbixAuthError",
     "ZabbixClient",
     "ZabbixClientConfig",

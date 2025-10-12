@@ -635,6 +635,7 @@ def _build_vm(  # noqa: PLR0913
 
 def _serialize_vm(vm: VCenterVM) -> dict[str, Any]:
     return {
+        "id": vm.vm_id,
         "vm_id": vm.vm_id,
         "name": vm.name,
         "power_state": vm.power_state,
@@ -717,8 +718,10 @@ def _deserialize_vm(data: Mapping[str, Any]) -> VCenterVM:
     tools_install_type = _normalize_text(data.get("tools_install_type"))
     vcenter_url = _normalize_text(data.get("vcenter_url"))
 
+    raw_vm_id = data.get("vm_id") or data.get("id")
+
     return VCenterVM(
-        vm_id=str(data.get("vm_id") or ""),
+        vm_id=str(raw_vm_id or ""),
         name=str(data.get("name") or ""),
         power_state=data.get("power_state"),
         cpu_count=_safe_int(data.get("cpu_count")),

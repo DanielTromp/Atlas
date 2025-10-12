@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 try:  # optional dependency
@@ -193,8 +193,8 @@ def _normalize_last_updated(value: Any) -> str:
         except Exception:
             return str(value)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    normalized = dt.astimezone(timezone.utc).replace(microsecond=0)
+        dt = dt.replace(tzinfo=UTC)
+    normalized = dt.astimezone(UTC).replace(microsecond=0)
     return normalized.isoformat().replace("+00:00", "Z")
 
 

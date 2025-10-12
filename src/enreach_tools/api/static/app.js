@@ -475,6 +475,8 @@
   let commvaultServerSuggestionTimer = null;
   let commvaultStatusTimeout = null;
   let commvaultPlansStatusTimeout = null;
+  const ALL_VCENTER_ID = '__all__';
+
   const vcenterState = {
     instances: [],
     activeId: null,
@@ -485,6 +487,7 @@
     search: '',
     lastFetchAt: 0,
     meta: null,
+    statusOverride: null,
   };
   const POWER_STATE_LABELS = {
     POWERED_ON: { label: 'On', className: 'on', icon: '●' },
@@ -554,17 +557,62 @@
     };
   }
 
-  function buildVCenterLink(vm) {
-    const directUrl = vm?.vcenter_url && typeof vm.vcenter_url === 'string' ? vm.vcenter_url.trim() : '';
-    let href = directUrl;
-    if (!href) {
-      const active = getActiveVCenter();
-      const base = active?.base_url ? active.base_url.trim().replace(/\/+$/, '') : '';
-      if (base && vm?.id) {
-        const id = String(vm.id).trim();
-        if (id) href = `${base}/ui/app/vm;nav=v/urn:vmomi:VirtualMachine:${id}:${id}/summary`;
-      }
+  function getVmIdentifier(vm) {
+    if (!vm || typeof vm !== 'object') return '';
+    const candidates = [
+      vm.id,
+      vm.vm_id,
+      vm.vmId,
+      vm.vmID,
+      vm.instance_uuid,
+      vm.instanceUuid,
+      vm.instanceUUID,
+    ];
+    for (let i = 0; i < candidates.length; i += 1) {
+      const candidate = candidates[i];
+      if (candidate == null) continue;
+      const value = String(candidate).trim();
+      if (value) return value;
     }
+    return '';
+  }
+
+  function getVmConfigId(vm) {
+    if (!vm || typeof vm !== 'object') return '';
+    const candidates = [
+      vm.__vcenterId,
+      vm.config_id,
+      vm.configId,
+      vm.configID,
+      vm.vcenter_config_id,
+    ];
+    for (let i = 0; i < candidates.length; i += 1) {
+      const candidate = candidates[i];
+      if (candidate == null) continue;
+      const value = String(candidate).trim();
+      if (value) return value;
+    }
+    return '';
+  }
+
+  function normalizeVCenterVm(vm) {
+    if (!vm || typeof vm !== 'object') {
+      return { id: '', name: '' };
+    }
+    const identifier = getVmIdentifier(vm);
+    let displayName = '';
+    if (typeof vm.name === 'string' && vm.name.trim()) {
+      displayName = vm.name;
+    } else {
+      displayName = identifier;
+    }
+    return { ...vm, id: identifier, name: displayName };
+  }
+
+  function buildVCenterLink(vm) {
+    const snakeUrl = typeof vm?.vcenter_url === 'string' ? vm.vcenter_url.trim() : '';
+    const camelUrl = typeof vm?.vcenterUrl === 'string' ? vm.vcenterUrl.trim() : '';
+    const href = snakeUrl || camelUrl;
     if (!href) return '';
     const anchor = document.createElement('a');
     anchor.href = href;
@@ -572,16 +620,90 @@
     anchor.rel = 'noreferrer noopener';
     anchor.className = 'vcenter-link';
     anchor.title = 'Open virtual machine in vCenter (opens in new tab)';
-    const icon = document.createElement('span');
+    anchor.setAttribute('aria-label', 'Open in vCenter (opens in new tab)');
+    const icon = document.createElement('img');
     icon.className = 'vcenter-link-icon';
-    icon.textContent = '⧉';
-    icon.setAttribute('aria-hidden', 'true');
-    anchor.appendChild(icon);
+    icon.src = 'icons/vcenter.ico?v=1';
+    icon.alt = '';
+    icon.width = 16;
+    icon.height = 16;
     const sr = document.createElement('span');
     sr.className = 'sr-only';
     sr.textContent = 'Open in vCenter';
-    anchor.appendChild(sr);
+    anchor.append(icon, sr);
     return anchor;
+  }
+
+  function createVmNameCell(vm) {
+    const identifier = getVmIdentifier(vm);
+    let label = '';
+    if (vm && typeof vm.name === 'string') {
+      label = vm.name.trim();
+    }
+    if (!label) {
+      label = identifier;
+    }
+    if (!identifier) return label;
+    const derivedConfigId = getVmConfigId(vm);
+    const configId = derivedConfigId
+      || (vcenterState.activeId && vcenterState.activeId !== ALL_VCENTER_ID ? vcenterState.activeId : '');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'vcenter-name-link';
+    button.textContent = label || identifier;
+    button.dataset.vmId = identifier;
+    if (configId) {
+      button.dataset.vcenterId = configId;
+    }
+    button.addEventListener('click', () => openVCenterVmModal(vm, configId));
+    return button;
+  }
+
+  function openVCenterVmModal(vm, preferredConfigId) {
+    const identifier = getVmIdentifier(vm);
+    let configId = '';
+    if (preferredConfigId && String(preferredConfigId).trim()) {
+      configId = String(preferredConfigId).trim();
+    } else {
+      const vmConfigId = getVmConfigId(vm);
+      if (vmConfigId) {
+        configId = vmConfigId;
+      } else if (vcenterState.activeId && vcenterState.activeId !== ALL_VCENTER_ID) {
+        configId = vcenterState.activeId;
+      }
+    }
+    if (!identifier || !configId) return;
+    const url = new URL('/app/vcenter/view.html', window.location.origin);
+    url.searchParams.set('config', configId);
+    url.searchParams.set('vm', identifier);
+    const modal = document.createElement('div');
+    modal.className = 'modal-backdrop';
+    modal.innerHTML = `
+      <div class="modal-dialog" role="dialog" aria-modal="true">
+        <button type="button" class="modal-close" aria-label="Close">×</button>
+        <div class="modal-frame">
+          <iframe src="${url.toString()}" title="VM details" loading="lazy"></iframe>
+        </div>
+      </div>
+    `;
+    function dismiss() {
+      document.removeEventListener('keydown', onKeyDown);
+      modal.removeEventListener('click', onBackdrop);
+      modal.remove();
+    }
+    function onKeyDown(event) {
+      if (event.key === 'Escape') {
+        dismiss();
+      }
+    }
+    function onBackdrop(event) {
+      if (event.target === modal || event.target.classList.contains('modal-close')) {
+        dismiss();
+      }
+    }
+    document.addEventListener('keydown', onKeyDown);
+    modal.addEventListener('click', onBackdrop);
+    document.body.appendChild(modal);
   }
 
   function formatVCenterUpdated() {
@@ -594,9 +716,9 @@
     }
   }
 
-  const VCENTER_COLUMNS = [
+  const BASE_VCENTER_COLUMNS = [
     { label: '#', className: 'vcenter-col-index', render: (_vm, idx) => idx + 1 },
-    { label: 'Display Name', className: 'vcenter-col-name', render: (vm) => vm?.name || '' },
+    { label: 'Display Name', className: 'vcenter-col-name', render: (vm) => createVmNameCell(vm) },
     { label: 'State', className: 'vcenter-col-state', render: (vm) => formatVmPowerState(vm) },
     { label: 'Link', className: 'vcenter-col-link', render: (vm) => buildVCenterLink(vm) },
     { label: 'DNS Name', className: 'vcenter-col-dns', render: (vm) => fallbackDnsName(vm) },
@@ -604,6 +726,62 @@
     { label: 'VM HW', className: 'vcenter-col-hw', render: (vm) => vm?.hardware_version || '' },
     { label: 'Updated', className: 'vcenter-col-updated', render: () => formatVCenterUpdated() },
   ];
+
+  function renderVCenterSource(vm) {
+    const name = typeof vm?.__vcenterName === 'string' ? vm.__vcenterName.trim() : '';
+    if (!name) {
+      return vcenterState.activeId === ALL_VCENTER_ID ? '—' : '';
+    }
+    const pill = document.createElement('span');
+    pill.className = 'vcenter-source-pill';
+    pill.textContent = name;
+    pill.title = `vCenter: ${name}`;
+    return pill;
+  }
+
+  function getVCenterColumns() {
+    const columns = BASE_VCENTER_COLUMNS.slice();
+    if (vcenterState.activeId === ALL_VCENTER_ID) {
+      columns.splice(1, 0, {
+        label: 'vCenter',
+        className: 'vcenter-col-source',
+        render: (vm) => renderVCenterSource(vm),
+      });
+    }
+    return columns;
+  }
+
+  function recalcAggregateInstanceMeta() {
+    const aggregateIndex = vcenterState.instances.findIndex((inst) => inst.id === ALL_VCENTER_ID);
+    if (aggregateIndex === -1) return;
+    const realInstances = vcenterState.instances.filter((inst) => inst && inst.id && inst.id !== ALL_VCENTER_ID);
+    let totalCount = 0;
+    let hasCount = false;
+    let latestDate = null;
+    realInstances.forEach((inst) => {
+      const count = inst?.vm_count;
+      if (typeof count === 'number' && Number.isFinite(count)) {
+        totalCount += count;
+        hasCount = true;
+      }
+      const raw = inst?.last_refresh;
+      if (typeof raw === 'string' && raw) {
+        const dt = new Date(raw);
+        if (!Number.isNaN(dt.valueOf())) {
+          if (!latestDate || dt > latestDate) {
+            latestDate = dt;
+          }
+        }
+      }
+    });
+    const aggregateEntry = {
+      ...vcenterState.instances[aggregateIndex],
+      vm_count: hasCount ? totalCount : realInstances.length ? null : 0,
+      last_refresh: latestDate ? latestDate.toISOString() : null,
+      aggregate: true,
+    };
+    vcenterState.instances[aggregateIndex] = aggregateEntry;
+  }
   let currentUser = null;
   const permissionState = {
     user: new Set(),
@@ -5027,6 +5205,7 @@
     }
     $vcenterTabs.classList.remove('empty');
     const frag = document.createDocumentFragment();
+    const realInstanceCount = vcenterState.instances.filter((entry) => entry && entry.id && entry.id !== ALL_VCENTER_ID).length;
     vcenterState.instances.forEach((inst) => {
       if (!inst || !inst.id) return;
       const btn = document.createElement('button');
@@ -5038,9 +5217,17 @@
         btn.classList.add('active');
       }
       const tooltipParts = [];
-      if (inst.base_url) tooltipParts.push(inst.base_url);
-      if (inst.vm_count != null && !Number.isNaN(inst.vm_count)) {
-        tooltipParts.push(`Cached VMs: ${String(inst.vm_count)}`);
+      if (inst.aggregate || inst.id === ALL_VCENTER_ID) {
+        const countLabel = realInstanceCount === 1 ? 'vCenter' : 'vCenters';
+        tooltipParts.push(`Combined view across ${realInstanceCount} ${countLabel}`);
+        if (inst.vm_count != null && !Number.isNaN(inst.vm_count)) {
+          tooltipParts.push(`Known VMs: ${String(inst.vm_count)}`);
+        }
+      } else {
+        if (inst.base_url) tooltipParts.push(inst.base_url);
+        if (inst.vm_count != null && !Number.isNaN(inst.vm_count)) {
+          tooltipParts.push(`Cached VMs: ${String(inst.vm_count)}`);
+        }
       }
       if (inst.last_refresh) {
         try {
@@ -5065,6 +5252,11 @@
         if (trimmed) values.push(trimmed.toLowerCase());
       }
     };
+    push(getVmIdentifier(vm));
+    if (vm && typeof vm.__vcenterName === 'string') push(vm.__vcenterName);
+    if (vm && Object.prototype.hasOwnProperty.call(vm, 'vm_id')) {
+      push(typeof vm.vm_id === 'string' ? vm.vm_id : String(vm.vm_id || ''));
+    }
     push(vm.name);
     push(vm.power_state);
     push(vm.guest_os);
@@ -5113,7 +5305,12 @@
     const metaCountRaw = Number(meta.vm_count);
     const vmBase = Number.isFinite(metaCountRaw) && metaCountRaw >= 0 ? metaCountRaw : total;
     const generatedIso = typeof meta.generated_at === 'string' && meta.generated_at ? meta.generated_at : null;
-    const sourceLabel = meta.source === 'live' ? 'live data' : 'cached data';
+    const sourceLabel = (() => {
+      if (meta.source === 'live') return 'live data';
+      if (meta.source === 'mixed') return 'mixed data';
+      if (meta.source === 'aggregate') return 'aggregated data';
+      return 'cached data';
+    })();
     const timeLabel = (() => {
       if (!generatedIso) return 'never';
       try {
@@ -5123,16 +5320,20 @@
       }
     })();
 
+    const failureSuffix = Array.isArray(meta.failures) && meta.failures.length
+      ? ` • Partial failures: ${meta.failures.join(', ')}`
+      : '';
+
     if (total === 0) {
-      return `No virtual machines available for ${name}. Last update: ${timeLabel}.`;
+      return `No virtual machines available for ${name}. Last update: ${timeLabel}${failureSuffix}.`;
     }
 
     if (filtered === total) {
       const suffix = total === 1 ? '' : 's';
-      return `Showing ${total.toLocaleString()} VM${suffix} from ${name} • ${sourceLabel} updated ${timeLabel}.`;
+      return `Showing ${total.toLocaleString()} VM${suffix} from ${name} • ${sourceLabel} updated ${timeLabel}${failureSuffix}.`;
     }
     const suffix = filtered === 1 ? '' : 's';
-    return `Showing ${filtered.toLocaleString()} of ${total.toLocaleString()} VM${suffix} from ${name} (cached total ${vmBase.toLocaleString()}) • ${sourceLabel} updated ${timeLabel}.`;
+    return `Showing ${filtered.toLocaleString()} of ${total.toLocaleString()} VM${suffix} from ${name} (cached total ${vmBase.toLocaleString()}) • ${sourceLabel} updated ${timeLabel}${failureSuffix}.`;
   }
 
   function applyVCenterFilter() {
@@ -5147,9 +5348,9 @@
 
   function renderVCenterTableHeader() {
     if (!$vcenterTableHead) return;
-    if ($vcenterTableHead.dataset.ready === 'true') return;
+    const columns = getVCenterColumns();
     const row = document.createElement('tr');
-    VCENTER_COLUMNS.forEach((col) => {
+    columns.forEach((col) => {
       const th = document.createElement('th');
       th.scope = 'col';
       th.textContent = col.label;
@@ -5158,18 +5359,18 @@
     });
     $vcenterTableHead.innerHTML = '';
     $vcenterTableHead.appendChild(row);
-    $vcenterTableHead.dataset.ready = 'true';
   }
 
   function renderVCenterTable() {
     if (!$vcenterTableBody) return;
+    const columns = getVCenterColumns();
     renderVCenterTableHeader();
     $vcenterTableBody.innerHTML = '';
     if (!vcenterState.filtered.length) {
       const tr = document.createElement('tr');
       tr.className = 'empty';
       const td = document.createElement('td');
-      td.colSpan = VCENTER_COLUMNS.length;
+      td.colSpan = columns.length;
       td.textContent = vcenterState.vms.length
         ? 'No virtual machines match the current filter.'
         : 'No virtual machines available for this vCenter.';
@@ -5180,7 +5381,7 @@
     const frag = document.createDocumentFragment();
     vcenterState.filtered.forEach((vm, idx) => {
       const tr = document.createElement('tr');
-      VCENTER_COLUMNS.forEach((col) => {
+      columns.forEach((col) => {
         const td = document.createElement('td');
         if (col.className) td.classList.add(col.className);
         let value;
@@ -5269,13 +5470,21 @@
     if (showTable) {
       renderVCenterTable();
     }
-    setVCenterStatus();
+    const override = vcenterState.statusOverride;
+    if (override) {
+      const { tone = 'info', message = null } = override;
+      vcenterState.statusOverride = null;
+      setVCenterStatus(message, tone);
+    } else {
+      setVCenterStatus();
+    }
   }
 
   async function loadVCenterInventory(instanceId, options = {}) {
     if (!instanceId) return;
     const { force = false, refresh = false } = options;
     const wantLive = force || refresh;
+    const isAggregate = instanceId === ALL_VCENTER_ID;
     if (vcenterState.activeId === instanceId && vcenterState.loading && !wantLive) return;
     const previousState = {
       vms: Array.isArray(vcenterState.vms) ? vcenterState.vms.slice() : null,
@@ -5286,14 +5495,170 @@
     vcenterState.activeId = instanceId;
     vcenterState.loading = true;
     vcenterState.error = null;
+    vcenterState.statusOverride = null;
     if ($vcenterSearch && typeof $vcenterSearch.value === 'string') {
       vcenterState.search = $vcenterSearch.value.trim();
     }
     updateVCenterView();
-    setVCenterStatus('Loading vCenter inventory…');
-    const base = `${API_BASE}/vcenter/${encodeURIComponent(instanceId)}`;
-    const endpoint = `${base}/vms${wantLive ? '?refresh=true' : ''}`;
+    setVCenterStatus(isAggregate ? 'Loading combined vCenter inventory…' : 'Loading vCenter inventory…');
     try {
+      if (isAggregate) {
+        const realInstances = vcenterState.instances.filter((inst) => inst && inst.id && inst.id !== ALL_VCENTER_ID);
+        if (!realInstances.length) {
+          vcenterState.meta = { aggregated: true, vm_count: 0, generated_at: null, source: 'aggregate' };
+          vcenterState.vms = [];
+          vcenterState.filtered = [];
+          applyVCenterFilter();
+          vcenterState.error = null;
+          vcenterState.statusOverride = { tone: 'error' };
+          setVCenterStatus('No vCenter instances available to aggregate.', 'error');
+          return;
+        }
+
+        const aggregatedVms = [];
+        const aggregatedMeta = {
+          aggregated: true,
+          source: wantLive ? 'live' : 'aggregate',
+          vm_count: 0,
+          generated_at: null,
+          sources: [],
+        };
+        let latestDate = null;
+        let sawLive = false;
+        let sawCached = false;
+        const errors = [];
+
+        for (const inst of realInstances) {
+          try {
+            const base = `${API_BASE}/vcenter/${encodeURIComponent(inst.id)}`;
+            const endpoint = `${base}/vms${wantLive ? '?refresh=true' : ''}`;
+            const res = await fetch(endpoint, { method: 'GET' });
+            const payload = await res.json().catch(() => ({}));
+            if (!res.ok) {
+              throw new Error(payload?.detail || `${res.status} ${res.statusText}`);
+            }
+
+            const vms = Array.isArray(payload?.vms) ? payload.vms : [];
+            const configInfo = payload && typeof payload.config === 'object' ? payload.config : null;
+            const metaPayload = payload && typeof payload.meta === 'object' ? { ...payload.meta } : {};
+
+            if (!metaPayload.generated_at && configInfo?.last_refresh) {
+              metaPayload.generated_at = configInfo.last_refresh;
+            }
+            if (metaPayload.vm_count == null && configInfo?.vm_count != null) {
+              metaPayload.vm_count = configInfo.vm_count;
+            }
+            if (!metaPayload.source) {
+              metaPayload.source = wantLive ? 'live' : 'cache';
+            }
+
+            const normalized = vms.map((vm) => ({
+              ...normalizeVCenterVm(vm),
+              __vcenterId: inst.id,
+              __vcenterName: inst.name || inst.base_url || inst.id,
+            }));
+            aggregatedVms.push(...normalized);
+
+            if (typeof metaPayload.vm_count === 'number' && Number.isFinite(metaPayload.vm_count)) {
+              aggregatedMeta.vm_count += metaPayload.vm_count;
+            } else {
+              aggregatedMeta.vm_count += normalized.length;
+            }
+
+            if (metaPayload.generated_at) {
+              const dt = new Date(metaPayload.generated_at);
+              if (!Number.isNaN(dt.valueOf())) {
+                if (!latestDate || dt > latestDate) {
+                  latestDate = dt;
+                }
+              }
+            }
+
+            if (metaPayload.source === 'live') {
+              sawLive = true;
+            } else {
+              sawCached = true;
+            }
+
+            aggregatedMeta.sources.push({
+              id: inst.id,
+              name: inst.name || inst.base_url || inst.id,
+              vm_count: metaPayload.vm_count != null ? metaPayload.vm_count : normalized.length,
+              generated_at: metaPayload.generated_at || null,
+              source: metaPayload.source,
+            });
+
+            if (configInfo) {
+              const idx = vcenterState.instances.findIndex((entry) => entry.id === inst.id);
+              if (idx !== -1) {
+                const merged = {
+                  ...vcenterState.instances[idx],
+                  ...configInfo,
+                  last_refresh:
+                    metaPayload.generated_at
+                    || configInfo.last_refresh
+                    || vcenterState.instances[idx].last_refresh
+                    || null,
+                  vm_count:
+                    metaPayload.vm_count != null
+                      ? metaPayload.vm_count
+                      : configInfo.vm_count ?? vcenterState.instances[idx].vm_count ?? null,
+                };
+                vcenterState.instances[idx] = merged;
+              }
+            }
+          } catch (error) {
+            errors.push({ instance: inst, error });
+            console.error('Failed to load vCenter inventory for', inst?.id || '(unknown)', error);
+          }
+        }
+
+        aggregatedMeta.generated_at = latestDate ? latestDate.toISOString() : null;
+        aggregatedMeta.source = (() => {
+          if (sawLive && sawCached) return 'mixed';
+          if (sawLive) return 'live';
+          return wantLive ? 'live' : 'aggregate';
+        })();
+        if (!aggregatedMeta.vm_count && aggregatedVms.length) {
+          aggregatedMeta.vm_count = aggregatedVms.length;
+        }
+        aggregatedMeta.failures = errors.map(({ instance }) => instance?.name || instance?.id).filter(Boolean);
+
+        const aggregateIndex = vcenterState.instances.findIndex((entry) => entry.id === ALL_VCENTER_ID);
+        if (aggregateIndex !== -1) {
+          vcenterState.instances[aggregateIndex] = {
+            ...vcenterState.instances[aggregateIndex],
+            vm_count: aggregatedMeta.vm_count,
+            last_refresh: aggregatedMeta.generated_at,
+            aggregate: true,
+          };
+        }
+
+        renderVCenterTabs();
+
+        vcenterState.meta = aggregatedMeta;
+        vcenterState.vms = aggregatedVms;
+        if ($vcenterSearch && typeof $vcenterSearch.value === 'string') {
+          vcenterState.search = $vcenterSearch.value.trim();
+        }
+        applyVCenterFilter();
+        vcenterState.lastFetchAt = Date.now();
+        vcenterState.error = null;
+        if ($vcenterSearch && $vcenterSearch.value.trim() !== vcenterState.search) {
+          $vcenterSearch.value = vcenterState.search;
+        }
+
+        if (!aggregatedVms.length && errors.length === realInstances.length) {
+          const errorNames = errors.map(({ instance }) => instance.name || instance.id).filter(Boolean).join(', ');
+          throw new Error(errorNames ? `Failed to load inventory for: ${errorNames}` : 'Failed to load combined vCenter inventory');
+        }
+        const tone = errors.length ? 'error' : aggregatedMeta.source === 'live' ? 'success' : 'info';
+        vcenterState.statusOverride = { tone };
+        return;
+      }
+
+      const base = `${API_BASE}/vcenter/${encodeURIComponent(instanceId)}`;
+      const endpoint = `${base}/vms${wantLive ? '?refresh=true' : ''}`;
       const res = await fetch(endpoint, { method: 'GET' });
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -5302,6 +5667,18 @@
 
       const vms = Array.isArray(payload?.vms) ? payload.vms : [];
       const configInfo = payload && typeof payload.config === 'object' ? payload.config : null;
+      const owner = vcenterState.instances.find((inst) => inst.id === instanceId) || null;
+      const normalizedVms = vms.map((vm) => {
+        const normalized = normalizeVCenterVm(vm);
+        if (owner) {
+          return {
+            ...normalized,
+            __vcenterId: owner.id,
+            __vcenterName: owner.name || owner.base_url || owner.id,
+          };
+        }
+        return normalized;
+      });
       const metaPayload = payload && typeof payload.meta === 'object' ? { ...payload.meta } : {};
 
       if (configInfo) {
@@ -5320,6 +5697,7 @@
         }
       }
 
+      recalcAggregateInstanceMeta();
       renderVCenterTabs();
 
       if (!metaPayload.generated_at && configInfo?.last_refresh) {
@@ -5333,7 +5711,7 @@
       }
 
       vcenterState.meta = metaPayload;
-      vcenterState.vms = vms;
+      vcenterState.vms = normalizedVms;
       if ($vcenterSearch && typeof $vcenterSearch.value === 'string') {
         vcenterState.search = $vcenterSearch.value.trim();
       }
@@ -5343,9 +5721,9 @@
       if ($vcenterSearch && $vcenterSearch.value.trim() !== vcenterState.search) {
         $vcenterSearch.value = vcenterState.search;
       }
-      setVCenterStatus(null, metaPayload.source === 'live' ? 'success' : 'info');
+      vcenterState.statusOverride = { tone: metaPayload.source === 'live' ? 'success' : 'info' };
     } catch (err) {
-      console.error('Failed to load vCenter inventory', err);
+      console.error('Failed to load vCenter inventory', instanceId, err);
       vcenterState.error = err?.message || 'Failed to load vCenter inventory';
       if (previousState.vms) {
         vcenterState.vms = previousState.vms;
@@ -5391,8 +5769,21 @@
             })
         : [];
       items.sort((a, b) => a.name.localeCompare(b.name));
-      vcenterState.instances = items;
-      if (!items.length) {
+      const aggregateEntry = items.length
+        ? {
+            id: ALL_VCENTER_ID,
+            name: 'All',
+            base_url: '',
+            verify_ssl: true,
+            has_credentials: items.every((inst) => inst.has_credentials),
+            last_refresh: null,
+            vm_count: null,
+            aggregate: true,
+          }
+        : null;
+      const combined = aggregateEntry ? [aggregateEntry, ...items] : items;
+      vcenterState.instances = combined;
+      if (!combined.length) {
         vcenterState.activeId = null;
         vcenterState.vms = [];
         vcenterState.filtered = [];
@@ -5402,9 +5793,10 @@
         setVCenterStatus('No vCenter instances configured.', 'error');
         return items;
       }
+      recalcAggregateInstanceMeta();
       const priorId = vcenterState.activeId;
-      const preserveSelection = priorId && items.some((inst) => inst.id === priorId) && !force;
-      const targetId = preserveSelection ? priorId : items[0].id;
+      const preserveSelection = priorId && combined.some((inst) => inst.id === priorId) && !force;
+      const targetId = preserveSelection ? priorId : combined[0].id;
       vcenterState.activeId = targetId;
       vcenterState.meta = null;
       renderVCenterTabs();
@@ -8615,6 +9007,7 @@
   const $searchZ = document.getElementById('search-zlimit');
   const $searchJ = document.getElementById('search-jlimit');
   const $searchC = document.getElementById('search-climit');
+  const $searchV = document.getElementById('search-vlimit');
   let searchCommvaultMetricsSeq = 0;
 
   function createCommvaultMetricCard(label, value, meta) {
@@ -8708,7 +9101,9 @@
       const zl = Number($searchZ?.value || 10) || 10;
       const jl = Number($searchJ?.value || 10) || 10;
       const cl = Number($searchC?.value || 10) || 10;
+      const vl = Number($searchV?.value || 10) || 10;
       const qs = new URLSearchParams({ q, zlimit: String(zl), jlimit: String(jl), climit: String(cl) });
+      qs.set('vlimit', String(vl));
       const res = await fetch(`${API_BASE}/search/aggregate?${qs.toString()}`);
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { if ($searchResults) $searchResults.textContent = data?.detail || `${res.status} ${res.statusText}`; return; }
@@ -8772,6 +9167,85 @@
         cnode.appendChild(ul);
       } else { cnode.textContent = 'No Confluence data.'; }
       wrap.appendChild(section('Confluence', cnode));
+      // vCenter
+      const vcenter = data?.vcenter || {};
+      const vnode = document.createElement('div');
+      if (vcenter.permitted === false) {
+        vnode.textContent = 'vCenter results require additional permissions.';
+      } else {
+        const vItems = Array.isArray(vcenter.items) ? vcenter.items : [];
+        if (vItems.length) {
+          const ul = document.createElement('ul');
+          ul.style.paddingLeft = '18px';
+          vItems.forEach((vm) => {
+            const li = document.createElement('li');
+            const title = document.createElement('div');
+            const nameLink = document.createElement('a');
+            nameLink.textContent = vm.name || vm.id || 'Virtual Machine';
+            if (vm.detail_url) {
+              nameLink.href = vm.detail_url;
+              nameLink.target = '_blank';
+              nameLink.rel = 'noopener';
+            }
+            title.appendChild(nameLink);
+            if (vm.power_state) {
+              const badge = document.createElement('span');
+              badge.className = 'badge';
+              badge.style.marginLeft = '8px';
+              badge.style.fontSize = '11px';
+              badge.style.padding = '2px 6px';
+              badge.textContent = vm.power_state;
+              title.appendChild(badge);
+            }
+            li.appendChild(title);
+            const metaParts = [];
+            if (vm.config_name) metaParts.push(vm.config_name);
+            if (vm.guest_host_name) metaParts.push(vm.guest_host_name);
+            if (vm.guest_ip_address) metaParts.push(vm.guest_ip_address);
+            if (!vm.guest_ip_address && Array.isArray(vm.ip_addresses) && vm.ip_addresses.length) {
+              metaParts.push(vm.ip_addresses.join(', '));
+            }
+            if (vm.guest_os) metaParts.push(vm.guest_os);
+            const metaLine = document.createElement('div');
+            metaLine.className = 'muted';
+            metaLine.textContent = metaParts.filter(Boolean).join(' • ') || 'No additional metadata.';
+            if (vm.vcenter_url) {
+              const ext = document.createElement('a');
+              ext.href = vm.vcenter_url;
+              ext.target = '_blank';
+              ext.rel = 'noopener';
+              ext.textContent = 'Open in vCenter';
+              ext.style.marginLeft = '8px';
+              metaLine.append(' ');
+              metaLine.appendChild(ext);
+            }
+            li.appendChild(metaLine);
+            ul.appendChild(li);
+          });
+          vnode.appendChild(ul);
+          const rawTotal = Number(vcenter.total);
+          const totalCount = Number.isFinite(rawTotal) && rawTotal > 0 ? rawTotal : vItems.length;
+          if (vcenter.has_more || totalCount > vItems.length) {
+            const note = document.createElement('div');
+            note.className = 'muted';
+            note.style.marginTop = '6px';
+            note.textContent = `Showing ${vItems.length.toLocaleString()} of ${totalCount.toLocaleString()} match(es). Refine your search to narrow further.`;
+            vnode.appendChild(note);
+          }
+        } else if (Array.isArray(vcenter.errors) && vcenter.errors.length) {
+          vnode.textContent = 'Unable to load vCenter data.';
+        } else {
+          vnode.textContent = 'No vCenter data.';
+        }
+        if (Array.isArray(vcenter.errors) && vcenter.errors.length) {
+          const err = document.createElement('div');
+          err.className = 'muted';
+          err.style.marginTop = '6px';
+          err.textContent = `Issues while fetching vCenter data: ${vcenter.errors.join('; ')}`;
+          vnode.appendChild(err);
+        }
+      }
+      wrap.appendChild(section('vCenter', vnode));
       // NetBox
       const n = data?.netbox || {}; const nnode = document.createElement('div');
       if (Array.isArray(n.items) && n.items.length) {

@@ -74,6 +74,7 @@
         <button class="tab" data-page="confluence">Confluence</button>
         <button class="tab" data-page="export">Export</button>
         <button class="tab" data-page="commvault">Commvault</button>
+        <button class="tab" data-page="vcenter">vCenter</button>
         <button class="tab" data-page="chat">Chat</button>
         <button class="tab" data-page="tools">Tools</button>
         <button class="tab" data-page="admin">Admin</button>
@@ -103,6 +104,10 @@
             <label class="field">
               <span>Confluence</span>
               <input id="search-climit" type="number" min="0" value="10" style="width:100px" />
+            </label>
+            <label class="field">
+              <span>vCenter</span>
+              <input id="search-vlimit" type="number" min="0" value="10" style="width:90px" />
             </label>
           </div>
           <div id="search-results" class="feed empty">Enter a search term and press Search.</div>
@@ -606,6 +611,7 @@
             <button class="admin-tab" data-admin-tab="chat">AI Chat</button>
             <button class="admin-tab" data-admin-tab="export">Export</button>
             <button class="admin-tab" data-admin-tab="api">API &amp; UI</button>
+            <button class="admin-tab" data-admin-tab="vcenter">vCenter</button>
             <button class="admin-tab" data-admin-tab="users">Users</button>
             <button class="admin-tab" data-admin-tab="backup">Backup</button>
           </nav>
@@ -624,6 +630,43 @@
             </section>
             <section id="admin-panel-api" class="admin-panel" data-admin-tab="api">
               <div id="admin-settings-api" class="admin-settings-group"></div>
+            </section>
+            <section id="admin-panel-vcenter" class="admin-panel" data-admin-tab="vcenter">
+              <div class="admin-vcenter-header">
+                <button id="admin-vcenter-add" class="btn" type="button" title="Add vCenter">＋ Add vCenter</button>
+                <span id="admin-vcenter-status" class="form-status"></span>
+              </div>
+              <div id="admin-vcenter-list" class="admin-vcenter-list"></div>
+              <form id="admin-vcenter-form" class="account-form hidden">
+                <input id="admin-vcenter-id" type="hidden" />
+                <h3 id="admin-vcenter-form-title">vCenter</h3>
+                <label class="field column">
+                  <span>Name</span>
+                  <input id="admin-vcenter-name" type="text" placeholder="Production vCenter" required />
+                </label>
+                <label class="field column">
+                  <span>Base URL</span>
+                  <input id="admin-vcenter-base-url" type="url" placeholder="https://vcenter.example.com" required />
+                </label>
+                <label class="field column">
+                  <span>Username</span>
+                  <input id="admin-vcenter-username" type="text" placeholder="svc_vcenter" required />
+                </label>
+                <label class="field column">
+                  <span>Password</span>
+                  <input id="admin-vcenter-password" type="password" placeholder="Enter password" />
+                  <small id="admin-vcenter-password-help">Leave blank to keep the current password.</small>
+                </label>
+                <label class="field">
+                  <input id="admin-vcenter-verify-ssl" type="checkbox" checked />
+                  <span>Verify TLS certificates</span>
+                </label>
+                <div class="account-actions">
+                  <button id="admin-vcenter-save" type="submit" class="btn">Save vCenter</button>
+                  <button id="admin-vcenter-cancel" type="button" class="btn ghost">Cancel</button>
+                  <span id="admin-vcenter-form-status" class="form-status"></span>
+                </div>
+              </form>
             </section>
             <section id="admin-panel-users" class="admin-panel" data-admin-tab="users">
               <div class="admin-users-header">
@@ -817,6 +860,37 @@
             <button id="nb-reset" class="btn ghost">Reset</button>
           </div>
           <div id="nb-results" class="feed empty">Not searched yet.</div>
+        </div>
+      </section>
+
+      <!-- vCenter Page -->
+      <section class="page" id="page-vcenter" hidden>
+        <div class="panel panel-vcenter">
+          <div class="vcenter-header">
+            <div class="vcenter-title">
+              <h2>vCenter Inventory</h2>
+              <span id="vcenter-status" class="form-status"></span>
+            </div>
+            <div class="vcenter-actions">
+              <label class="field vcenter-search-field">
+                <span>Search</span>
+                <input id="vcenter-search" type="text" placeholder="Filter by name, host, IP…" />
+              </label>
+              <button id="vcenter-refresh" class="btn" type="button">Refresh</button>
+            </div>
+          </div>
+          <nav class="tabs vcenter-tabs" id="vcenter-tabs" aria-label="vCenter instances"></nav>
+          <div class="vcenter-body">
+            <div id="vcenter-loading" class="panel-state" hidden>Loading inventory…</div>
+            <div id="vcenter-error" class="panel-state error" hidden></div>
+            <div id="vcenter-empty" class="panel-state" hidden>No vCenters configured yet.</div>
+            <div id="vcenter-table-wrapper" class="vcenter-table-wrapper" hidden>
+              <table class="vcenter-table">
+                <thead id="vcenter-thead"></thead>
+                <tbody id="vcenter-tbody"></tbody>
+              </table>
+            </div>
+          </div>
         </div>
       </section>
 

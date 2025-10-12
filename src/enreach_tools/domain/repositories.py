@@ -11,6 +11,7 @@ from .entities import (
     RolePermissionEntity,
     UserAPIKeyEntity,
     UserEntity,
+    VCenterConfigEntity,
 )
 
 
@@ -75,10 +76,48 @@ class RolePermissionRepository(Protocol):
     def upsert(self, role: str, label: str, description: str | None, permissions: Iterable[str]) -> RolePermissionEntity:
         ...
 
+
+class VCenterConfigRepository(Protocol):
+    """Data access abstraction for persisted vCenter configurations."""
+
+    def list_all(self) -> list[VCenterConfigEntity]:
+        ...
+
+    def get(self, config_id: str) -> VCenterConfigEntity | None:
+        ...
+
+    def create(
+        self,
+        *,
+        config_id: str | None,
+        name: str,
+        base_url: str,
+        username: str,
+        password_secret: str,
+        verify_ssl: bool,
+    ) -> VCenterConfigEntity:
+        ...
+
+    def update(
+        self,
+        config_id: str,
+        *,
+        name: str | None = None,
+        base_url: str | None = None,
+        username: str | None = None,
+        verify_ssl: bool | None = None,
+        password_secret: str | None = None,
+    ) -> VCenterConfigEntity | None:
+        ...
+
+    def delete(self, config_id: str) -> bool:
+        ...
+
 __all__ = [
     "ChatSessionRepository",
     "GlobalAPIKeyRepository",
     "RolePermissionRepository",
     "UserAPIKeyRepository",
     "UserRepository",
+    "VCenterConfigRepository",
 ]

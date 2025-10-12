@@ -24,6 +24,11 @@ ROLE_CAPABILITIES: tuple[dict[str, str], ...] = (
         "label": "Use chat assistants",
         "description": "Allow opening conversations in the Chat page.",
     },
+    {
+        "id": "vcenter.view",
+        "label": "View vCenter inventory",
+        "description": "Allow viewing vCenter data and VM inventory dashboards.",
+    },
 )
 
 DEFAULT_ROLE_DEFINITIONS: dict[str, dict[str, Any]] = {
@@ -40,12 +45,12 @@ DEFAULT_ROLE_DEFINITIONS: dict[str, dict[str, Any]] = {
     "operator": {
         "label": "Operator",
         "description": "Can run exports and acknowledge Zabbix alerts but cannot access chat or automation tools.",
-        "permissions": ["export.run", "zabbix.ack"],
+        "permissions": ["export.run", "zabbix.ack", "vcenter.view"],
     },
     "viewer": {
         "label": "Viewer",
         "description": "Read-only access to dashboards, searches, and downloads.",
-        "permissions": [],
+        "permissions": ["vcenter.view"],
     },
 }
 

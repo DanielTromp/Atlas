@@ -40,6 +40,10 @@ SECURE_ENV_KEYS: tuple[str, ...] = (
 )
 
 
+class SecretStoreUnavailable(RuntimeError):
+    """Raised when the encrypted secret store is unavailable."""
+
+
 class _SecureSettingStore:
     """Helper implementing CRUD operations for encrypted settings."""
 
@@ -104,6 +108,32 @@ def _has_secure_table() -> bool:
         return False
 
 
+def _build_store(session: Session) -> _SecureSettingStore | None:
+    cipher = _build_cipher()
+    if cipher is None:
+        return None
+    if not _has_secure_table():
+        return None
+    return _SecureSettingStore(session, cipher)
+
+
+def get_secret_store(session: Session) -> _SecureSettingStore | None:
+    """Return a secret store instance when encryption is configured."""
+
+    return _build_store(session)
+
+
+def require_secret_store(session: Session) -> _SecureSettingStore:
+    """Return a secret store or raise when encryption is not configured."""
+
+    store = _build_store(session)
+    if store is None:
+        raise SecretStoreUnavailable(
+            "Encrypted settings are not available. Configure ENREACH_SECRET_KEY and run migrations.",
+        )
+    return store
+
+
 def sync_secure_settings(keys: Iterable[str] | None = None) -> None:
     """Synchronise selected environment variables with the encrypted store.
 
@@ -149,4 +179,11 @@ def sync_secure_settings(keys: Iterable[str] | None = None) -> None:
             logger.error("Failed to synchronise encrypted settings", exc_info=exc)
 
 
-__all__ = ["SECRET_KEY_ENV", "SECURE_ENV_KEYS", "sync_secure_settings"]
+__all__ = [
+    "SECRET_KEY_ENV",
+    "SECURE_ENV_KEYS",
+    "SecretStoreUnavailable",
+    "get_secret_store",
+    "require_secret_store",
+    "sync_secure_settings",
+]

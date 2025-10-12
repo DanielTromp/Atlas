@@ -15,6 +15,7 @@ from .commvault import (
 )
 from .confluence import ConfluenceAttachment
 from .netbox import NetboxDeviceRecord, NetboxVMRecord
+from .vcenter import VCenterVM
 from .zabbix import (
     ZabbixAckResult,
     ZabbixHost,
@@ -36,6 +37,7 @@ __all__ = [
     "ConfluenceAttachment",
     "NetboxDeviceRecord",
     "NetboxVMRecord",
+    "VCenterVM",
     "ZabbixAckResult",
     "ZabbixHost",
     "ZabbixHostGroup",

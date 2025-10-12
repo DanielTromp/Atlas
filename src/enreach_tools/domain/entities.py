@@ -83,3 +83,17 @@ class ChatMessageEntity:
     role: str
     content: str
     created_at: datetime
+
+
+@dataclass(slots=True)
+class VCenterConfigEntity:
+    """Configuration details for connecting to a vCenter instance."""
+
+    id: str
+    name: str
+    base_url: str
+    username: str
+    verify_ssl: bool
+    password_secret: str
+    created_at: datetime
+    updated_at: datetime

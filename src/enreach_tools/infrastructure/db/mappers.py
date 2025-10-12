@@ -11,6 +11,7 @@ from enreach_tools.domain.entities import (
     RolePermissionEntity,
     UserAPIKeyEntity,
     UserEntity,
+    VCenterConfigEntity,
 )
 
 
@@ -83,6 +84,19 @@ def role_permission_to_entity(record: models.RolePermission) -> RolePermissionEn
         label=record.label,
         description=record.description,
         permissions=frozenset(record.permissions or []),
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+    )
+
+
+def vcenter_config_to_entity(record: models.VCenterConfig) -> VCenterConfigEntity:
+    return VCenterConfigEntity(
+        id=record.id,
+        name=record.name,
+        base_url=record.base_url,
+        username=record.username,
+        verify_ssl=record.verify_ssl,
+        password_secret=record.password_secret,
         created_at=record.created_at,
         updated_at=record.updated_at,
     )

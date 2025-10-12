@@ -15,6 +15,7 @@ from .admin import AdminService, create_admin_service
 from .chat import DefaultChatHistoryService, create_chat_history_service
 from .netbox import NetboxExportService
 from .users import DefaultUserService, create_user_service
+from .vcenter import VCenterService, create_vcenter_service
 
 
 class UserService(Protocol):
@@ -56,7 +57,9 @@ __all__ = [
     "DefaultUserService",
     "NetboxExportService",
     "UserService",
+    "VCenterService",
     "create_admin_service",
     "create_chat_history_service",
     "create_user_service",
+    "create_vcenter_service",
 ]

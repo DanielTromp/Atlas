@@ -61,6 +61,7 @@ from enreach_tools.application.dto import (
 )
 from enreach_tools.application.role_defaults import DEFAULT_ROLE_DEFINITIONS
 from enreach_tools.application.security import hash_password, verify_password
+from enreach_tools.application.services import create_vcenter_service
 from enreach_tools.db import get_sessionmaker, init_database
 from enreach_tools.db.models import (
     ChatMessage,
@@ -5565,8 +5566,77 @@ def commvault_servers_export(
 
 
 # ---------------------------
-# Search aggregator (Zabbix, Jira, Confluence, NetBox)
+# Search aggregator (Zabbix, Jira, Confluence, NetBox, vCenter)
 # ---------------------------
+
+
+def _collect_vm_search_values(vm: Any) -> list[str]:
+    values: list[str] = []
+
+    def push(raw: Any) -> None:
+        if raw is None:
+            return
+        text = str(raw).strip().lower()
+        if text:
+            values.append(text)
+
+    push(getattr(vm, "vm_id", None))
+    push(getattr(vm, "name", None))
+    attrs = [
+        "power_state",
+        "guest_os",
+        "tools_status",
+        "host",
+        "cluster",
+        "datacenter",
+        "resource_pool",
+        "folder",
+        "instance_uuid",
+        "bios_uuid",
+        "guest_family",
+        "guest_name",
+        "guest_full_name",
+        "guest_host_name",
+        "guest_ip_address",
+        "tools_run_state",
+        "tools_version",
+        "tools_version_status",
+        "tools_install_type",
+        "vcenter_url",
+    ]
+    for attr in attrs:
+        push(getattr(vm, attr, None))
+    for seq in (
+        getattr(vm, "ip_addresses", ()) or (),
+        getattr(vm, "mac_addresses", ()) or (),
+        getattr(vm, "tags", ()) or (),
+        getattr(vm, "network_names", ()) or (),
+    ):
+        for item in seq:
+            push(item)
+    custom_attrs = getattr(vm, "custom_attributes", None)
+    if isinstance(custom_attrs, Mapping):
+        for key, value in custom_attrs.items():
+            push(key)
+            push(value)
+    return values
+
+
+def _vcenter_vm_matches(vm: Any, tokens: list[str]) -> bool:
+    if not tokens:
+        return True
+    values = _collect_vm_search_values(vm)
+    if not values:
+        return False
+    return all(any(token in value for value in values) for token in tokens)
+
+
+def _iso_datetime(value: Any) -> str | None:
+    if isinstance(value, datetime):
+        return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    if isinstance(value, str):
+        return value
+    return None
 
 
 def _ts_iso(ts: int | str | None) -> str:
@@ -5581,12 +5651,92 @@ def _ts_iso(ts: int | str | None) -> str:
 
 @app.get("/search/aggregate")
 def search_aggregate(
+    request: Request,
     q: str = Query(..., description="Object name to search across systems"),
     zlimit: int = Query(10, ge=0, le=500, description="Max Zabbix items per list (0 = no limit)"),
     jlimit: int = Query(10, ge=0, le=200, description="Max Jira issues (0 = no limit, capped upstream)"),
     climit: int = Query(10, ge=0, le=200, description="Max Confluence results (0 = no limit, capped upstream)"),
+    vlimit: int = Query(10, ge=0, le=500, description="Max vCenter matches (0 = no limit)"),
 ):
     out: dict[str, Any] = {"q": q}
+
+    permissions = getattr(request.state, "permissions", frozenset())
+    user = getattr(request.state, "user", None)
+    user_role = getattr(user, "role", "") if user else ""
+    can_view_vcenter = bool(user) and (user_role == "admin" or "vcenter.view" in permissions)
+    vcenter_payload: dict[str, Any] = {
+        "items": [],
+        "errors": [],
+        "permitted": can_view_vcenter,
+        "has_more": False,
+        "total": 0,
+    }
+    out["vcenter"] = vcenter_payload
+
+    if can_view_vcenter and vlimit != 0:
+        tokens = [token for token in q.lower().split() if token.strip()]
+        try:
+            with SessionLocal() as db:
+                service = create_vcenter_service(db)
+                configs_with_meta = service.list_configs_with_status()
+                match_count = 0
+                for config, _meta in configs_with_meta:
+                    friendly_name = config.name or config.base_url or config.id
+                    try:
+                        _, vms, meta_payload = service.get_inventory(config.id, refresh=False)
+                    except Exception as exc:  # pragma: no cover - integration path
+                        vcenter_payload["errors"].append(f"{friendly_name}: {exc}")
+                        continue
+
+                    generated_at = None
+                    if isinstance(meta_payload, Mapping):
+                        generated_at = _iso_datetime(meta_payload.get("generated_at"))
+
+                    for vm in vms:
+                        if tokens and not _vcenter_vm_matches(vm, tokens):
+                            continue
+                        match_count += 1
+                        if vlimit > 0 and len(vcenter_payload["items"]) >= vlimit:
+                            vcenter_payload["has_more"] = True
+                            break
+
+                        vcenter_payload["items"].append(
+                            {
+                                "id": vm.vm_id,
+                                "name": vm.name,
+                                "config_id": config.id,
+                                "config_name": friendly_name,
+                                "power_state": vm.power_state,
+                                "guest_os": vm.guest_os,
+                                "tools_status": vm.tools_status,
+                                "guest_host_name": vm.guest_host_name,
+                                "guest_ip_address": vm.guest_ip_address,
+                                "ip_addresses": list(vm.ip_addresses),
+                                "mac_addresses": list(vm.mac_addresses),
+                                "tags": list(vm.tags),
+                                "network_names": list(vm.network_names),
+                                "instance_uuid": vm.instance_uuid,
+                                "bios_uuid": vm.bios_uuid,
+                                "vcenter_url": vm.vcenter_url,
+                                "detail_url": f"/app/vcenter/view.html?config={config.id}&vm={vm.vm_id}",
+                                "generated_at": generated_at,
+                            }
+                        )
+
+                    if vcenter_payload["has_more"]:
+                        break
+
+                vcenter_payload["total"] = match_count
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            vcenter_payload["errors"].append(str(exc))
+
+        if vcenter_payload["items"]:
+            vcenter_payload["items"].sort(
+                key=lambda item: (
+                    (item.get("name") or item.get("id") or "").lower(),
+                    item.get("config_name") or "",
+                )
+            )
 
     # Zabbix: active (problems) and historical (events)
     try:

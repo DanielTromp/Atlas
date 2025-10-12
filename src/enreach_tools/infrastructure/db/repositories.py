@@ -13,6 +13,7 @@ from enreach_tools.domain.repositories import (
     RolePermissionRepository,
     UserAPIKeyRepository,
     UserRepository,
+    VCenterConfigRepository,
 )
 
 from . import mappers
@@ -158,10 +159,86 @@ class SqlAlchemyRolePermissionRepository(RolePermissionRepository):
         return mappers.role_permission_to_entity(record)
 
 
+class SqlAlchemyVCenterConfigRepository(VCenterConfigRepository):
+    """Repository for stored vCenter configuration records."""
+
+    def __init__(self, session: Session):
+        self._session = session
+
+    def list_all(self):
+        stmt = select(models.VCenterConfig).order_by(models.VCenterConfig.name.asc())
+        records = self._session.execute(stmt).scalars().all()
+        return [mappers.vcenter_config_to_entity(record) for record in records]
+
+    def get(self, config_id: str):
+        record = self._session.get(models.VCenterConfig, config_id)
+        return mappers.vcenter_config_to_entity(record) if record else None
+
+    def create(
+        self,
+        *,
+        config_id: str | None,
+        name: str,
+        base_url: str,
+        username: str,
+        password_secret: str,
+        verify_ssl: bool,
+    ):
+        record = models.VCenterConfig(
+            id=config_id,
+            name=name,
+            base_url=base_url,
+            username=username,
+            password_secret=password_secret,
+            verify_ssl=verify_ssl,
+        )
+        self._session.add(record)
+        self._session.flush()
+        self._session.refresh(record)
+        return mappers.vcenter_config_to_entity(record)
+
+    def update(
+        self,
+        config_id: str,
+        *,
+        name: str | None = None,
+        base_url: str | None = None,
+        username: str | None = None,
+        verify_ssl: bool | None = None,
+        password_secret: str | None = None,
+    ):
+        record = self._session.get(models.VCenterConfig, config_id)
+        if record is None:
+            return None
+        if name is not None:
+            record.name = name
+        if base_url is not None:
+            record.base_url = base_url
+        if username is not None:
+            record.username = username
+        if verify_ssl is not None:
+            record.verify_ssl = verify_ssl
+        if password_secret is not None:
+            record.password_secret = password_secret
+        self._session.add(record)
+        self._session.flush()
+        self._session.refresh(record)
+        return mappers.vcenter_config_to_entity(record)
+
+    def delete(self, config_id: str):
+        record = self._session.get(models.VCenterConfig, config_id)
+        if record is None:
+            return False
+        self._session.delete(record)
+        self._session.flush()
+        return True
+
+
 __all__ = [
     "SqlAlchemyChatSessionRepository",
     "SqlAlchemyGlobalAPIKeyRepository",
     "SqlAlchemyRolePermissionRepository",
     "SqlAlchemyUserAPIKeyRepository",
     "SqlAlchemyUserRepository",
+    "SqlAlchemyVCenterConfigRepository",
 ]

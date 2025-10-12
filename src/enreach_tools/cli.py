@@ -35,6 +35,7 @@ from .infrastructure.metrics import record_netbox_export
 from .infrastructure.queues import InMemoryJobQueue
 from .infrastructure.tracing import init_tracing, span, tracing_enabled
 from .interfaces.cli.commvault import app as commvault_cli_app
+from .interfaces.cli.vcenter import app as vcenter_cli_app
 
 # Enable -h as an alias for --help everywhere
 HELP_CTX = {"help_option_names": ["-h", "--help"]}
@@ -152,6 +153,7 @@ app.add_typer(jira, name="jira")
 confluence = typer.Typer(help="Confluence helpers", context_settings=HELP_CTX)
 app.add_typer(confluence, name="confluence")
 app.add_typer(commvault_cli_app, name="commvault")
+app.add_typer(vcenter_cli_app, name="vcenter")
 netbox = typer.Typer(help="NetBox helpers", context_settings=HELP_CTX)
 app.add_typer(netbox, name="netbox")
 search = typer.Typer(help="Cross-system search aggregator", context_settings=HELP_CTX)

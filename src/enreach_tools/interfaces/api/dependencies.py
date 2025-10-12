@@ -12,9 +12,11 @@ from enreach_tools.application.services import (
     AdminService,
     DefaultChatHistoryService,
     DefaultUserService,
+    VCenterService,
     create_admin_service,
     create_chat_history_service,
     create_user_service,
+    create_vcenter_service,
 )
 from enreach_tools.application.services.profile import ProfileService, create_profile_service
 from enreach_tools.db import get_sessionmaker
@@ -60,6 +62,12 @@ def get_admin_service(session: DbSessionDep) -> AdminService:
     return create_admin_service(session)
 
 
+def get_vcenter_service(session: DbSessionDep) -> VCenterService:
+    """Return the vCenter service bound to the active session."""
+
+    return create_vcenter_service(session)
+
+
 def current_user(request: Request) -> User:
     user = getattr(request.state, "user", None)
     if not isinstance(user, User):
@@ -94,4 +102,5 @@ __all__ = [
     "get_profile_service",
     "get_service_context",
     "get_user_service",
+    "get_vcenter_service",
 ]

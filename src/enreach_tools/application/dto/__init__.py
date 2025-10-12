@@ -42,6 +42,14 @@ from .users import (
     user_to_dto,
     users_to_dto,
 )
+from .vcenter import (
+    VCenterConfigDTO,
+    VCenterVMDTO,
+    vcenter_config_to_dto,
+    vcenter_configs_to_dto,
+    vcenter_vm_to_dto,
+    vcenter_vms_to_dto,
+)
 
 __all__ = [
     "AdminEnvResponseDTO",
@@ -62,6 +70,8 @@ __all__ = [
     "SuggestionMetaDTO",
     "UserAPIKeyDTO",
     "UserDTO",
+    "VCenterConfigDTO",
+    "VCenterVMDTO",
     "admin_global_key_to_dto",
     "admin_global_keys_to_dto",
     "admin_role_to_dto",
@@ -80,4 +90,8 @@ __all__ = [
     "user_keys_to_dto",
     "user_to_dto",
     "users_to_dto",
+    "vcenter_config_to_dto",
+    "vcenter_configs_to_dto",
+    "vcenter_vm_to_dto",
+    "vcenter_vms_to_dto",
 ]

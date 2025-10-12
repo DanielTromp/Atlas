@@ -1,5 +1,5 @@
 """API route exports."""
 
-from . import auth, profile
+from . import admin, auth, profile, tools, vcenter
 
-__all__ = ["auth", "profile"]
+__all__ = ["admin", "auth", "profile", "tools", "vcenter"]

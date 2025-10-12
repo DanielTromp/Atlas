@@ -10,6 +10,7 @@ from .account import (
     ProfileUpdate,
 )
 from .tools import ToolCatalog, ToolDefinition, ToolLink, ToolParameter
+from .vcenter import VCenterConfigCreate, VCenterConfigUpdate
 
 __all__ = [
     "APIKeyPayload",
@@ -23,4 +24,6 @@ __all__ = [
     "ToolDefinition",
     "ToolLink",
     "ToolParameter",
+    "VCenterConfigCreate",
+    "VCenterConfigUpdate",
 ]

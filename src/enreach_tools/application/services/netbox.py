@@ -6,12 +6,12 @@ import csv
 import hashlib
 import json
 import os
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 from enreach_tools import backup_sync
 from enreach_tools.application.exporter.netbox import (
@@ -208,7 +208,7 @@ class NetboxExportService:
 
         start = monotonic()
         status = "success"
-        generated_at = datetime.now(timezone.utc)
+        generated_at = datetime.now(UTC)
         summaries: dict[str, CacheResourceSummary] = {}
         previous_snapshot = self._load_cache_snapshot()
         with span("netbox.cache.refresh", job=self.JOB_NAME, force=force, verbose=verbose):
@@ -496,9 +496,9 @@ class NetboxExportService:
                     continue
 
         for record in fetched_records:
-            key = str(getattr(record, "id"))
+            key = str(record.id)
             items_map[key] = cache_builder(record)
-            record_map[int(getattr(record, "id"))] = record
+            record_map[int(record.id)] = record
 
         for removed in removed_keys:
             items_map.pop(removed, None)
@@ -635,8 +635,8 @@ class NetboxExportService:
             except ValueError:
                 return None
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
+        return dt.astimezone(UTC)
 
     def _normalize_iso(self, value: Any) -> str:
         parsed = self._parse_iso(value)
@@ -649,7 +649,7 @@ class NetboxExportService:
         snapshot = self._load_cache_snapshot()
         if not snapshot:
             return None
-        generated_at = self._parse_iso(snapshot.get("generated_at")) or datetime.now(timezone.utc)
+        generated_at = self._parse_iso(snapshot.get("generated_at")) or datetime.now(UTC)
         device_index = self._cache_index(snapshot, "devices")
         vm_index = self._cache_index(snapshot, "vms")
         device_items = [self._ensure_item_hash(device_index[key]) for key in self._sorted_keys(device_index)]
@@ -744,8 +744,8 @@ class NetboxExportService:
         if value is None:
             return None
         if value.tzinfo is None:
-            value = value.replace(tzinfo=timezone.utc)
-        normalized = value.astimezone(timezone.utc).replace(microsecond=0)
+            value = value.replace(tzinfo=UTC)
+        normalized = value.astimezone(UTC).replace(microsecond=0)
         return normalized.isoformat().replace("+00:00", "Z")
 
     def _write_devices_csv(self, devices: Iterable[NetboxDeviceRecord]) -> None:

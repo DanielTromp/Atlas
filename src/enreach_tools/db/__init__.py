@@ -9,7 +9,7 @@ future.
 from __future__ import annotations
 
 from .config import get_database_url, get_engine, get_sessionmaker
-from .models import Base, GlobalAPIKey, SecureSetting, User, UserAPIKey
+from .models import Base, GlobalAPIKey, SecureSetting, User, UserAPIKey, VCenterConfig
 from .setup import init_database
 
 __all__ = [
@@ -18,6 +18,7 @@ __all__ = [
     "SecureSetting",
     "User",
     "UserAPIKey",
+    "VCenterConfig",
     "get_database_url",
     "get_engine",
     "get_sessionmaker",
