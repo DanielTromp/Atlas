@@ -125,10 +125,12 @@
   const $themeRoot = document.getElementById('theme-toggle-root');
   const $pages = document.getElementById("pages");
   const $navChat = document.querySelector('button[data-page="chat"]');
+  const $navVCenter = document.querySelector('button[data-page="vcenter"]');
   const $navTools = document.querySelector('button[data-page="tools"]');
   const $navAdmin = document.querySelector('button[data-page="admin"]');
   const $pageExport = document.getElementById("page-export");
   const $pageCommvault = document.getElementById("page-commvault");
+  const $pageVCenter = document.getElementById("page-vcenter");
   const $pageNetbox = document.getElementById("page-netbox");
   const $pageSearch = document.getElementById("page-search");
   const $pageTools = document.getElementById("page-tools");
@@ -218,6 +220,16 @@
   const $commvaultStorageRefresh = document.getElementById("commvault-storage-refresh");
   const $commvaultPlansSummary = document.getElementById("commvault-plans-summary");
   const $commvaultPlansStatus = document.getElementById("commvault-plans-status");
+  const $vcenterTabs = document.getElementById("vcenter-tabs");
+  const $vcenterRefresh = document.getElementById("vcenter-refresh");
+  const $vcenterStatus = document.getElementById("vcenter-status");
+  const $vcenterSearch = document.getElementById("vcenter-search");
+  const $vcenterLoading = document.getElementById("vcenter-loading");
+  const $vcenterError = document.getElementById("vcenter-error");
+  const $vcenterEmpty = document.getElementById("vcenter-empty");
+  const $vcenterTableWrapper = document.getElementById("vcenter-table-wrapper");
+  const $vcenterTableHead = document.getElementById("vcenter-thead");
+  const $vcenterTableBody = document.getElementById("vcenter-tbody");
   const $commvaultPlansTableBody = document.getElementById("commvault-plans-table-body");
   const $commvaultPlansRefresh = document.getElementById("commvault-plans-refresh");
   const $commvaultPlansType = document.getElementById("commvault-plans-type");
@@ -290,6 +302,7 @@
     'chat': document.getElementById('admin-panel-chat'),
     'export': document.getElementById('admin-panel-export'),
     'api': document.getElementById('admin-panel-api'),
+    'vcenter': document.getElementById('admin-panel-vcenter'),
     'users': document.getElementById('admin-panel-users'),
     'backup': document.getElementById('admin-panel-backup'),
   };
@@ -308,6 +321,21 @@
   const $adminBackupStatus = document.getElementById("admin-backup-status");
   const $adminBackupLocalConfig = document.getElementById("admin-backup-local-config");
   const $adminBackupRemoteConfig = document.getElementById("admin-backup-remote-config");
+  const $adminVCenterList = document.getElementById("admin-vcenter-list");
+  const $adminVCenterAdd = document.getElementById("admin-vcenter-add");
+  const $adminVCenterForm = document.getElementById("admin-vcenter-form");
+  const $adminVCenterFormTitle = document.getElementById("admin-vcenter-form-title");
+  const $adminVCenterId = document.getElementById("admin-vcenter-id");
+  const $adminVCenterName = document.getElementById("admin-vcenter-name");
+  const $adminVCenterBaseUrl = document.getElementById("admin-vcenter-base-url");
+  const $adminVCenterUsername = document.getElementById("admin-vcenter-username");
+  const $adminVCenterPassword = document.getElementById("admin-vcenter-password");
+  const $adminVCenterPasswordHelp = document.getElementById("admin-vcenter-password-help");
+  const $adminVCenterVerifySSL = document.getElementById("admin-vcenter-verify-ssl");
+  const $adminVCenterSave = document.getElementById("admin-vcenter-save");
+  const $adminVCenterCancel = document.getElementById("admin-vcenter-cancel");
+  const $adminVCenterStatus = document.getElementById("admin-vcenter-status");
+  const $adminVCenterFormStatus = document.getElementById("admin-vcenter-form-status");
   // User management elements
   const $adminUserList = document.getElementById("admin-user-list");
   const $adminUserDetail = document.getElementById("admin-user-detail");
@@ -447,6 +475,135 @@
   let commvaultServerSuggestionTimer = null;
   let commvaultStatusTimeout = null;
   let commvaultPlansStatusTimeout = null;
+  const vcenterState = {
+    instances: [],
+    activeId: null,
+    loading: false,
+    error: null,
+    vms: [],
+    filtered: [],
+    search: '',
+    lastFetchAt: 0,
+    meta: null,
+  };
+  const POWER_STATE_LABELS = {
+    POWERED_ON: { label: 'On', className: 'on', icon: '●' },
+    POWERED_OFF: { label: 'Off', className: 'off', icon: '○' },
+    SUSPENDED: { label: 'Suspended', className: 'suspended', icon: '◐' },
+  };
+
+  function formatVmPowerState(vm) {
+    const state = (vm?.power_state || '').toUpperCase();
+    const meta = POWER_STATE_LABELS[state] || { label: state || 'Unknown', className: 'unknown', icon: '◌' };
+    const badge = document.createElement('span');
+    badge.className = `vcenter-state vcenter-state--${meta.className}`;
+    badge.textContent = `${meta.icon} ${meta.label}`;
+    badge.title = state || 'Unknown';
+    return badge;
+  }
+
+  function fallbackDnsName(vm) {
+    if (vm?.guest_host_name && vm.guest_host_name.trim()) return vm.guest_host_name.trim();
+    const name = vm?.name;
+    if (!name || typeof name !== 'string') return '';
+    const trimmed = name.trim();
+    if (!trimmed) return '';
+    return trimmed.includes('.') ? trimmed.split('.')[0] : trimmed;
+  }
+
+  function humanizeToolsStatus(raw) {
+    if (!raw || typeof raw !== 'string') return '';
+    const normalized = raw.trim();
+    const map = {
+      toolsOk: 'OK',
+      toolsOld: 'Out of date',
+      toolsNotRunning: 'Not running',
+      toolsNotInstalled: 'Not installed',
+      toolsBlacklisted: 'Blacklisted',
+      toolsTooOld: 'Too old',
+      toolsTooNew: 'Too new',
+    };
+    if (map[normalized]) return map[normalized];
+    return normalized.replace(/_/g, ' ');
+  }
+
+  function formatVmTools(vm) {
+    if (!vm) return '';
+    const parts = [];
+    const status = humanizeToolsStatus(vm.tools_status || vm.tools_run_state || vm.tools_version_status);
+    if (status) parts.push(status);
+    const version = vm.tools_version && String(vm.tools_version).trim();
+    if (version) parts.push(`v${version}`);
+    const text = parts.length ? parts.join(' • ') : 'Unknown';
+    const titleParts = [];
+    if (vm.tools_version_status && vm.tools_version_status !== vm.tools_status) {
+      titleParts.push(`Status: ${humanizeToolsStatus(vm.tools_version_status)}`);
+    }
+    if (vm.tools_install_type) {
+      titleParts.push(`Install: ${String(vm.tools_install_type).trim()}`);
+    }
+    if (vm.tools_run_state && vm.tools_run_state !== vm.tools_status) {
+      titleParts.push(`Run state: ${String(vm.tools_run_state).trim()}`);
+    }
+    const title = titleParts.join('\n');
+    const statusClass = status ? status.toLowerCase().replace(/\s+/g, '-') : 'unknown';
+    return {
+      text,
+      className: `vcenter-tools vcenter-tools--${statusClass}`,
+      title: title || undefined,
+    };
+  }
+
+  function buildVCenterLink(vm) {
+    const directUrl = vm?.vcenter_url && typeof vm.vcenter_url === 'string' ? vm.vcenter_url.trim() : '';
+    let href = directUrl;
+    if (!href) {
+      const active = getActiveVCenter();
+      const base = active?.base_url ? active.base_url.trim().replace(/\/+$/, '') : '';
+      if (base && vm?.id) {
+        const id = String(vm.id).trim();
+        if (id) href = `${base}/ui/app/vm;nav=v/urn:vmomi:VirtualMachine:${id}:${id}/summary`;
+      }
+    }
+    if (!href) return '';
+    const anchor = document.createElement('a');
+    anchor.href = href;
+    anchor.target = '_blank';
+    anchor.rel = 'noreferrer noopener';
+    anchor.className = 'vcenter-link';
+    anchor.title = 'Open virtual machine in vCenter (opens in new tab)';
+    const icon = document.createElement('span');
+    icon.className = 'vcenter-link-icon';
+    icon.textContent = '⧉';
+    icon.setAttribute('aria-hidden', 'true');
+    anchor.appendChild(icon);
+    const sr = document.createElement('span');
+    sr.className = 'sr-only';
+    sr.textContent = 'Open in vCenter';
+    anchor.appendChild(sr);
+    return anchor;
+  }
+
+  function formatVCenterUpdated() {
+    const generatedIso = vcenterState.meta?.generated_at;
+    if (!generatedIso) return '';
+    try {
+      return amsDateTimeString(new Date(generatedIso));
+    } catch {
+      return generatedIso;
+    }
+  }
+
+  const VCENTER_COLUMNS = [
+    { label: '#', className: 'vcenter-col-index', render: (_vm, idx) => idx + 1 },
+    { label: 'Display Name', className: 'vcenter-col-name', render: (vm) => vm?.name || '' },
+    { label: 'State', className: 'vcenter-col-state', render: (vm) => formatVmPowerState(vm) },
+    { label: 'Link', className: 'vcenter-col-link', render: (vm) => buildVCenterLink(vm) },
+    { label: 'DNS Name', className: 'vcenter-col-dns', render: (vm) => fallbackDnsName(vm) },
+    { label: 'Tools', className: 'vcenter-col-tools', render: (vm) => formatVmTools(vm) },
+    { label: 'VM HW', className: 'vcenter-col-hw', render: (vm) => vm?.hardware_version || '' },
+    { label: 'Updated', className: 'vcenter-col-updated', render: () => formatVCenterUpdated() },
+  ];
   let currentUser = null;
   const permissionState = {
     user: new Set(),
@@ -463,6 +620,9 @@
     permissionState.user = next;
     permissionState.ready = true;
     applyRoleRestrictions();
+    if (canAccessPage('vcenter') && vcenterState.instances.length === 0) {
+      loadVCenterInstances().catch(() => {});
+    }
   }
 
   function hasPermission(code) {
@@ -927,6 +1087,7 @@
     'chat',
     'export',
     'commvault',
+    'vcenter',
     'zhost',
     'suggestions',
     'account',
@@ -977,6 +1138,9 @@
     editingGlobalKey: false,
     roles: [],
     roleCapabilities: [],
+    vcenters: [],
+    vcenterLoading: false,
+    editingVCenter: null,
   };
   const chatConfig = {
     systemPrompt: '',
@@ -2839,6 +3003,7 @@
     const key = (pageKey || '').toLowerCase();
     if (key === 'tools') return hasPermission('tools.use');
     if (key === 'chat') return hasPermission('chat.use');
+    if (key === 'vcenter') return hasPermission('vcenter.view') || (currentUser && currentUser.role === 'admin');
     if (key === 'admin') return currentUser && currentUser.role === 'admin';
     return true;
   }
@@ -2857,12 +3022,14 @@
     }
     const canTools = canAccessPage('tools');
     const canChat = canAccessPage('chat');
+    const canVCenter = canAccessPage('vcenter');
     const canAdmin = canAccessPage('admin');
     const canRunExport = hasPermission('export.run');
     const canAck = hasPermission('zabbix.ack');
 
     if ($navTools) $navTools.hidden = !canTools;
     if ($navChat) $navChat.hidden = !canChat;
+    if ($navVCenter) $navVCenter.hidden = !canVCenter;
     if ($navAdmin) $navAdmin.hidden = !canAdmin;
 
     if ($updateBtn) $updateBtn.disabled = !canRunExport;
@@ -2905,6 +3072,7 @@
       chat: $pageChat,
       export: $pageExport,
       commvault: $pageCommvault,
+      vcenter: $pageVCenter,
       zhost: $pageZhost,
       suggestions: $pageSuggestions,
       'suggestion-detail': $pageSuggestionDetail,
@@ -2951,6 +3119,8 @@
       fetchData();
     } else if (p === 'commvault') {
       setCommvaultTab(commvaultState.tab || 'backups');
+    } else if (p === 'vcenter') {
+      loadVCenterInstances().catch(() => {});
     } else if (p === 'tools') {
       loadTools();
     } else if (p === 'chat') {
@@ -4827,6 +4997,468 @@
   renderCommvaultServerState();
 
   // ---------------------------
+  // vCenter inventory
+  // ---------------------------
+
+  function getActiveVCenter() {
+    if (!vcenterState.instances.length) return null;
+    const match = vcenterState.instances.find((inst) => inst.id === vcenterState.activeId);
+    return match || vcenterState.instances[0] || null;
+  }
+
+  function setVCenterStatus(message = null, tone = 'info') {
+    if (!$vcenterStatus) return;
+    const text = message || describeVCenterSelection() || '';
+    $vcenterStatus.textContent = text;
+    $vcenterStatus.classList.remove('error', 'success');
+    if (tone === 'error') {
+      $vcenterStatus.classList.add('error');
+    } else if (tone === 'success') {
+      $vcenterStatus.classList.add('success');
+    }
+  }
+
+  function renderVCenterTabs() {
+    if (!$vcenterTabs) return;
+    $vcenterTabs.innerHTML = '';
+    if (!vcenterState.instances.length) {
+      $vcenterTabs.classList.add('empty');
+      return;
+    }
+    $vcenterTabs.classList.remove('empty');
+    const frag = document.createDocumentFragment();
+    vcenterState.instances.forEach((inst) => {
+      if (!inst || !inst.id) return;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'tab';
+      btn.dataset.vcenterId = inst.id;
+      btn.textContent = inst.name || 'vCenter';
+      if (inst.id === vcenterState.activeId) {
+        btn.classList.add('active');
+      }
+      const tooltipParts = [];
+      if (inst.base_url) tooltipParts.push(inst.base_url);
+      if (inst.vm_count != null && !Number.isNaN(inst.vm_count)) {
+        tooltipParts.push(`Cached VMs: ${String(inst.vm_count)}`);
+      }
+      if (inst.last_refresh) {
+        try {
+          tooltipParts.push(`Last update: ${amsDateTimeString(new Date(inst.last_refresh))}`);
+        } catch {}
+      }
+      if (tooltipParts.length) {
+        btn.title = tooltipParts.join('\n');
+      }
+      frag.appendChild(btn);
+    });
+    $vcenterTabs.appendChild(frag);
+  }
+
+  function vcenterVmMatches(vm, token) {
+    if (!vm || !token) return false;
+    const lower = token.toLowerCase();
+    const values = [];
+    const push = (value) => {
+      if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (trimmed) values.push(trimmed.toLowerCase());
+      }
+    };
+    push(vm.name);
+    push(vm.power_state);
+    push(vm.guest_os);
+    push(vm.tools_status);
+    push(vm.host);
+    push(vm.cluster);
+    push(vm.datacenter);
+    push(vm.resource_pool);
+    push(vm.folder);
+    push(vm.instance_uuid);
+    push(vm.bios_uuid);
+    if (Array.isArray(vm.ip_addresses)) vm.ip_addresses.forEach(push);
+    if (Array.isArray(vm.mac_addresses)) vm.mac_addresses.forEach(push);
+    if (Array.isArray(vm.tags)) vm.tags.forEach(push);
+    if (Array.isArray(vm.network_names)) vm.network_names.forEach(push);
+    push(vm.guest_family);
+    push(vm.guest_name);
+    push(vm.guest_full_name);
+    push(vm.guest_host_name);
+    push(vm.guest_ip_address);
+    push(vm.tools_run_state);
+    push(vm.tools_version);
+    push(vm.tools_version_status);
+    push(vm.tools_install_type);
+    push(vm.vcenter_url);
+    const attrs = vm?.custom_attributes;
+    if (attrs && typeof attrs === 'object') {
+      Object.entries(attrs).forEach(([key, value]) => {
+        if (key) push(key);
+        if (value != null) push(String(value));
+      });
+    }
+    return values.some((value) => value.includes(lower));
+  }
+
+  function describeVCenterSelection() {
+    const active = getActiveVCenter();
+    if (!active) {
+      return 'No vCenter instances configured yet.';
+    }
+
+    const name = active.name || 'vCenter';
+    const total = Array.isArray(vcenterState.vms) ? vcenterState.vms.length : 0;
+    const filtered = Array.isArray(vcenterState.filtered) ? vcenterState.filtered.length : 0;
+    const meta = vcenterState.meta || {};
+    const metaCountRaw = Number(meta.vm_count);
+    const vmBase = Number.isFinite(metaCountRaw) && metaCountRaw >= 0 ? metaCountRaw : total;
+    const generatedIso = typeof meta.generated_at === 'string' && meta.generated_at ? meta.generated_at : null;
+    const sourceLabel = meta.source === 'live' ? 'live data' : 'cached data';
+    const timeLabel = (() => {
+      if (!generatedIso) return 'never';
+      try {
+        return amsDateTimeString(new Date(generatedIso));
+      } catch {
+        return generatedIso;
+      }
+    })();
+
+    if (total === 0) {
+      return `No virtual machines available for ${name}. Last update: ${timeLabel}.`;
+    }
+
+    if (filtered === total) {
+      const suffix = total === 1 ? '' : 's';
+      return `Showing ${total.toLocaleString()} VM${suffix} from ${name} • ${sourceLabel} updated ${timeLabel}.`;
+    }
+    const suffix = filtered === 1 ? '' : 's';
+    return `Showing ${filtered.toLocaleString()} of ${total.toLocaleString()} VM${suffix} from ${name} (cached total ${vmBase.toLocaleString()}) • ${sourceLabel} updated ${timeLabel}.`;
+  }
+
+  function applyVCenterFilter() {
+    const search = (vcenterState.search || '').trim().toLowerCase();
+    const tokens = search ? search.split(/\s+/).filter(Boolean) : [];
+    if (!tokens.length) {
+      vcenterState.filtered = Array.isArray(vcenterState.vms) ? vcenterState.vms.slice() : [];
+      return;
+    }
+    vcenterState.filtered = vcenterState.vms.filter((vm) => tokens.every((token) => vcenterVmMatches(vm, token)));
+  }
+
+  function renderVCenterTableHeader() {
+    if (!$vcenterTableHead) return;
+    if ($vcenterTableHead.dataset.ready === 'true') return;
+    const row = document.createElement('tr');
+    VCENTER_COLUMNS.forEach((col) => {
+      const th = document.createElement('th');
+      th.scope = 'col';
+      th.textContent = col.label;
+      if (col.className) th.classList.add(col.className);
+      row.appendChild(th);
+    });
+    $vcenterTableHead.innerHTML = '';
+    $vcenterTableHead.appendChild(row);
+    $vcenterTableHead.dataset.ready = 'true';
+  }
+
+  function renderVCenterTable() {
+    if (!$vcenterTableBody) return;
+    renderVCenterTableHeader();
+    $vcenterTableBody.innerHTML = '';
+    if (!vcenterState.filtered.length) {
+      const tr = document.createElement('tr');
+      tr.className = 'empty';
+      const td = document.createElement('td');
+      td.colSpan = VCENTER_COLUMNS.length;
+      td.textContent = vcenterState.vms.length
+        ? 'No virtual machines match the current filter.'
+        : 'No virtual machines available for this vCenter.';
+      tr.appendChild(td);
+      $vcenterTableBody.appendChild(tr);
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    vcenterState.filtered.forEach((vm, idx) => {
+      const tr = document.createElement('tr');
+      VCENTER_COLUMNS.forEach((col) => {
+        const td = document.createElement('td');
+        if (col.className) td.classList.add(col.className);
+        let value;
+        try {
+          if (typeof col.render === 'function') {
+            value = col.render(vm, idx);
+          } else if (typeof col.formatter === 'function') {
+            value = col.formatter(vm, idx);
+          } else if (col.key && vm && Object.prototype.hasOwnProperty.call(vm, col.key)) {
+            value = vm[col.key];
+          } else {
+            value = '';
+          }
+        } catch {
+          value = '';
+        }
+        if (value instanceof Node) {
+          td.appendChild(value);
+        } else if (value && typeof value === 'object' && !Array.isArray(value)) {
+          if (value.className) {
+            const raw = Array.isArray(value.className) ? value.className : [value.className];
+            const classTokens = [];
+            raw.forEach((entry) => {
+              String(entry)
+                .split(/\s+/)
+                .map((token) => token.trim())
+                .filter(Boolean)
+                .forEach((token) => classTokens.push(token));
+            });
+            if (classTokens.length) td.classList.add(...classTokens);
+          }
+          if (value.title) td.title = value.title;
+          if (value.node instanceof Node) {
+            td.appendChild(value.node);
+          } else if (value.html != null) {
+            td.innerHTML = String(value.html);
+          } else if (value.text != null) {
+            td.textContent = String(value.text);
+          } else if (value.value != null) {
+            td.textContent = String(value.value);
+          } else {
+            td.textContent = '';
+          }
+        } else {
+          let rendered = value;
+          if (Array.isArray(rendered)) {
+            rendered = rendered.join(', ');
+          }
+          if (rendered === null || rendered === undefined) {
+            rendered = '';
+          }
+          td.textContent = typeof rendered === 'string' ? rendered : String(rendered);
+        }
+        tr.appendChild(td);
+      });
+      frag.appendChild(tr);
+    });
+    $vcenterTableBody.appendChild(frag);
+  }
+
+  function updateVCenterView() {
+    renderVCenterTabs();
+    const hasInstances = vcenterState.instances.length > 0;
+    if ($vcenterEmpty) $vcenterEmpty.hidden = hasInstances;
+    if (!hasInstances) {
+      if ($vcenterLoading) $vcenterLoading.hidden = true;
+      if ($vcenterError) {
+        $vcenterError.hidden = true;
+        $vcenterError.textContent = '';
+      }
+      if ($vcenterTableWrapper) $vcenterTableWrapper.hidden = true;
+      return;
+    }
+    if ($vcenterLoading) $vcenterLoading.hidden = !vcenterState.loading;
+    if ($vcenterError) {
+      if (vcenterState.error) {
+        $vcenterError.hidden = false;
+        $vcenterError.textContent = vcenterState.error;
+      } else {
+        $vcenterError.hidden = true;
+        $vcenterError.textContent = '';
+      }
+    }
+    const showTable = !vcenterState.loading && !vcenterState.error;
+    if ($vcenterTableWrapper) $vcenterTableWrapper.hidden = !showTable;
+    if (showTable) {
+      renderVCenterTable();
+    }
+    setVCenterStatus();
+  }
+
+  async function loadVCenterInventory(instanceId, options = {}) {
+    if (!instanceId) return;
+    const { force = false, refresh = false } = options;
+    const wantLive = force || refresh;
+    if (vcenterState.activeId === instanceId && vcenterState.loading && !wantLive) return;
+    const previousState = {
+      vms: Array.isArray(vcenterState.vms) ? vcenterState.vms.slice() : null,
+      filtered: Array.isArray(vcenterState.filtered) ? vcenterState.filtered.slice() : null,
+      meta: vcenterState.meta ? { ...vcenterState.meta } : null,
+      error: vcenterState.error,
+    };
+    vcenterState.activeId = instanceId;
+    vcenterState.loading = true;
+    vcenterState.error = null;
+    if ($vcenterSearch && typeof $vcenterSearch.value === 'string') {
+      vcenterState.search = $vcenterSearch.value.trim();
+    }
+    updateVCenterView();
+    setVCenterStatus('Loading vCenter inventory…');
+    const base = `${API_BASE}/vcenter/${encodeURIComponent(instanceId)}`;
+    const endpoint = `${base}/vms${wantLive ? '?refresh=true' : ''}`;
+    try {
+      const res = await fetch(endpoint, { method: 'GET' });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload?.detail || `${res.status} ${res.statusText}`);
+      }
+
+      const vms = Array.isArray(payload?.vms) ? payload.vms : [];
+      const configInfo = payload && typeof payload.config === 'object' ? payload.config : null;
+      const metaPayload = payload && typeof payload.meta === 'object' ? { ...payload.meta } : {};
+
+      if (configInfo) {
+        const idx = vcenterState.instances.findIndex((inst) => inst.id === instanceId);
+        if (idx !== -1) {
+          const merged = {
+            ...vcenterState.instances[idx],
+            ...configInfo,
+            last_refresh: metaPayload.generated_at || configInfo.last_refresh || vcenterState.instances[idx].last_refresh || null,
+            vm_count:
+              metaPayload.vm_count != null
+                ? metaPayload.vm_count
+                : configInfo.vm_count ?? vcenterState.instances[idx].vm_count ?? null,
+          };
+          vcenterState.instances[idx] = merged;
+        }
+      }
+
+      renderVCenterTabs();
+
+      if (!metaPayload.generated_at && configInfo?.last_refresh) {
+        metaPayload.generated_at = configInfo.last_refresh;
+      }
+      if (metaPayload.vm_count == null && configInfo?.vm_count != null) {
+        metaPayload.vm_count = configInfo.vm_count;
+      }
+      if (!metaPayload.source) {
+        metaPayload.source = wantLive ? 'live' : 'cache';
+      }
+
+      vcenterState.meta = metaPayload;
+      vcenterState.vms = vms;
+      if ($vcenterSearch && typeof $vcenterSearch.value === 'string') {
+        vcenterState.search = $vcenterSearch.value.trim();
+      }
+      applyVCenterFilter();
+      vcenterState.lastFetchAt = Date.now();
+      vcenterState.error = null;
+      if ($vcenterSearch && $vcenterSearch.value.trim() !== vcenterState.search) {
+        $vcenterSearch.value = vcenterState.search;
+      }
+      setVCenterStatus(null, metaPayload.source === 'live' ? 'success' : 'info');
+    } catch (err) {
+      console.error('Failed to load vCenter inventory', err);
+      vcenterState.error = err?.message || 'Failed to load vCenter inventory';
+      if (previousState.vms) {
+        vcenterState.vms = previousState.vms;
+        vcenterState.filtered = previousState.filtered || previousState.vms.slice();
+        vcenterState.meta = previousState.meta;
+        setVCenterStatus(`${vcenterState.error} • showing cached data`, 'error');
+      } else {
+        vcenterState.vms = [];
+        vcenterState.filtered = [];
+        vcenterState.meta = null;
+        setVCenterStatus(vcenterState.error, 'error');
+      }
+    } finally {
+      vcenterState.loading = false;
+      updateVCenterView();
+    }
+  }
+
+  async function loadVCenterInstances(force = false) {
+    if (!canAccessPage('vcenter')) return [];
+    try {
+      setVCenterStatus('Loading vCenter instances…');
+      const res = await fetch(`${API_BASE}/vcenter/instances`);
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload?.detail || `${res.status} ${res.statusText}`);
+      }
+      const items = Array.isArray(payload)
+        ? payload
+            .filter((item) => item && item.id)
+            .map((item) => {
+              const name = (item.name || item.base_url || 'vCenter').trim() || 'vCenter';
+              const numericVmCount = Number(item.vm_count);
+              return {
+                id: item.id,
+                name,
+                base_url: item.base_url || '',
+                verify_ssl: item.verify_ssl !== false,
+                has_credentials: !!item.has_credentials,
+                last_refresh: item.last_refresh || null,
+                vm_count: Number.isFinite(numericVmCount) && numericVmCount >= 0 ? numericVmCount : null,
+              };
+            })
+        : [];
+      items.sort((a, b) => a.name.localeCompare(b.name));
+      vcenterState.instances = items;
+      if (!items.length) {
+        vcenterState.activeId = null;
+        vcenterState.vms = [];
+        vcenterState.filtered = [];
+        vcenterState.error = null;
+        renderVCenterTabs();
+        updateVCenterView();
+        setVCenterStatus('No vCenter instances configured.', 'error');
+        return items;
+      }
+      const priorId = vcenterState.activeId;
+      const preserveSelection = priorId && items.some((inst) => inst.id === priorId) && !force;
+      const targetId = preserveSelection ? priorId : items[0].id;
+      vcenterState.activeId = targetId;
+      vcenterState.meta = null;
+      renderVCenterTabs();
+      await loadVCenterInventory(targetId);
+      return items;
+    } catch (err) {
+      console.error('Failed to load vCenter instances', err);
+      vcenterState.instances = [];
+      vcenterState.activeId = null;
+      vcenterState.vms = [];
+      vcenterState.filtered = [];
+      vcenterState.meta = null;
+      vcenterState.error = err?.message || 'Failed to load vCenter instances';
+      renderVCenterTabs();
+      updateVCenterView();
+      setVCenterStatus(vcenterState.error, 'error');
+      return [];
+    }
+  }
+
+  if ($vcenterTabs) {
+    $vcenterTabs.addEventListener('click', (event) => {
+      const btn = event.target.closest('button[data-vcenter-id]');
+      if (!btn) return;
+      const identifier = btn.dataset.vcenterId;
+      if (!identifier) return;
+      if (vcenterState.loading && identifier === vcenterState.activeId) return;
+      loadVCenterInventory(identifier).catch(() => {});
+    });
+  }
+
+  if ($vcenterRefresh) {
+    $vcenterRefresh.addEventListener('click', () => {
+      if (vcenterState.activeId) {
+        loadVCenterInventory(vcenterState.activeId, { refresh: true }).catch(() => {});
+      } else {
+        loadVCenterInstances(true).catch(() => {});
+      }
+    });
+  }
+
+  if ($vcenterSearch) {
+    const applySearch = debounce(() => {
+      vcenterState.search = ($vcenterSearch.value || '').trim();
+      applyVCenterFilter();
+      if (!vcenterState.loading && !vcenterState.error) {
+        setVCenterStatus(describeVCenterSelection());
+      }
+      updateVCenterView();
+    }, 180);
+    $vcenterSearch.addEventListener('input', applySearch);
+  }
+
+  // ---------------------------
   // Suggestions
   // ---------------------------
   function updateSuggestionMeta(meta) {
@@ -5664,11 +6296,294 @@
       loadAdminRoles(adminState.roles.length === 0).catch(() => {});
       showAdminUserEmpty();
     }
-    
+
     // Initialize backup config when switching to backup tab
     if (tab === 'backup') {
       updateBackupConfigVisibility();
       updateBackupConfigFromState();
+    }
+
+    if (tab === 'vcenter') {
+      loadAdminVCenters(adminState.vcenters.length === 0).catch(() => {});
+    }
+  }
+
+  function resetAdminVCenterForm() {
+    if ($adminVCenterId) $adminVCenterId.value = '';
+    if ($adminVCenterName) $adminVCenterName.value = '';
+    if ($adminVCenterBaseUrl) $adminVCenterBaseUrl.value = '';
+    if ($adminVCenterUsername) $adminVCenterUsername.value = '';
+    if ($adminVCenterPassword) $adminVCenterPassword.value = '';
+    if ($adminVCenterVerifySSL) $adminVCenterVerifySSL.checked = true;
+    if ($adminVCenterFormStatus) $adminVCenterFormStatus.textContent = '';
+    if ($adminVCenterPasswordHelp) $adminVCenterPasswordHelp.hidden = true;
+  }
+
+  function openAdminVCenterForm(config = null) {
+    if (!$adminVCenterForm) return;
+    adminState.editingVCenter = config;
+    if ($adminVCenterFormTitle) $adminVCenterFormTitle.textContent = config ? 'Edit vCenter' : 'Add vCenter';
+    if ($adminVCenterId) $adminVCenterId.value = config?.id || '';
+    if ($adminVCenterName) $adminVCenterName.value = config?.name || '';
+    if ($adminVCenterBaseUrl) $adminVCenterBaseUrl.value = config?.base_url || '';
+    if ($adminVCenterUsername) $adminVCenterUsername.value = config?.username || '';
+    if ($adminVCenterPassword) $adminVCenterPassword.value = '';
+    if ($adminVCenterVerifySSL) $adminVCenterVerifySSL.checked = config ? config.verify_ssl !== false : true;
+    if ($adminVCenterPasswordHelp) $adminVCenterPasswordHelp.hidden = !config;
+    if ($adminVCenterFormStatus) $adminVCenterFormStatus.textContent = '';
+    $adminVCenterForm.classList.remove('hidden');
+    $adminVCenterName?.focus();
+  }
+
+  function closeAdminVCenterForm() {
+    if (!$adminVCenterForm) return;
+    adminState.editingVCenter = null;
+    resetAdminVCenterForm();
+    if ($adminVCenterFormStatus) $adminVCenterFormStatus.classList.remove('error', 'success');
+    $adminVCenterForm.classList.add('hidden');
+  }
+
+  function renderAdminVCenterList() {
+    if (!$adminVCenterList) return;
+    $adminVCenterList.innerHTML = '';
+    if (adminState.vcenterLoading) {
+      const loading = document.createElement('div');
+      loading.className = 'account-empty';
+      loading.textContent = 'Loading vCenters…';
+      $adminVCenterList.appendChild(loading);
+      return;
+    }
+    if (!adminState.vcenters.length) {
+      const empty = document.createElement('div');
+      empty.className = 'account-empty';
+      empty.textContent = 'No vCenters configured yet.';
+      $adminVCenterList.appendChild(empty);
+      return;
+    }
+
+    const frag = document.createDocumentFragment();
+    adminState.vcenters.forEach((vc) => {
+      if (!vc) return;
+      const card = document.createElement('div');
+      card.className = 'admin-vcenter-card';
+
+      const main = document.createElement('div');
+      main.className = 'admin-vcenter-card-main';
+
+      const title = document.createElement('h3');
+      title.className = 'admin-vcenter-card-name';
+      title.textContent = vc.name || 'vCenter';
+      main.appendChild(title);
+
+      const url = document.createElement('div');
+      url.className = 'admin-vcenter-card-url';
+      url.textContent = vc.base_url || 'URL not configured';
+      main.appendChild(url);
+
+      const meta = document.createElement('div');
+      meta.className = 'admin-vcenter-card-meta';
+      const usernameSpan = document.createElement('span');
+      usernameSpan.textContent = vc.username ? `User: ${vc.username}` : 'User not set';
+
+      const tlsSpan = document.createElement('span');
+      const tlsOk = vc.verify_ssl !== false;
+      tlsSpan.textContent = tlsOk ? 'TLS verified' : 'TLS not verified';
+      tlsSpan.classList.add(tlsOk ? 'status-ok' : 'status-warn');
+
+      const credsSpan = document.createElement('span');
+      const credsOk = !!vc.has_credentials;
+      credsSpan.textContent = credsOk ? 'Credentials stored' : 'Credentials missing';
+      credsSpan.classList.add(credsOk ? 'status-ok' : 'status-warn');
+
+      const refreshSpan = document.createElement('span');
+      if (vc.last_refresh) {
+        try {
+          refreshSpan.textContent = `Last update: ${amsDateTimeString(new Date(vc.last_refresh))}`;
+        } catch {
+          refreshSpan.textContent = `Last update: ${vc.last_refresh}`;
+        }
+        refreshSpan.classList.add('status-ok');
+      } else {
+        refreshSpan.textContent = 'Last update: never';
+        refreshSpan.classList.add('status-warn');
+      }
+
+      const countSpan = document.createElement('span');
+      const vmCount = Number(vc.vm_count);
+      if (Number.isFinite(vmCount) && vmCount >= 0) {
+        const label = vmCount === 1 ? 'VM' : 'VMs';
+        countSpan.textContent = `${vmCount.toLocaleString()} ${label}`;
+        countSpan.classList.add('status-ok');
+      } else {
+        countSpan.textContent = 'VMs: unknown';
+        countSpan.classList.add('status-warn');
+      }
+
+      meta.append(usernameSpan, tlsSpan, credsSpan, countSpan, refreshSpan);
+      main.appendChild(meta);
+
+      const actions = document.createElement('div');
+      actions.className = 'admin-vcenter-card-actions';
+
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'btn ghost';
+      editBtn.textContent = 'Edit';
+      editBtn.addEventListener('click', () => openAdminVCenterForm(vc));
+
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className = 'btn danger ghost';
+      deleteBtn.textContent = 'Delete';
+      deleteBtn.addEventListener('click', () => deleteAdminVCenter(vc));
+
+      actions.appendChild(editBtn);
+      actions.appendChild(deleteBtn);
+
+      card.appendChild(main);
+      card.appendChild(actions);
+      frag.appendChild(card);
+    });
+
+    $adminVCenterList.appendChild(frag);
+  }
+
+  async function loadAdminVCenters(force = false) {
+    if (!$adminVCenterList) return [];
+    if (adminState.vcenterLoading && !force) return adminState.vcenters;
+    adminState.vcenterLoading = true;
+    renderAdminVCenterList();
+    try {
+      const res = await fetch(`${API_BASE}/vcenter/configs`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.detail || `${res.status} ${res.statusText}`);
+      }
+      adminState.vcenters = Array.isArray(data)
+        ? data.map((item) => {
+            if (!item || typeof item !== 'object') return item;
+            const numericVmCount = Number(item.vm_count);
+            return {
+              ...item,
+              vm_count: Number.isFinite(numericVmCount) && numericVmCount >= 0 ? numericVmCount : null,
+            };
+          })
+        : [];
+      renderAdminVCenterList();
+      if ($adminVCenterStatus) {
+        $adminVCenterStatus.classList.remove('error');
+        $adminVCenterStatus.classList.add('success');
+      }
+      flashStatus(
+        $adminVCenterStatus,
+        `Loaded ${adminState.vcenters.length} vCenter${adminState.vcenters.length === 1 ? '' : 's'}.`,
+      );
+      return adminState.vcenters;
+    } catch (err) {
+      console.error('Failed to load vCenter configurations', err);
+      adminState.vcenters = [];
+      renderAdminVCenterList();
+      if ($adminVCenterStatus) {
+        $adminVCenterStatus.classList.remove('success');
+        $adminVCenterStatus.classList.add('error');
+      }
+      flashStatus($adminVCenterStatus, `Failed to load vCenters: ${err?.message || err}`, 4000);
+      return [];
+    } finally {
+      adminState.vcenterLoading = false;
+    }
+  }
+
+  async function saveAdminVCenter() {
+    if (!$adminVCenterForm || !$adminVCenterSave) return;
+    const id = ($adminVCenterId?.value || '').trim();
+    const name = ($adminVCenterName?.value || '').trim();
+    const baseUrl = ($adminVCenterBaseUrl?.value || '').trim();
+    const username = ($adminVCenterUsername?.value || '').trim();
+    const password = ($adminVCenterPassword?.value || '').trim();
+    const verify = !!$adminVCenterVerifySSL?.checked;
+
+    if ($adminVCenterFormStatus) $adminVCenterFormStatus.classList.remove('error', 'success');
+    if (!name || !baseUrl || !username) {
+      if ($adminVCenterFormStatus) $adminVCenterFormStatus.classList.add('error');
+      flashStatus($adminVCenterFormStatus, 'Name, base URL, and username are required.', 3200);
+      return;
+    }
+
+    const payload = {
+      name,
+      base_url: baseUrl,
+      username,
+      verify_ssl: verify,
+    };
+    if (!id || password) {
+      if (!password) {
+        if ($adminVCenterFormStatus) $adminVCenterFormStatus.classList.add('error');
+        flashStatus($adminVCenterFormStatus, 'Password is required for new vCenters.', 3200);
+        return;
+      }
+      payload.password = password;
+    }
+
+    const method = id ? 'PUT' : 'POST';
+    const url = id ? `${API_BASE}/vcenter/configs/${encodeURIComponent(id)}` : `${API_BASE}/vcenter/configs`;
+
+    $adminVCenterSave.disabled = true;
+    flashStatus($adminVCenterFormStatus, 'Saving…');
+    try {
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.detail || `${res.status} ${res.statusText}`);
+      }
+      if ($adminVCenterStatus) {
+        $adminVCenterStatus.classList.remove('error');
+        $adminVCenterStatus.classList.add('success');
+      }
+      flashStatus($adminVCenterStatus, id ? 'Updated vCenter configuration.' : 'Created vCenter configuration.', 3600);
+      closeAdminVCenterForm();
+      await loadAdminVCenters(true);
+      loadVCenterInstances(true).catch(() => {});
+    } catch (err) {
+      console.error('Failed to save vCenter configuration', err);
+      if ($adminVCenterFormStatus) $adminVCenterFormStatus.classList.add('error');
+      flashStatus($adminVCenterFormStatus, `Failed to save: ${err?.message || err}`, 4000);
+    } finally {
+      $adminVCenterSave.disabled = false;
+    }
+  }
+
+  async function deleteAdminVCenter(vc) {
+    if (!vc || !vc.id) return;
+    const confirmed = window.confirm(`Delete vCenter '${vc.name || vc.id}'?`);
+    if (!confirmed) return;
+    try {
+      const res = await fetch(`${API_BASE}/vcenter/configs/${encodeURIComponent(vc.id)}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.detail || `${res.status} ${res.statusText}`);
+      }
+      if ($adminVCenterStatus) {
+        $adminVCenterStatus.classList.remove('error');
+        $adminVCenterStatus.classList.add('success');
+      }
+      flashStatus($adminVCenterStatus, 'Deleted vCenter configuration.', 3600);
+      if (adminState.editingVCenter?.id === vc.id) {
+        closeAdminVCenterForm();
+      }
+      await loadAdminVCenters(true);
+      loadVCenterInstances(true).catch(() => {});
+    } catch (err) {
+      console.error('Failed to delete vCenter configuration', err);
+      if ($adminVCenterStatus) {
+        $adminVCenterStatus.classList.remove('success');
+        $adminVCenterStatus.classList.add('error');
+      }
+      flashStatus($adminVCenterStatus, `Failed to delete: ${err?.message || err}`, 4000);
     }
   }
 
@@ -8083,6 +8998,19 @@
   
   $adminGlobalCancel?.addEventListener('click', () => {
     hideGlobalApiKeyForm();
+  });
+
+  $adminVCenterAdd?.addEventListener('click', () => {
+    openAdminVCenterForm();
+  });
+
+  $adminVCenterForm?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    saveAdminVCenter();
+  });
+
+  $adminVCenterCancel?.addEventListener('click', () => {
+    closeAdminVCenterForm();
   });
 
   // Keyboard hotkeys
