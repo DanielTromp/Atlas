@@ -317,14 +317,28 @@
 
           const metaGrid = document.getElementById('vm-meta');
           metaGrid.innerHTML = '';
+          const memoryText = (() => {
+            const mib = Number(vm.memory_mib);
+            if (!Number.isFinite(mib) || mib <= 0) return '—';
+            if (mib >= 1024) {
+              const gib = mib / 1024;
+              const formatted = gib >= 10 ? Math.round(gib).toString() : gib.toFixed(1).replace(/\.0$/, '');
+              return `${formatted} GiB`;
+            }
+            return `${mib.toLocaleString()} MiB`;
+          })();
+
           const metaEntries = [
             ['Guest OS', vm.guest_os || 'Unknown'],
             ['Hardware', vm.hardware_version || '—'],
+            ['Datacenter', vm.datacenter || '—'],
+            ['Cluster', vm.cluster || '—'],
+            ['Folder', vm.folder || '—'],
+            ['Host', vm.host || '—'],
+            ['Resource Pool', vm.resource_pool || '—'],
             ['vCPU', vm.cpu_count != null ? `${vm.cpu_count}` : '—'],
-            ['Memory', vm.memory_mib != null ? `${vm.memory_mib.toLocaleString()} MiB` : '—'],
+            ['Memory', memoryText],
             ['DNS Name', vm.guest_host_name || vm.guest_ip_address || '—'],
-            ['Instance UUID', vm.instance_uuid || '—'],
-            ['BIOS UUID', vm.bios_uuid || '—'],
           ];
           metaEntries.forEach(([label, value]) => {
             const card = document.createElement('div');

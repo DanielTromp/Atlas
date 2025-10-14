@@ -62,3 +62,23 @@
 [2025-09-30 01:44:12] Confluence page updated with NetBox VMs table
 [2025-09-30 01:44:12] INFO  [enreach_tools.cli] Legacy script finished netbox-export/bin/confluence_publish_vms_table.py (rc=0)
 [2025-09-30 01:44:12] [exit 0]
+[2025-10-14 22:37:54] $ uv run python scripts/update_commvault_cache.py --since 6 --limit 1000
+[2025-10-14 22:38:01] INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+[2025-10-14 22:38:01] INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+[2025-10-14 22:38:33] Commvault cache updated: cached 348 job(s) within last 6h; 39458 total stored;
+[2025-10-14 22:38:33] 318 new / 0 updated
+[2025-10-14 22:38:33] Cache timestamp: 2025-10-14T20:38:32.189531+00:00
+[2025-10-14 22:38:37] Commvault storage cache updated: 4 pool(s) — total capacity 93.5 TB, used 159 TB
+[2025-10-14 22:38:37] Storage cache timestamp: 2025-10-14T20:38:37.845309+00:00
+[2025-10-14 22:38:42] Commvault plan cache updated: 15 plan(s) — types: Server
+[2025-10-14 22:38:42] Plan cache timestamp: 2025-10-14T20:38:42.827187+00:00
+[2025-10-14 22:38:43] [exit 0]
+[2025-10-14 22:46:36] $ uv run enreach export cache
+[2025-10-14 22:46:38] INFO  [alembic.runtime.migration] Context impl SQLiteImpl.
+[2025-10-14 22:46:38] INFO  [alembic.runtime.migration] Will assume non-transactional DDL.
+[2025-10-14 22:46:38] Using .env: /Users/daniel/Documents/code/enreach-tools/.env
+[2025-10-14 22:46:54] Cache updated /Users/daniel/Documents/code/enreach-tools/data/netbox_cache.json
+[2025-10-14 22:46:54] Generated at: 2025-10-14T22:46:38+02:00
+[2025-10-14 22:46:54] devices: 2378 total (4 new, 23 updated, 14 removed)
+[2025-10-14 22:46:54] vms: 961 total (1 new, 2 updated)
+[2025-10-14 22:46:55] [exit 0]

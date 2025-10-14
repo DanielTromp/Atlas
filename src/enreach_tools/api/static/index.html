@@ -77,6 +77,7 @@
         <button class="tab" data-page="vcenter">vCenter</button>
         <button class="tab" data-page="chat">Chat</button>
         <button class="tab" data-page="tools">Tools</button>
+        <button class="tab" data-page="tasks">Tasks</button>
         <button class="tab" data-page="admin">Admin</button>
       </nav>
     </header>
@@ -891,6 +892,25 @@
               </table>
             </div>
           </div>
+        </div>
+      </section>
+
+      <!-- Tasks Page -->
+      <section class="page" id="page-tasks" hidden>
+        <div class="panel panel-tasks">
+          <div class="tasks-header">
+            <h2>Tasks</h2>
+            <div class="tasks-actions">
+              <button id="tasks-update-all" class="btn" type="button">Update all</button>
+              <button id="tasks-refresh" class="btn ghost" type="button">Reload</button>
+              <div class="tasks-layout" role="group" aria-label="Layout">
+                <button type="button" class="tasks-layout-btn active" data-tasks-layout="cards">Cards</button>
+                <button type="button" class="tasks-layout-btn" data-tasks-layout="rows">Rows</button>
+              </div>
+            </div>
+          </div>
+          <div id="tasks-status" class="tasks-status">Loading…</div>
+          <div id="tasks-list" class="tasks-list"></div>
         </div>
       </section>
 

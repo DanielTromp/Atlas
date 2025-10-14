@@ -56,6 +56,24 @@ def refresh_inventory(
         typer.Option("--id", help="Refresh specific vCenter configuration IDs.", show_default=False),
     ] = None,
     refresh_all: Annotated[bool, typer.Option("--all", help="Refresh every configured vCenter.", show_default=False)] = False,
+    vm: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--vm",
+            "-V",
+            help="Limit refresh to the specified VM IDs (repeatable).",
+            show_default=False,
+        ),
+    ] = None,
+    verbose: Annotated[
+        bool,
+        typer.Option(
+            "--verbose",
+            "-v",
+            help="Show detailed placement coverage for each refreshed vCenter.",
+            show_default=False,
+        ),
+    ] = False,
 ):
     """Refresh cached vCenter inventory for selected configurations."""
 
@@ -66,10 +84,11 @@ def refresh_inventory(
         with SessionLocal as session:
             service = create_vcenter_service(session)
             targets = _select_configs(service, name or (), config_id or (), refresh_all)
+            vm_filters = {item.strip().lower() for item in vm or [] if isinstance(item, str)} or None
             for config in targets:
                 print(f"[cyan]Refreshing[/cyan] [bold]{config.name}[/bold] ({config.id})…", end=" ")
                 try:
-                    _, vms, meta = service.refresh_inventory(config.id)
+                    _, vms, meta = service.refresh_inventory(config.id, vm_ids=vm_filters)
                 except SecretStoreUnavailable as exc:
                     print(f"[red]skipped[/red] (secrets unavailable: {exc})")
                     continue
@@ -88,5 +107,43 @@ def refresh_inventory(
                 )
                 vm_total = meta.get("vm_count") or len(vms)
                 print(f"[green]done[/green] ({vm_total} VMs @ {timestamp})")
+
+                if verbose and vms:
+                    placement_fields = (
+                        ("host", "Host"),
+                        ("cluster", "Cluster"),
+                        ("datacenter", "Datacenter"),
+                        ("resource_pool", "Resource Pool"),
+                        ("folder", "Folder"),
+                    )
+                    coverage_parts = []
+                    for attr, label in placement_fields:
+                        missing = sum(1 for vm in vms if not getattr(vm, attr))
+                        coverage_parts.append(f"{label}: {vm_total - missing}/{vm_total}")
+                    print(f"    [dim]Placement coverage[/dim]: {', '.join(coverage_parts)}")
+
+                    missing_example = next(
+                        (vm for vm in vms if any(not getattr(vm, attr) for attr, _ in placement_fields)),
+                        None,
+                    )
+                    if missing_example:
+                        values = []
+                        for attr, label in placement_fields:
+                            value = getattr(missing_example, attr)
+                            values.append(f"{label}={value or '—'}")
+                        print(
+                            "    [dim]Example missing placement[/dim]: "
+                            f"{missing_example.name or missing_example.vm_id} ({', '.join(values)})"
+                        )
+                        raw_detail = getattr(missing_example, "raw_detail", None)
+                        if isinstance(raw_detail, dict):
+                            placement_raw = raw_detail.get("placement")
+                            if placement_raw:
+                                print(f"    [dim]Raw placement payload[/dim]: {placement_raw}")
+                        raw_summary = getattr(missing_example, "raw_summary", None)
+                        if isinstance(raw_summary, dict):
+                            summary_keys = {k: raw_summary.get(k) for k in ("host", "cluster", "datacenter", "resource_pool", "folder") if k in raw_summary}
+                            if summary_keys:
+                                print(f"    [dim]Summary fields[/dim]: {summary_keys}")
     finally:
         SessionLocal.close()

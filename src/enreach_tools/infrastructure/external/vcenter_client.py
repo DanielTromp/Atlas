@@ -7,9 +7,18 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import TracebackType
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 from requests import Session
+
+try:
+    from pyVim.connect import Disconnect, SmartConnect
+    from pyVmomi import vim
+except ImportError:  # pragma: no cover - optional dependency
+    SmartConnect = None
+    Disconnect = None
+    vim = None
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +51,7 @@ class VCenterClient:
 
     _SESSION_ENDPOINT = "/rest/com/vmware/cis/session"
     _VM_LIST_ENDPOINT = "/rest/vcenter/vm"
+    _VM_PLACEMENT_ENDPOINT = "/rest/vcenter/vm/{vm}/placement"
     _VM_GUEST_INTERFACES_ENDPOINT = "/rest/vcenter/vm/{vm}/guest/networking/interfaces"
     _DATACENTER_LIST_ENDPOINT = "/rest/vcenter/datacenter"
     _CLUSTER_LIST_ENDPOINT = "/rest/vcenter/cluster"
@@ -65,6 +75,8 @@ class VCenterClient:
         self._token: str | None = None
         self._tag_cache: dict[str, str] = {}
         self._server_guid: str | None = None
+        self._vim = None
+        self._vim_content = None
         if not config.verify_ssl:
             try:  # optional dependency
                 from urllib3 import disable_warnings
@@ -87,6 +99,13 @@ class VCenterClient:
 
     def close(self) -> None:
         self._session.close()
+        if self._vim is not None and Disconnect is not None:  # pragma: no cover - network dependent
+            try:
+                Disconnect(self._vim)
+            except Exception:  # pragma: no cover - best effort cleanup
+                logger.debug("Failed to disconnect pyVmomi session", exc_info=True)
+        self._vim = None
+        self._vim_content = None
 
     # Authentication -----------------------------------------------------------------
     def _login(self) -> None:
@@ -209,6 +228,113 @@ class VCenterClient:
             return None
         value = payload.get("value")
         return value if isinstance(value, Mapping) else None
+
+    def get_vm_placement(self, vm_id: str) -> Mapping[str, Any] | None:
+        if not vm_id:
+            return None
+        payload = self._request(
+            "GET",
+            self._VM_PLACEMENT_ENDPOINT.format(vm=vm_id),
+            null_status=(401, 403, 404, 500, 501, 503),
+        )
+        if not isinstance(payload, Mapping):
+            return None
+        placement = payload.get("value")
+        return placement if isinstance(placement, Mapping) else None
+
+    # ------------------------------------------------------------------
+    # vSphere (pyVmomi) helpers
+    # ------------------------------------------------------------------
+
+    def _ensure_vim_connection(self):  # pragma: no cover - network dependent
+        if self._vim_content is not None:
+            return self._vim_content
+        if SmartConnect is None:
+            logger.debug("pyVmomi is not available; placement resolution disabled")
+            return None
+        parsed = urlparse(self._base_url)
+        host = parsed.hostname or self._base_url
+        port = parsed.port or 443
+        kwargs = {
+            "host": host,
+            "user": self._config.username,
+            "pwd": self._config.password,
+            "port": port,
+        }
+        if not self._config.verify_ssl:
+            kwargs["disableSslCertValidation"] = True
+        try:
+            self._vim = SmartConnect(**kwargs)
+            self._vim_content = self._vim.RetrieveContent()
+        except Exception as exc:
+            logger.debug("Failed to establish pyVmomi connection", exc_info=True)
+            self._vim = None
+            self._vim_content = None
+            raise VCenterClientError(f"Failed to connect to vCenter via pyVmomi: {exc}") from exc
+        return self._vim_content
+
+    def get_vm_placement_vim(self, instance_uuid: str) -> dict[str, str]:  # pragma: no cover - network dependent
+        placement: dict[str, str] = {}
+        if not instance_uuid:
+            return placement
+        try:
+            content = self._ensure_vim_connection()
+        except VCenterClientError:
+            return placement
+        if content is None or vim is None:
+            return placement
+        try:
+            search_index = getattr(content, "searchIndex", None)
+            if search_index is None:
+                return placement
+            vm = search_index.FindByUuid(None, instance_uuid, True, True)
+            if vm is None:
+                return placement
+
+            def safe_name(obj):
+                return getattr(obj, "name", None) if obj else None
+
+            def find_datacenter(entity):
+                current = entity
+                while current is not None:
+                    if isinstance(current, vim.Datacenter):
+                        return current
+                    current = getattr(current, "parent", None)
+                return None
+
+            def find_vm_folder(entity):
+                current = getattr(entity, "parent", None)
+                while current is not None:
+                    if isinstance(current, vim.Folder):
+                        return current
+                    current = getattr(current, "parent", None)
+                return None
+
+            host_obj = getattr(getattr(vm, "runtime", None), "host", None)
+            cluster_obj = getattr(host_obj, "parent", None)
+            resource_pool_obj = getattr(vm, "resourcePool", None)
+            folder_obj = find_vm_folder(vm)
+            datacenter_obj = find_datacenter(vm)
+
+            host_name = safe_name(host_obj)
+            if host_name:
+                placement["host"] = host_name
+            if isinstance(cluster_obj, vim.ClusterComputeResource | vim.ComputeResource):
+                cluster_name = safe_name(cluster_obj)
+                if cluster_name:
+                    placement["cluster"] = cluster_name
+            datacenter_name = safe_name(datacenter_obj)
+            if datacenter_name:
+                placement["datacenter"] = datacenter_name
+            resource_pool_name = safe_name(resource_pool_obj)
+            if resource_pool_name:
+                placement["resource_pool"] = resource_pool_name
+            folder_name = safe_name(folder_obj)
+            if folder_name:
+                placement["folder"] = folder_name
+        except Exception:  # pragma: no cover - best effort
+            logger.debug("Failed to resolve placement via pyVmomi", exc_info=True)
+        return placement
 
     def get_vm_guest_interfaces(self, vm_id: str) -> list[Mapping[str, Any]]:
         if not vm_id:

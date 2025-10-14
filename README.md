@@ -16,9 +16,59 @@ Usage
   - `uv run enreach export update` (runs devices → vms → merge; supports `--force` to re-fetch all before merge, `--no-refresh-cache` to reuse the existing JSON snapshot, and `--queue` to execute via the in-memory job runner instead of legacy scripts)
   - After `update`, if Confluence publishing is configured via `.env` (`ATLASSIAN_*` + `CONFLUENCE_CMDB_PAGE_ID`), it automatically uploads the CMDB Excel as an attachment and refreshes the NetBox devices table on Confluence.
   - API server (HTTP): `uv run enreach api serve --host 127.0.0.1 --port 8000`
-  - API server (HTTPS): `uv run enreach api serve --host 127.0.0.1 --port 8443 --ssl-certfile certs/localhost.pem --ssl-keyfile certs/localhost-key.pem`
+- API server (HTTPS): `uv run enreach api serve --host 127.0.0.1 --port 8443 --ssl-certfile certs/localhost.pem --ssl-keyfile certs/localhost-key.pem`
     - Alternatively set env vars `ENREACH_SSL_CERTFILE` and `ENREACH_SSL_KEYFILE` and omit the flags
   - Frontend UI (same server): open http://127.0.0.1:8000/app/ or https://127.0.0.1:8443/app/
+
+vCenter inventory
+-----------------
+
+The CLI can refresh cached vCenter inventories (stored under `data/vcenter/<config-id>.json`).
+Each command resolves credentials via the secret store (`.env` -> database), so make sure the
+vCenter configuration is already registered through the admin UI or CLI API.
+
+Common commands:
+
+- Refresh every configured vCenter and emit placement coverage summaries:
+  `uv run enreach vcenter refresh --all --verbose`
+- Refresh a single configuration by name or ID:
+  `uv run enreach vcenter refresh --name "2. vw-vcenter03.systems.ispworks.net"`
+  or `uv run enreach vcenter refresh --id b55f0fa8-e253-4b5d-a0b6-8f9135bce4d8`
+- Limit the refresh to one or more VM IDs (useful for debugging placement data):
+  `uv run enreach vcenter refresh --id b55f0fa8-e253-4b5d-a0b6-8f9135bce4d8 --vm vm-1058`
+
+Flags worth noting:
+
+- `--verbose` prints placement coverage per vCenter (host/cluster/datacenter/resource pool/folder)
+  and shows an example VM when data is missing, including the raw placement payload.
+- `--vm / -V` may be specified multiple times; only the matching VMs are fetched and written to the cache.
+
+Tasks dashboard & dataset refresh
+---------------------------------
+
+The Tasks page at `/app/#tasks` gives a compact overview of every cached dataset under `data/`.  
+Key features:
+
+- **Update all / Reload** buttons sit in the header. “Update all” runs every refreshable dataset sequentially.
+- **Cards vs Rows layout** — use the toggle on the right to switch between tiled cards (default) and a dense one-line row view. The choice is remembered per-browser.
+- Each dataset shows the last update timestamp, file presence (e.g. `3/3 files`), and the computed Commvault lookback window (existing cache age rounded up + 1 hour before calling `scripts/update_commvault_cache.py`).
+- Individual “Update” buttons live inside each card/row (bottom-left on cards, leading on rows) and stay disabled while a job is running or a bulk run is in progress.
+- Click the disclosure on any card to inspect the captured stdout/stderr from the most recent refresh.
+
+Prefer the terminal? The CLI exposes the same commands:
+
+```
+# List every dataset, see the command that will run, and check cache metadata
+uv run enreach tasks refresh --list
+
+# Refresh everything (same behaviour as Update all)
+uv run enreach tasks refresh
+
+# Refresh only Commvault + NetBox cache, showing the commands without executing them
+uv run enreach tasks refresh commvault-cache netbox-cache --dry-run
+```
+
+The CLI command reuses the same command builders as the UI, so any future dataset additions appear in both places automatically.
 
 Commvault CLI quick reference
 ----------------------------

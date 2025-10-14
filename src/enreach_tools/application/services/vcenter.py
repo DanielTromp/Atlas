@@ -172,6 +172,9 @@ def _collect_reference_ids(value: Any, fallback_keys: tuple[str, ...] = ()) -> s
 def _extract_placement_raw(detail: Mapping[str, Any] | None, key: str) -> Any:
     if not isinstance(detail, Mapping):
         return None
+    direct_value = detail.get(key)
+    if direct_value is not None:
+        return direct_value
     placement = detail.get("placement")
     if not isinstance(placement, Mapping):
         return None
@@ -918,7 +921,11 @@ class VCenterService:
     # ------------------------------------------------------------------
     # Inventory and caching
     # ------------------------------------------------------------------
-    def refresh_inventory(self, config_id: str) -> tuple[VCenterConfigEntity, list[VCenterVM], dict[str, Any]]:
+    def refresh_inventory(
+        self,
+        config_id: str,
+        vm_ids: set[str] | None = None,
+    ) -> tuple[VCenterConfigEntity, list[VCenterVM], dict[str, Any]]:
         config = self._repo_instance().get(config_id)
         if config is None:
             raise ValueError("vCenter configuration not found")
@@ -929,7 +936,8 @@ class VCenterService:
 
         lock = _cache_lock_for(config.id)
         with lock:
-            vms, meta = self._fetch_inventory_live(config, password)
+            filters = {vm_id.strip().lower() for vm_id in vm_ids} if vm_ids else None
+            vms, meta = self._fetch_inventory_live(config, password, vm_filters=filters)
             self._write_cache(config, vms, meta)
         meta_with_source = dict(meta)
         meta_with_source["source"] = "live"
@@ -1020,6 +1028,8 @@ class VCenterService:
         self,
         config: VCenterConfigEntity,
         password: str,
+        *,
+        vm_filters: set[str] | None = None,
     ) -> tuple[list[VCenterVM], dict[str, Any]]:
         client_config = VCenterClientConfig(
             base_url=config.base_url,
@@ -1056,6 +1066,11 @@ class VCenterService:
                 if not isinstance(summary, Mapping):
                     continue
                 vm_identifier = summary.get("vm")
+                if vm_filters:
+                    identifier_text = str(vm_identifier or "").strip().lower()
+                    if identifier_text not in vm_filters:
+                        continue
+                summary_map: dict[str, Any] = dict(summary)
                 detail: Mapping[str, Any] | None = None
                 try:
                     detail = client.get_vm(str(vm_identifier)) if vm_identifier else None
@@ -1068,6 +1083,25 @@ class VCenterService:
                         config.name,
                         exc_info=True,
                     )
+
+                placement_info: Mapping[str, Any] | None = None
+                try:
+                    placement_info = client.get_vm_placement(str(vm_identifier)) if vm_identifier else None
+                except VCenterClientError:
+                    logger.debug(
+                        "Failed to fetch placement for VM %s on vCenter %s",
+                        vm_identifier,
+                        config.name,
+                        exc_info=True,
+                    )
+
+                instance_uuid = None
+                if isinstance(detail, Mapping):
+                    identity_block = detail.get("identity")
+                    if isinstance(identity_block, Mapping):
+                        raw_uuid = identity_block.get("instance_uuid")
+                        if isinstance(raw_uuid, str) and raw_uuid.strip():
+                            instance_uuid = raw_uuid.strip()
 
                 guest_interfaces: list[Mapping[str, Any]] = []
                 try:
@@ -1124,36 +1158,56 @@ class VCenterService:
                         exc_info=True,
                     )
 
+                placement_from_vim: Mapping[str, str] = {}
+                if not placement_info and instance_uuid:
+                    placement_from_vim = client.get_vm_placement_vim(instance_uuid)
+
+                detail_payload: Mapping[str, Any] | None = detail
+                merged_detail: dict[str, Any] = dict(detail or {}) if detail else {}
+                placement_section: dict[str, Any] = {}
+                if isinstance(placement_info, Mapping):
+                    placement_section = dict(placement_info)
+                if placement_from_vim:
+                    placement_section = dict(placement_section)
+                    for key, name in placement_from_vim.items():
+                        if not name:
+                            continue
+                        current = placement_section.get(key)
+                        existing_label = None
+                        if isinstance(current, Mapping):
+                            existing_label = _normalize_text(current.get("name"))
+                        if existing_label:
+                            continue
+                        placement_section[key] = {"name": name}
+                        summary_map.setdefault(key, {"name": name})
+                if placement_section:
+                    merged_detail["placement"] = placement_section
+                if merged_detail:
+                    detail_payload = merged_detail
+
                 vm_payloads.append(
-                    (summary, detail, guest_interfaces, custom_attrs, tag_names, guest_identity, tools_info)
+                    (summary_map, detail_payload, guest_interfaces, custom_attrs, tag_names, guest_identity, tools_info)
                 )
 
-                host_ids.update(_collect_reference_ids(summary.get("host") if isinstance(summary, Mapping) else None, ("host",)))
-                host_ids.update(_collect_reference_ids(_extract_placement_raw(detail, "host"), ("host",)))
-                cluster_ids.update(
-                    _collect_reference_ids(summary.get("cluster") if isinstance(summary, Mapping) else None, ("cluster",))
-                )
-                cluster_ids.update(_collect_reference_ids(_extract_placement_raw(detail, "cluster"), ("cluster",)))
+                host_ids.update(_collect_reference_ids(summary_map.get("host"), ("host",)))
+                host_ids.update(_collect_reference_ids(_extract_placement_raw(detail_payload, "host"), ("host",)))
+                cluster_ids.update(_collect_reference_ids(summary_map.get("cluster"), ("cluster",)))
+                cluster_ids.update(_collect_reference_ids(_extract_placement_raw(detail_payload, "cluster"), ("cluster",)))
+                datacenter_ids.update(_collect_reference_ids(summary_map.get("datacenter"), ("datacenter",)))
                 datacenter_ids.update(
-                    _collect_reference_ids(
-                        summary.get("datacenter") if isinstance(summary, Mapping) else None,
-                        ("datacenter",),
-                    )
+                    _collect_reference_ids(_extract_placement_raw(detail_payload, "datacenter"), ("datacenter",))
                 )
-                datacenter_ids.update(_collect_reference_ids(_extract_placement_raw(detail, "datacenter"), ("datacenter",)))
+                resource_pool_ids.update(
+                    _collect_reference_ids(summary_map.get("resource_pool"), ("resource_pool", "pool"))
+                )
                 resource_pool_ids.update(
                     _collect_reference_ids(
-                        summary.get("resource_pool") if isinstance(summary, Mapping) else None,
+                        _extract_placement_raw(detail_payload, "resource_pool"),
                         ("resource_pool", "pool"),
                     )
                 )
-                resource_pool_ids.update(
-                    _collect_reference_ids(_extract_placement_raw(detail, "resource_pool"), ("resource_pool", "pool"))
-                )
-                folder_ids.update(
-                    _collect_reference_ids(summary.get("folder") if isinstance(summary, Mapping) else None, ("folder",))
-                )
-                folder_ids.update(_collect_reference_ids(_extract_placement_raw(detail, "folder"), ("folder",)))
+                folder_ids.update(_collect_reference_ids(summary_map.get("folder"), ("folder",)))
+                folder_ids.update(_collect_reference_ids(_extract_placement_raw(detail_payload, "folder"), ("folder",)))
 
             def _safe_lookup(name: str, loader, ids: set[str]) -> dict[str, str]:
                 if not ids:

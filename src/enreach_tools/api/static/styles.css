@@ -458,6 +458,13 @@ body.theme-enreach-light .admin-global-card-actions .btn.ghost:hover {
 .vcenter-name-link:hover { text-decoration: underline; }
 .vcenter-col-index { width: 50px; text-align: right; }
 .vcenter-table td.vcenter-col-index { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+.vcenter-col-dc,
+.vcenter-col-cluster,
+.vcenter-col-folder { white-space: nowrap; }
+.vcenter-col-cpu { width: 70px; text-align: right; }
+.vcenter-table td.vcenter-col-cpu { text-align: right; font-variant-numeric: tabular-nums; }
+.vcenter-col-mem { width: 90px; text-align: right; }
+.vcenter-table td.vcenter-col-mem { text-align: right; }
 .vcenter-col-source { width: 220px; }
 .vcenter-table td.vcenter-col-source { vertical-align: middle; }
 .vcenter-source-pill { display: inline-flex; align-items: center; gap: 8px; padding: 4px 12px; border-radius: 999px; background: rgba(var(--accent-rgb), 0.16); color: var(--accent-strong); font-weight: 600; font-size: 12px; white-space: nowrap; }
@@ -1193,6 +1200,53 @@ body.theme-enreach-light .admin-global-card-actions .btn.ghost:hover {
 .chat-session-wrapper:hover .chat-session-delete { opacity: 1; }
 .chat-session-delete:hover { background: rgba(220, 38, 38, 0.9); }
 .chat-session-delete:active { transform: translateY(-50%) scale(0.95); }
+
+.panel-tasks { display: flex; flex-direction: column; gap: 12px; padding: 18px 22px; }
+.tasks-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.tasks-header h2 { margin: 0; font-size: 18px; }
+.tasks-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tasks-status { font-size: 12px; color: var(--muted); min-height: 16px; }
+.tasks-layout { display: inline-flex; border-radius: 999px; border: 1px solid var(--grid-border); overflow: hidden; background: var(--panel); }
+.tasks-layout-btn { border: none; background: transparent; padding: 6px 12px; font-size: 12px; font-weight: 600; cursor: pointer; color: var(--muted); transition: background 140ms ease, color 140ms ease; }
+.tasks-layout-btn + .tasks-layout-btn { border-left: 1px solid var(--grid-border); }
+.tasks-layout-btn.active { background: var(--accent-soft); color: var(--accent-strong); }
+.tasks-list { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.tasks-list.tasks-list--cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.tasks-list.tasks-list--rows { display: flex; flex-direction: column; gap: 8px; }
+.tasks-card { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border-radius: 12px; border: 1px solid rgba(148, 163, 184, 0.22); background: var(--panel); box-shadow: 0 10px 22px rgba(15, 23, 42, 0.1); transition: border-color 140ms ease, box-shadow 140ms ease, transform 120ms ease; width: 100%; }
+.tasks-card:hover { transform: translateY(-1px); box-shadow: 0 16px 30px rgba(15, 23, 42, 0.12); }
+.tasks-card.running { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.2), 0 18px 34px rgba(var(--accent-rgb), 0.22); }
+.tasks-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
+.tasks-card-head h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.tasks-card-meta { display: flex; flex-wrap: wrap; gap: 6px 10px; font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+.tasks-card-meta span { display: inline-flex; align-items: center; gap: 6px; }
+.tasks-card-status-line { font-size: 12px; font-weight: 600; color: var(--muted); display: flex; align-items: center; gap: 6px; min-height: 16px; }
+.tasks-card-status-line.running { color: var(--accent); }
+.tasks-card-status-line.success { color: var(--success); }
+.tasks-card-status-line.error { color: #ef4444; }
+.tasks-card-footer { display: flex; align-items: center; gap: 8px; margin-top: auto; justify-content: flex-start; }
+.tasks-card-footer .btn { min-width: 120px; padding: 6px 10px; font-size: 13px; }
+.tasks-card.tasks-card--row { flex-direction: row; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 10px; }
+.tasks-card.tasks-card--row .tasks-card-head,
+.tasks-card.tasks-card--row .tasks-card-meta,
+.tasks-card.tasks-card--row .tasks-card-status-line,
+.tasks-card.tasks-card--row .tasks-card-footer { display: none; }
+.tasks-row-name { flex: 0 0 220px; font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tasks-row-meta { flex: 1 1 auto; display: flex; gap: 10px; align-items: center; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tasks-row-meta span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.tasks-row-status { flex: 0 0 auto; font-size: 12px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+.tasks-row-status.running { color: var(--accent); }
+.tasks-row-status.success { color: var(--success); }
+.tasks-row-status.error { color: #ef4444; }
+.tasks-row-button { flex: 0 0 auto; }
+.tasks-row-button .btn { min-width: 96px; padding: 4px 10px; font-size: 12px; }
+.tasks-card-log { border: 1px solid var(--grid-border); border-radius: 10px; background: var(--progress-log-bg); overflow: hidden; }
+.tasks-card-log summary { list-style: none; cursor: pointer; padding: 8px 12px; font-weight: 600; font-size: 12px; display: flex; align-items: center; gap: 6px; }
+.tasks-card-log summary::marker, .tasks-card-log summary::-webkit-details-marker { display: none; }
+.tasks-card-log summary::after { content: "▾"; margin-left: auto; transition: transform 160ms ease; font-size: 12px; }
+.tasks-card-log[open] summary::after { transform: rotate(-180deg); }
+.tasks-card-log pre { margin: 0; padding: 10px 12px; font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; max-height: 240px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+.tasks-empty { padding: 18px; border: 1px dashed var(--grid-border); border-radius: 10px; text-align: center; font-size: 13px; color: var(--muted); background: var(--feed-bg); }
 
 .panel-tools { display: flex; flex-direction: column; gap: 18px; }
 .tools-header { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; }

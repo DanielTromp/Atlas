@@ -4,18 +4,20 @@ import asyncio
 import csv
 import html
 import json
+import math
 import os
 import re
 import secrets
+import shlex
 import shutil
 import sys
 import time
 import uuid
 import warnings
 from collections import Counter
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from io import BytesIO, StringIO
 from pathlib import Path
@@ -704,6 +706,255 @@ COMMVAULT_PLAN_TYPE_LABELS: dict[int, str] = {
 _commvault_backups_lock = Lock()
 _commvault_storage_lock = Lock()
 _commvault_plans_lock = Lock()
+
+TASK_OUTPUT_LINE_LIMIT = 500
+
+CommandBuilder = Callable[["DatasetDefinition", "DatasetMetadata"], list[str] | None]
+
+
+@dataclass(frozen=True, slots=True)
+class DatasetDefinition:
+    id: str
+    label: str
+    path_globs: tuple[str, ...]
+    description: str | None = None
+    since_source: str | None = None
+    context: dict[str, Any] = field(default_factory=dict)
+    command_builder: CommandBuilder | None = None
+
+
+@dataclass(slots=True)
+class DatasetFileRecord:
+    relative_path: str
+    absolute_path: Path
+    exists: bool
+    size_bytes: int | None
+    modified: datetime | None
+
+
+@dataclass(slots=True)
+class DatasetMetadata:
+    definition: DatasetDefinition
+    files: list[DatasetFileRecord]
+    last_updated: datetime | None
+    extras: dict[str, Any] = field(default_factory=dict)
+
+    def find_file(self, relative_path: str) -> DatasetFileRecord | None:
+        for record in self.files:
+            if record.relative_path == relative_path:
+                return record
+        return None
+
+
+def _command_with_uv(args: Sequence[str]) -> list[str]:
+    if shutil.which("uv"):
+        return ["uv", "run", *args]
+    return [sys.executable, "-m", "enreach_tools.cli", *args]
+
+
+def _command_with_uv_python(script_path: str, args: Sequence[str]) -> list[str]:
+    if shutil.which("uv"):
+        return ["uv", "run", "python", script_path, *args]
+    return [sys.executable, script_path, *args]
+
+
+def _append_task_output(buffer: list[str], line: str) -> None:
+    buffer.append(line)
+    if len(buffer) > TASK_OUTPUT_LINE_LIMIT:
+        del buffer[: len(buffer) - TASK_OUTPUT_LINE_LIMIT]
+
+
+def _build_netbox_cache_command(defn: DatasetDefinition, meta: DatasetMetadata) -> list[str]:
+    return _command_with_uv(["enreach", "export", "cache"])
+
+
+def _build_commvault_cache_command(defn: DatasetDefinition, meta: DatasetMetadata) -> list[str]:
+    source_path = defn.since_source or COMMVAULT_BACKUPS_JSON
+    since_hours = 24
+    record = meta.find_file(source_path)
+    if record and record.modified:
+        now = datetime.now(UTC)
+        delta = now - record.modified
+        hours = delta.total_seconds() / 3600
+        computed = math.ceil(hours)
+        computed = max(computed, 0)
+        since_hours = max(1, computed + 1)
+    meta.extras["computed_since_hours"] = since_hours
+    return _command_with_uv_python(
+        "scripts/update_commvault_cache.py",
+        ["--since", str(since_hours), "--limit", "1000"],
+    )
+
+
+def _make_vcenter_command_builder(config_id: str) -> CommandBuilder:
+    def _builder(_: DatasetDefinition, __: DatasetMetadata) -> list[str]:
+        return _command_with_uv(["enreach", "vcenter", "refresh", "--id", config_id])
+
+    return _builder
+
+
+def _collect_task_dataset_definitions() -> list[DatasetDefinition]:
+    definitions: list[DatasetDefinition] = [
+        DatasetDefinition(
+            id="netbox-cache",
+            label="NetBox Cache",
+            path_globs=("netbox_cache.json",),
+            description="Cached NetBox snapshot used for export diffing.",
+            command_builder=_build_netbox_cache_command,
+        ),
+        DatasetDefinition(
+            id="commvault-cache",
+            label="Commvault Cache",
+            path_globs=(COMMVAULT_BACKUPS_JSON, COMMVAULT_STORAGE_JSON, COMMVAULT_PLANS_JSON),
+            description="Cached Commvault backups, plans, and storage datasets.",
+            since_source=COMMVAULT_BACKUPS_JSON,
+            command_builder=_build_commvault_cache_command,
+        ),
+    ]
+    definitions.extend(_discover_vcenter_task_definitions())
+    return definitions
+
+
+def _discover_vcenter_task_definitions() -> list[DatasetDefinition]:
+    definitions: list[DatasetDefinition] = []
+    known_configs: dict[str, str | None] = {}
+    try:
+        with SessionLocal() as session:
+            service = create_vcenter_service(session)
+            entries = service.list_configs_with_status()
+    except Exception:
+        entries = []
+    for config, _meta in entries:
+        label = f"vCenter: {config.name or config.id}"
+        definitions.append(
+            DatasetDefinition(
+                id=f"vcenter-{config.id}",
+                label=label,
+                path_globs=(f"vcenter/{config.id}.json",),
+                description="Cached vCenter inventory snapshot.",
+                since_source=None,
+                context={
+                    "config_id": config.id,
+                    "config_name": config.name,
+                },
+                command_builder=_make_vcenter_command_builder(config.id),
+            )
+        )
+        known_configs[config.id] = config.name
+
+    vcenter_dir = _data_dir() / "vcenter"
+    if vcenter_dir.exists():
+        for path in sorted(vcenter_dir.glob("*.json")):
+            config_id = path.stem
+            if config_id in known_configs:
+                continue
+            label = f"vCenter cache ({config_id})"
+            definitions.append(
+                DatasetDefinition(
+                    id=f"vcenter-{config_id}",
+                    label=label,
+                    path_globs=(f"vcenter/{path.name}",),
+                    description="Cached vCenter inventory snapshot.",
+                    context={
+                        "config_id": config_id,
+                        "config_name": None,
+                        "orphan": True,
+                    },
+                    command_builder=_make_vcenter_command_builder(config_id),
+                )
+            )
+    return definitions
+
+
+def _dataset_file_record(base: Path, path: Path) -> DatasetFileRecord:
+    try:
+        relative = path.relative_to(base)
+        relative_str = relative.as_posix()
+    except ValueError:
+        relative_str = path.as_posix()
+    exists = path.exists()
+    size = None
+    modified: datetime | None = None
+    if exists:
+        try:
+            stat = path.stat()
+        except FileNotFoundError:
+            exists = False
+        else:
+            size = stat.st_size
+            modified = datetime.fromtimestamp(stat.st_mtime, tz=UTC)
+    return DatasetFileRecord(
+        relative_path=relative_str,
+        absolute_path=path,
+        exists=exists,
+        size_bytes=size,
+        modified=modified,
+    )
+
+
+def _build_dataset_metadata(defn: DatasetDefinition) -> DatasetMetadata:
+    base = _data_dir()
+    files: list[DatasetFileRecord] = []
+    for pattern in defn.path_globs:
+        pattern_norm = (pattern or "").strip()
+        if not pattern_norm:
+            continue
+        if any(ch in pattern_norm for ch in "*?["):
+            matches = sorted(base.glob(pattern_norm))
+            for match in matches:
+                files.append(_dataset_file_record(base, match))
+        else:
+            files.append(_dataset_file_record(base, base / pattern_norm))
+    last_updated: datetime | None = None
+    for record in files:
+        if record.modified and (last_updated is None or record.modified > last_updated):
+            last_updated = record.modified
+    return DatasetMetadata(definition=defn, files=files, last_updated=last_updated)
+
+
+def _build_dataset_command(defn: DatasetDefinition, meta: DatasetMetadata) -> list[str] | None:
+    if defn.command_builder is None:
+        return None
+    return defn.command_builder(defn, meta)
+
+
+def _serialize_dataset(defn: DatasetDefinition, meta: DatasetMetadata, command: list[str] | None) -> dict[str, Any]:
+    command_display = shlex.join(command) if command else None
+    files_payload = [
+        {
+            "path": record.relative_path,
+            "exists": record.exists,
+            "size": record.size_bytes,
+            "modified": record.modified.isoformat() if record.modified else None,
+            "modified_epoch": int(record.modified.timestamp()) if record.modified else None,
+        }
+        for record in meta.files
+    ]
+    payload: dict[str, Any] = {
+        "id": defn.id,
+        "label": defn.label,
+        "description": defn.description,
+        "last_updated": meta.last_updated.isoformat() if meta.last_updated else None,
+        "last_updated_epoch": int(meta.last_updated.timestamp()) if meta.last_updated else None,
+        "file_count": len(meta.files),
+        "present_files": sum(1 for record in meta.files if record.exists),
+        "files": files_payload,
+        "command": command,
+        "command_display": command_display,
+        "can_refresh": command is not None,
+        "context": defn.context,
+        "extras": dict(meta.extras),
+        "since_source": defn.since_source,
+    }
+    if defn.since_source:
+        source_record = meta.find_file(defn.since_source)
+        payload["since_source_modified"] = (
+            source_record.modified.isoformat() if source_record and source_record.modified else None
+        )
+        payload["since_source_epoch"] = (
+            int(source_record.modified.timestamp()) if source_record and source_record.modified else None
+        )
+    return payload
 
 
 def _commvault_client_from_env() -> CommvaultClient:
@@ -3330,11 +3581,11 @@ def _build_admin_settings() -> list[dict[str, Any]]:
     env_values = _read_env_values()
     defaults = _read_env_defaults()
     settings: list[dict[str, Any]] = []
-    for field in ENV_SETTING_FIELDS:
-        key = field["key"]
-        secret = bool(field.get("secret"))
-        placeholder = field.get("placeholder") or ""
-        category = field.get("category") or "general"
+    for env_field in ENV_SETTING_FIELDS:
+        key = env_field["key"]
+        secret = bool(env_field.get("secret"))
+        placeholder = env_field.get("placeholder") or ""
+        category = env_field.get("category") or "general"
         current_value = os.getenv(key, "")
         has_value = bool(current_value)
         value = "" if secret else current_value
@@ -3346,7 +3597,7 @@ def _build_admin_settings() -> list[dict[str, Any]]:
         settings.append(
             {
                 "key": key,
-                "label": field.get("label", key),
+                "label": env_field.get("label", key),
                 "secret": secret,
                 "value": value,
                 "has_value": has_value,
@@ -5271,6 +5522,109 @@ async def export_stream(
                     )
 
     return StreamingResponse(runner(), media_type="text/plain")
+
+
+@app.get("/tasks/datasets")
+def list_task_datasets(request: Request) -> dict[str, Any]:
+    require_permission(request, "export.run")
+    definitions = _collect_task_dataset_definitions()
+    payload = []
+    for definition in definitions:
+        meta = _build_dataset_metadata(definition)
+        command = _build_dataset_command(definition, meta)
+        payload.append(_serialize_dataset(definition, meta, command))
+    payload.sort(key=lambda item: item["label"])
+    return {"datasets": payload, "count": len(payload)}
+
+
+@app.post("/tasks/datasets/{dataset_id}/refresh")
+async def refresh_task_dataset(dataset_id: str, request: Request) -> dict[str, Any]:
+    require_permission(request, "export.run")
+    definitions = {definition.id: definition for definition in _collect_task_dataset_definitions()}
+    definition = definitions.get(dataset_id)
+    if definition is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    meta_before = _build_dataset_metadata(definition)
+    command = _build_dataset_command(definition, meta_before)
+    if not command:
+        raise HTTPException(status_code=400, detail="Dataset cannot be refreshed automatically")
+    before_snapshot = _serialize_dataset(definition, meta_before, command)
+
+    actor = getattr(request.state, "user", None)
+    actor_name = getattr(actor, "username", None)
+    command_display = shlex.join(command)
+    started_at = datetime.now(UTC)
+    output_lines: list[str] = []
+
+    with task_logging(
+        "tasks.refresh",
+        dataset=dataset_id,
+        command=command_display,
+        actor=actor_name,
+    ) as task_log:
+        start_line = f"$ {command_display}"
+        _append_task_output(output_lines, start_line)
+        _write_log(start_line)
+        proc = await asyncio.create_subprocess_exec(
+            *command,
+            cwd=str(project_root()),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        rc = 0
+        try:
+            if proc.stdout is None:
+                raise RuntimeError("task runner missing stdout pipe")
+            while True:
+                chunk = await proc.stdout.readline()
+                if not chunk:
+                    break
+                try:
+                    text = chunk.decode(errors="ignore").rstrip("\n")
+                except Exception:
+                    text = str(chunk)
+                _append_task_output(output_lines, text)
+                _write_log(text)
+        finally:
+            rc = await proc.wait()
+            exit_line = f"[exit {rc}]"
+            _append_task_output(output_lines, exit_line)
+            _write_log(exit_line)
+            task_log.add_success(return_code=rc)
+            if rc != 0:
+                logger.warning(
+                    "Dataset refresh finished with non-zero exit code",
+                    extra={
+                        "event": "task_warning",
+                        "return_code": rc,
+                        "dataset": dataset_id,
+                        "command": command_display,
+                    },
+                )
+
+    completed_at = datetime.now(UTC)
+    duration_ms = int((completed_at - started_at).total_seconds() * 1000)
+    success = rc == 0
+
+    meta_after = _build_dataset_metadata(definition)
+    command_after = _build_dataset_command(definition, meta_after)
+    after_snapshot = _serialize_dataset(definition, meta_after, command_after)
+
+    return {
+        "dataset": dataset_id,
+        "label": definition.label,
+        "success": success,
+        "return_code": rc,
+        "command": command,
+        "command_display": command_display,
+        "output": output_lines,
+        "started_at": started_at.isoformat(),
+        "completed_at": completed_at.isoformat(),
+        "duration_ms": duration_ms,
+        "before": before_snapshot,
+        "after": after_snapshot,
+    }
 
 
 @app.get("/commvault/backups")

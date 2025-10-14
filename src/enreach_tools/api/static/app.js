@@ -127,6 +127,7 @@
   const $navChat = document.querySelector('button[data-page="chat"]');
   const $navVCenter = document.querySelector('button[data-page="vcenter"]');
   const $navTools = document.querySelector('button[data-page="tools"]');
+  const $navTasks = document.querySelector('button[data-page="tasks"]');
   const $navAdmin = document.querySelector('button[data-page="admin"]');
   const $pageExport = document.getElementById("page-export");
   const $pageCommvault = document.getElementById("page-commvault");
@@ -134,6 +135,7 @@
   const $pageNetbox = document.getElementById("page-netbox");
   const $pageSearch = document.getElementById("page-search");
   const $pageTools = document.getElementById("page-tools");
+  const $pageTasks = document.getElementById("page-tasks");
   const $pageChat = document.getElementById("page-chat");
   const $pageZabbix = document.getElementById("page-zabbix");
   const $pageZhost = document.getElementById("page-zhost");
@@ -144,6 +146,12 @@
   const $pageSuggestions = document.getElementById("page-suggestions");
   const $pageSuggestionDetail = document.getElementById("page-suggestion-detail");
   const $pageAdmin = document.getElementById("page-admin");
+  // Tasks elements
+  const $tasksList = document.getElementById("tasks-list");
+  const $tasksStatus = document.getElementById("tasks-status");
+  const $tasksRefresh = document.getElementById("tasks-refresh");
+  const $tasksUpdateAll = document.getElementById("tasks-update-all");
+  const $tasksLayoutButtons = Array.from(document.querySelectorAll('[data-tasks-layout]'));
   // Confluence elements
   const $confQ = document.getElementById('conf-q');
   const $confSpace = document.getElementById('conf-space');
@@ -716,14 +724,33 @@
     }
   }
 
+  function formatVmCpu(vm) {
+    const count = Number(vm?.cpu_count);
+    if (!Number.isFinite(count) || count <= 0) return '—';
+    return `${count}`;
+  }
+
+  function formatVmMemory(vm) {
+    const mib = Number(vm?.memory_mib);
+    if (!Number.isFinite(mib) || mib <= 0) return '—';
+    if (mib >= 1024) {
+      const gib = mib / 1024;
+      const formatted = gib >= 10 ? Math.round(gib).toString() : gib.toFixed(1).replace(/\.0$/, '');
+      return `${formatted} GiB`;
+    }
+    return `${mib.toLocaleString()} MiB`;
+  }
+
   const BASE_VCENTER_COLUMNS = [
     { label: '#', className: 'vcenter-col-index', render: (_vm, idx) => idx + 1 },
     { label: 'Display Name', className: 'vcenter-col-name', render: (vm) => createVmNameCell(vm) },
     { label: 'State', className: 'vcenter-col-state', render: (vm) => formatVmPowerState(vm) },
     { label: 'Link', className: 'vcenter-col-link', render: (vm) => buildVCenterLink(vm) },
-    { label: 'DNS Name', className: 'vcenter-col-dns', render: (vm) => fallbackDnsName(vm) },
-    { label: 'Tools', className: 'vcenter-col-tools', render: (vm) => formatVmTools(vm) },
-    { label: 'VM HW', className: 'vcenter-col-hw', render: (vm) => vm?.hardware_version || '' },
+    { label: 'DC', className: 'vcenter-col-dc', render: (vm) => vm?.datacenter || '—' },
+    { label: 'Cluster', className: 'vcenter-col-cluster', render: (vm) => vm?.cluster || '—' },
+    { label: 'Folder', className: 'vcenter-col-folder', render: (vm) => vm?.folder || '—' },
+    { label: 'CPU', className: 'vcenter-col-cpu', render: (vm) => formatVmCpu(vm) },
+    { label: 'Mem', className: 'vcenter-col-mem', render: (vm) => formatVmMemory(vm) },
     { label: 'Updated', className: 'vcenter-col-updated', render: () => formatVCenterUpdated() },
   ];
 
@@ -1266,6 +1293,7 @@
     'export',
     'commvault',
     'vcenter',
+    'tasks',
     'zhost',
     'suggestions',
     'account',
@@ -1273,6 +1301,7 @@
   ];
   const ROUTABLE_PAGE_SET = new Set(ROUTABLE_PAGE_KEYS);
   const KNOWN_PAGE_KEYS = new Set([...ROUTABLE_PAGE_KEYS, 'suggestion-detail']);
+  const TASK_REFRESH_CACHE_MS = 45000;
   const normalisePageValue = (value) => {
     if (!value) return null;
     const lower = String(value).toLowerCase();
@@ -1341,6 +1370,23 @@
     search: '',
     activeTag: 'all',
   };
+  const TASKS_LAYOUT_STORAGE_KEY = 'tasks_layout_mode_v1';
+  const storedTasksLayout = (() => {
+    try {
+      const value = localStorage.getItem(TASKS_LAYOUT_STORAGE_KEY);
+      return value === 'rows' ? 'rows' : 'cards';
+    } catch {
+      return 'cards';
+    }
+  })();
+  const tasksState = {
+    items: [],
+    loading: false,
+    error: null,
+    lastFetchMs: 0,
+    bulkRunning: false,
+    layout: storedTasksLayout,
+  };
   let dragSrcIndex = -1; // global src index for DnD across headers
   // Density
   const ROW_COMFORT = 36;
@@ -1371,6 +1417,381 @@
       t = setTimeout(() => fn(...args), ms);
     };
   };
+
+  function toEpochSeconds(value) {
+    if (value == null) return null;
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    const ts = Date.parse(value);
+    if (Number.isNaN(ts)) return null;
+    return Math.floor(ts / 1000);
+  }
+
+  function formatRelativeTime(epochSeconds) {
+    const seconds = Number(epochSeconds);
+    if (!Number.isFinite(seconds) || seconds <= 0) return 'Never';
+    const nowMs = Date.now();
+    const diffMs = Math.max(0, nowMs - seconds * 1000);
+    const minuteMs = 60 * 1000;
+    if (diffMs < minuteMs) return 'just now';
+    const minutes = Math.round(diffMs / minuteMs);
+    if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
+    const hours = Math.round(diffMs / (60 * minuteMs));
+    if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+    const days = Math.round(diffMs / (24 * 60 * minuteMs));
+    if (days < 7) return `${days} day${days === 1 ? '' : 's'} ago`;
+    const weeks = Math.round(days / 7);
+    if (weeks < 5) return `${weeks} week${weeks === 1 ? '' : 's'} ago`;
+    const date = new Date(seconds * 1000);
+    if (Number.isNaN(date.valueOf())) return 'Some time ago';
+    return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  }
+
+  function formatAbsoluteDate(iso, epochSeconds) {
+    if (iso) {
+      const dt = new Date(iso);
+      if (!Number.isNaN(dt.valueOf())) return dt.toLocaleString();
+    }
+    if (Number.isFinite(epochSeconds)) {
+      const dt = new Date(epochSeconds * 1000);
+      if (!Number.isNaN(dt.valueOf())) return dt.toLocaleString();
+    }
+    return 'Unknown';
+  }
+
+  function applyTaskSnapshot(target, snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') return;
+    if ('id' in snapshot && snapshot.id) target.id = snapshot.id;
+    if ('label' in snapshot && snapshot.label != null) target.label = snapshot.label;
+    if ('description' in snapshot) target.description = snapshot.description ?? '';
+    if ('last_updated' in snapshot) target.lastUpdated = snapshot.last_updated || null;
+    if ('last_updated_epoch' in snapshot) {
+      const epoch = Number(snapshot.last_updated_epoch);
+      target.lastUpdatedEpoch = Number.isFinite(epoch) ? epoch : null;
+    }
+    if ('file_count' in snapshot) {
+      const count = Number(snapshot.file_count);
+      target.fileCount = Number.isFinite(count) ? count : 0;
+    }
+    if ('present_files' in snapshot) {
+      const present = Number(snapshot.present_files);
+      target.presentFiles = Number.isFinite(present) ? present : 0;
+    }
+    if (Array.isArray(snapshot.command)) {
+      target.command = snapshot.command.slice();
+    }
+    if ('command_display' in snapshot) {
+      target.commandDisplay = snapshot.command_display || '';
+    }
+    if ('can_refresh' in snapshot) {
+      target.canRefresh = !!snapshot.can_refresh;
+    }
+    if (snapshot.context && typeof snapshot.context === 'object') {
+      target.context = { ...snapshot.context };
+    }
+    if (snapshot.extras && typeof snapshot.extras === 'object') {
+      target.extras = { ...snapshot.extras };
+    }
+    if ('since_source' in snapshot) {
+      target.sinceSource = snapshot.since_source ?? null;
+    }
+    if ('since_source_modified' in snapshot) {
+      target.sinceSourceModified = snapshot.since_source_modified ?? null;
+    }
+  }
+
+  function mergeTaskItem(raw, prev) {
+    const base = {
+      id: prev?.id || raw?.id || '',
+      label: prev?.label || raw?.label || raw?.id || 'Dataset',
+      description: prev?.description || '',
+      lastUpdated: prev?.lastUpdated || null,
+      lastUpdatedEpoch: prev?.lastUpdatedEpoch ?? null,
+      fileCount: prev?.fileCount ?? 0,
+      presentFiles: prev?.presentFiles ?? 0,
+      command: prev?.command ? prev.command.slice() : null,
+      commandDisplay: prev?.commandDisplay || '',
+      canRefresh: prev?.canRefresh ?? false,
+      context: prev?.context ? { ...prev.context } : {},
+      extras: prev?.extras ? { ...prev.extras } : {},
+      sinceSource: prev?.sinceSource ?? null,
+      sinceSourceModified: prev?.sinceSourceModified ?? null,
+      running: prev?.running ?? false,
+      statusMessage: prev?.statusMessage || '',
+      statusLevel: prev?.statusLevel || '',
+      output: prev?.output ? prev.output.slice() : [],
+      outputOpen: prev?.outputOpen ?? false,
+      lastRunAt: prev?.lastRunAt ?? null,
+      lastReturnCode: prev?.lastReturnCode ?? null,
+      lastSuccess: prev?.lastSuccess ?? null,
+    };
+    applyTaskSnapshot(base, raw);
+    if (!base.id && raw?.id) base.id = raw.id;
+    return base;
+  }
+
+  function computeTaskStatus(item) {
+    if (item.running) {
+      return { text: 'Running command…', className: 'running' };
+    }
+    if (item.statusMessage) {
+      return { text: item.statusMessage, className: item.statusLevel || '' };
+    }
+    const runEpoch = toEpochSeconds(item.lastRunAt);
+    if (item.lastSuccess === true) {
+      const suffix = runEpoch ? ` (${formatRelativeTime(runEpoch)})` : '';
+      return { text: `Last run succeeded${suffix}`, className: 'success' };
+    }
+    if (item.lastSuccess === false) {
+      const exitCode = item.lastReturnCode ?? 'error';
+      const suffix = runEpoch ? ` (${formatRelativeTime(runEpoch)})` : '';
+      return { text: `Last run failed (exit ${exitCode})${suffix}`, className: 'error' };
+    }
+    if (Number.isFinite(item.lastUpdatedEpoch) && item.lastUpdatedEpoch) {
+      return { text: `Ready · updated ${formatRelativeTime(item.lastUpdatedEpoch)}`, className: '' };
+    }
+    return { text: 'No cached data yet', className: '' };
+  }
+
+  function taskCardHtml(item, layout) {
+    const classes = ['tasks-card'];
+    if (item.running) classes.push('running');
+    const isRowLayout = layout === 'rows';
+    classes.push(isRowLayout ? 'tasks-card--row' : 'tasks-card--card');
+    const updatedTitle = formatAbsoluteDate(item.lastUpdated, item.lastUpdatedEpoch);
+    const updatedRelative = Number.isFinite(item.lastUpdatedEpoch) && item.lastUpdatedEpoch
+      ? formatRelativeTime(item.lastUpdatedEpoch)
+      : 'Never updated';
+    const filesLabel = `${item.presentFiles ?? 0}/${item.fileCount ?? 0} file${(item.fileCount ?? 0) === 1 ? '' : 's'}`;
+    const sinceLabel = item.extras && Number.isFinite(item.extras.computed_since_hours)
+      ? `Window ${item.extras.computed_since_hours}h`
+      : '';
+    const metaPieces = [
+      `<span title="${escapeHtml(updatedTitle)}">🕒 ${escapeHtml(updatedRelative)}</span>`,
+      `<span>📦 ${escapeHtml(filesLabel)}</span>`,
+    ];
+    if (sinceLabel) metaPieces.push(`<span>⏱️ ${escapeHtml(sinceLabel)}</span>`);
+    if (item.context && item.context.orphan) {
+      metaPieces.push('<span>⚠️ Orphan cache</span>');
+    }
+    const statusInfo = computeTaskStatus(item);
+    const logHtml = !isRowLayout && item.output && item.output.length
+      ? `<details class="tasks-card-log"${item.outputOpen ? ' open' : ''}>
+           <summary>Execution log</summary>
+           <pre>${escapeHtml(item.output.join('\n'))}</pre>
+         </details>`
+      : '';
+    const buttonDisabled = (!item.canRefresh || item.running || tasksState.bulkRunning) ? 'disabled' : '';
+    const buttonLabel = item.running ? 'Updating…' : 'Update';
+    if (isRowLayout) {
+      return `
+        <div class="${classes.join(' ')}" data-task-id="${escapeHtml(item.id)}">
+          <div class="tasks-row-button">
+            <button class="btn" type="button" data-task-action="run" data-task-id="${escapeHtml(item.id)}" ${buttonDisabled}>
+              ${escapeHtml(buttonLabel)}
+            </button>
+          </div>
+          <div class="tasks-row-name" title="${escapeHtml(item.label || item.id)}">${escapeHtml(item.label || item.id)}</div>
+          <div class="tasks-row-meta">${metaPieces.join('')}</div>
+          <div class="tasks-row-status${statusInfo.className ? ` ${statusInfo.className}` : ''}">${escapeHtml(statusInfo.text)}</div>
+        </div>
+      `;
+    }
+    return `
+      <div class="${classes.join(' ')}" data-task-id="${escapeHtml(item.id)}">
+        <div class="tasks-card-head">
+          <h3>${escapeHtml(item.label || item.id)}</h3>
+        </div>
+        <div class="tasks-card-meta">${metaPieces.join('')}</div>
+        <div class="tasks-card-status-line${statusInfo.className ? ` ${statusInfo.className}` : ''}">${escapeHtml(statusInfo.text)}</div>
+        ${logHtml}
+        <div class="tasks-card-footer">
+          <button class="btn" type="button" data-task-action="run" data-task-id="${escapeHtml(item.id)}" ${buttonDisabled}>
+            ${escapeHtml(buttonLabel)}
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderTasks() {
+    if ($tasksStatus) {
+      if (tasksState.loading && !tasksState.error) {
+        $tasksStatus.textContent = 'Loading datasets…';
+      } else if (tasksState.error) {
+        $tasksStatus.textContent = tasksState.error;
+      } else if (tasksState.items.length) {
+        const count = tasksState.items.length;
+        $tasksStatus.textContent = `${count} dataset${count === 1 ? '' : 's'} available.`;
+      } else {
+        $tasksStatus.textContent = 'No cached datasets were found.';
+      }
+    }
+    if ($tasksUpdateAll) {
+      const hasRefreshable = tasksState.items.some((item) => item.canRefresh);
+      $tasksUpdateAll.disabled = !hasRefreshable || tasksState.loading || tasksState.bulkRunning;
+      $tasksUpdateAll.textContent = tasksState.bulkRunning ? 'Updating…' : 'Update all';
+    }
+    if ($tasksList) {
+      $tasksList.classList.toggle('tasks-list--rows', tasksState.layout === 'rows');
+      $tasksList.classList.toggle('tasks-list--cards', tasksState.layout !== 'rows');
+    }
+    $tasksLayoutButtons.forEach((btn) => {
+      const layoutValue = btn.getAttribute('data-tasks-layout');
+      btn.classList.toggle('active', layoutValue === tasksState.layout);
+    });
+    if (!$tasksList) return;
+    const openMap = new Map();
+    $tasksList.querySelectorAll('.tasks-card-log').forEach((details) => {
+      const card = details.closest('.tasks-card');
+      if (card && card.dataset.taskId) {
+        openMap.set(card.dataset.taskId, details.open);
+      }
+    });
+    if (tasksState.error) {
+      $tasksList.innerHTML = `<div class="tasks-empty">${escapeHtml(tasksState.error)}</div>`;
+      return;
+    }
+    if (tasksState.loading && tasksState.items.length === 0) {
+      $tasksList.innerHTML = '';
+      return;
+    }
+    if (tasksState.items.length === 0) {
+      $tasksList.innerHTML = '<div class="tasks-empty">No cached datasets were found in the data directory.</div>';
+      return;
+    }
+    const html = tasksState.items.map((item) => {
+      if (openMap.has(item.id)) {
+        item.outputOpen = openMap.get(item.id);
+      }
+      return taskCardHtml(item, tasksState.layout);
+    }).join('');
+    $tasksList.innerHTML = html;
+  }
+
+  async function loadTasks(force = false) {
+    if (tasksState.loading) return;
+    const now = Date.now();
+    if (!force && tasksState.lastFetchMs && now - tasksState.lastFetchMs < TASK_REFRESH_CACHE_MS) {
+      renderTasks();
+      return;
+    }
+    tasksState.loading = true;
+    tasksState.error = null;
+    renderTasks();
+    try {
+      const res = await fetch(`${API_BASE}/tasks/datasets`);
+      if (!res.ok) {
+        let message = `Request failed (${res.status})`;
+        try {
+          const payload = await res.json();
+          if (payload && payload.detail) message = String(payload.detail);
+        } catch {
+          try {
+            const text = await res.text();
+            if (text) message = text;
+          } catch {}
+        }
+        throw new Error(message);
+      }
+      const data = await res.json();
+      const rows = Array.isArray(data.datasets) ? data.datasets : [];
+      const prevMap = new Map(tasksState.items.map((item) => [item.id, item]));
+      tasksState.items = rows.map((raw) => {
+        const prev = prevMap.get(raw.id);
+        return mergeTaskItem(raw, prev);
+      });
+      tasksState.lastFetchMs = Date.now();
+    } catch (err) {
+      console.error(err);
+      tasksState.error = err?.message || 'Failed to load datasets.';
+    } finally {
+      tasksState.loading = false;
+      renderTasks();
+    }
+  }
+
+  async function handleTaskRefresh(datasetId) {
+    const item = tasksState.items.find((entry) => entry.id === datasetId);
+    if (!item || item.running) return;
+    if (!item.canRefresh) {
+      item.statusMessage = 'You do not have permission to refresh this dataset.';
+      item.statusLevel = 'error';
+      renderTasks();
+      return;
+    }
+    item.running = true;
+    item.statusMessage = '';
+    item.statusLevel = '';
+    item.output = [];
+    item.outputOpen = true;
+    renderTasks();
+    try {
+      const res = await fetch(`${API_BASE}/tasks/datasets/${encodeURIComponent(datasetId)}/refresh`, { method: 'POST' });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const detail = payload?.detail;
+        const message = typeof detail === 'string' ? detail : `Command failed (${res.status})`;
+        item.statusMessage = message;
+        item.statusLevel = 'error';
+        item.lastSuccess = false;
+        item.running = false;
+        item.output = [];
+        renderTasks();
+        return;
+      }
+      item.running = false;
+      item.output = Array.isArray(payload.output) ? payload.output : [];
+      item.outputOpen = item.output.length > 0;
+      item.lastRunAt = payload.completed_at || payload.started_at || new Date().toISOString();
+      item.lastReturnCode = payload.return_code ?? null;
+      item.lastSuccess = !!payload.success;
+      if (payload.after) {
+        applyTaskSnapshot(item, payload.after);
+      }
+      tasksState.lastFetchMs = Date.now();
+      if (!item.lastSuccess) {
+        const exitCode = payload.return_code ?? 'error';
+        item.statusMessage = `Command failed (exit ${exitCode})`;
+        item.statusLevel = 'error';
+      } else {
+        item.statusMessage = '';
+        item.statusLevel = '';
+      }
+      renderTasks();
+    } catch (err) {
+      console.error(err);
+      item.running = false;
+      item.lastSuccess = false;
+      item.statusMessage = err?.message || 'Failed to run command.';
+      item.statusLevel = 'error';
+      item.output = [];
+      renderTasks();
+    }
+  }
+
+  async function handleTaskRefreshAll() {
+    if (tasksState.bulkRunning) return;
+    const candidates = tasksState.items.filter((item) => item.canRefresh);
+    if (!candidates.length) return;
+    tasksState.bulkRunning = true;
+    renderTasks();
+    try {
+      for (const item of candidates) {
+        await handleTaskRefresh(item.id);
+      }
+    } finally {
+      tasksState.bulkRunning = false;
+      renderTasks();
+    }
+  }
+
+  function setTasksLayout(layout) {
+    const next = layout === 'rows' ? 'rows' : 'cards';
+    if (tasksState.layout === next) return;
+    tasksState.layout = next;
+    try { localStorage.setItem(TASKS_LAYOUT_STORAGE_KEY, next); } catch {}
+    renderTasks();
+  }
 
   // Tools catalog helpers
   const TOOL_NO_TAG_KEY = '__other__';
@@ -3181,6 +3602,7 @@
     const key = (pageKey || '').toLowerCase();
     if (key === 'tools') return hasPermission('tools.use');
     if (key === 'chat') return hasPermission('chat.use');
+    if (key === 'tasks') return hasPermission('export.run');
     if (key === 'vcenter') return hasPermission('vcenter.view') || (currentUser && currentUser.role === 'admin');
     if (key === 'admin') return currentUser && currentUser.role === 'admin';
     return true;
@@ -3202,12 +3624,14 @@
     const canChat = canAccessPage('chat');
     const canVCenter = canAccessPage('vcenter');
     const canAdmin = canAccessPage('admin');
+     const canTasks = canAccessPage('tasks');
     const canRunExport = hasPermission('export.run');
     const canAck = hasPermission('zabbix.ack');
 
     if ($navTools) $navTools.hidden = !canTools;
     if ($navChat) $navChat.hidden = !canChat;
     if ($navVCenter) $navVCenter.hidden = !canVCenter;
+    if ($navTasks) $navTasks.hidden = !canTasks;
     if ($navAdmin) $navAdmin.hidden = !canAdmin;
 
     if ($updateBtn) $updateBtn.disabled = !canRunExport;
@@ -3252,6 +3676,7 @@
       commvault: $pageCommvault,
       vcenter: $pageVCenter,
       zhost: $pageZhost,
+      tasks: $pageTasks,
       suggestions: $pageSuggestions,
       'suggestion-detail': $pageSuggestionDetail,
       account: $pageAccount,
@@ -3301,6 +3726,8 @@
       loadVCenterInstances().catch(() => {});
     } else if (p === 'tools') {
       loadTools();
+    } else if (p === 'tasks') {
+      loadTasks();
     } else if (p === 'chat') {
       fetchChatSessions();
       loadChatDefaults();
@@ -3457,6 +3884,32 @@
     renderTools();
     showPage('tools');
   });
+  $tasksUpdateAll?.addEventListener('click', async (event) => {
+    event.preventDefault();
+    await handleTaskRefreshAll();
+  });
+  $tasksLayoutButtons.forEach((btn) => {
+    btn.addEventListener('click', (event) => {
+      event.preventDefault();
+      const layout = btn.getAttribute('data-tasks-layout');
+      if (layout) setTasksLayout(layout);
+    });
+  });
+  $tasksRefresh?.addEventListener('click', (event) => {
+    event.preventDefault();
+    loadTasks(true);
+  });
+  if ($tasksList) {
+    $tasksList.addEventListener('click', (event) => {
+      const runBtn = event.target.closest('button[data-task-action="run"]');
+      if (!runBtn) return;
+      event.preventDefault();
+      const datasetId = runBtn.getAttribute('data-task-id');
+      if (datasetId) {
+        handleTaskRefresh(datasetId);
+      }
+    });
+  }
 
   if ($userMenuToggle) {
     $userMenuToggle.addEventListener('click', (e) => {
@@ -6861,7 +7314,6 @@
             };
           })
         : [];
-      renderAdminVCenterList();
       if ($adminVCenterStatus) {
         $adminVCenterStatus.classList.remove('error');
         $adminVCenterStatus.classList.add('success');
@@ -6874,7 +7326,6 @@
     } catch (err) {
       console.error('Failed to load vCenter configurations', err);
       adminState.vcenters = [];
-      renderAdminVCenterList();
       if ($adminVCenterStatus) {
         $adminVCenterStatus.classList.remove('success');
         $adminVCenterStatus.classList.add('error');
@@ -6883,6 +7334,7 @@
       return [];
     } finally {
       adminState.vcenterLoading = false;
+      renderAdminVCenterList();
     }
   }
 
