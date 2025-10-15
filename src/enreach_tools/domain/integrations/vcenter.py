@@ -43,5 +43,10 @@ class VCenterVM:
     network_names: tuple[str, ...] = field(default_factory=tuple)
     custom_attributes: dict[str, str] = field(default_factory=dict)
     tags: tuple[str, ...] = field(default_factory=tuple)
+    snapshots: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
+    snapshot_count: int | None = None
+    disks: tuple[Mapping[str, Any], ...] = field(default_factory=tuple)
+    total_disk_capacity_bytes: int | None = None
+    total_provisioned_bytes: int | None = None
     raw_summary: Mapping[str, Any] | None = None
     raw_detail: Mapping[str, Any] | None = None

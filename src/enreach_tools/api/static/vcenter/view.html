@@ -222,6 +222,36 @@
           <tbody></tbody>
         </table>
       </div>
+      <div class="section" id="vm-disks" hidden>
+        <h2>Disks</h2>
+        <table class="data-table" id="vm-disks-table">
+          <thead>
+            <tr>
+              <th>Label</th>
+              <th>Capacity</th>
+              <th>Type</th>
+              <th>Datastore</th>
+              <th>Thin Provisioned</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="section" id="vm-snapshots" hidden>
+        <h2>Snapshots</h2>
+        <table class="data-table" id="vm-snapshots-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Description</th>
+              <th>Created</th>
+              <th>Size</th>
+              <th>State</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
       <div class="section" id="vm-attributes" hidden>
         <h2>Custom Attributes</h2>
         <table class="data-table" id="vm-attributes-table">
@@ -421,6 +451,52 @@
               row.innerHTML = `<td>${macs[i] || ''}</td><td>${ips[i] || ''}</td>`;
               interfacesBody.appendChild(row);
             }
+          }
+
+          const disksSection = document.getElementById('vm-disks');
+          const disksBody = document.getElementById('vm-disks-table').querySelector('tbody');
+          disksBody.innerHTML = '';
+          const disks = Array.isArray(vm.disks) ? vm.disks : [];
+          if (disks.length) {
+            disks.forEach((disk) => {
+              const row = document.createElement('tr');
+              const label = disk.label || disk.summary || '—';
+              const capacityBytes = Number(disk.capacity_bytes);
+              const capacity = Number.isFinite(capacityBytes) && capacityBytes > 0
+                ? (capacityBytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB'
+                : '—';
+              const type = disk.type || '—';
+              const datastore = disk.datastore || '—';
+              const thinProvisioned = disk.thin_provisioned === true ? 'Yes' : disk.thin_provisioned === false ? 'No' : '—';
+              row.innerHTML = `<td>${label}</td><td>${capacity}</td><td>${type}</td><td>${datastore}</td><td>${thinProvisioned}</td>`;
+              disksBody.appendChild(row);
+            });
+            disksSection.hidden = false;
+          } else {
+            disksSection.hidden = true;
+          }
+
+          const snapshotsSection = document.getElementById('vm-snapshots');
+          const snapshotsBody = document.getElementById('vm-snapshots-table').querySelector('tbody');
+          snapshotsBody.innerHTML = '';
+          const snapshots = Array.isArray(vm.snapshots) ? vm.snapshots : [];
+          if (snapshots.length) {
+            snapshots.forEach((snap) => {
+              const row = document.createElement('tr');
+              const name = snap.name || '—';
+              const description = snap.description || '—';
+              const created = snap.create_time ? new Date(snap.create_time).toLocaleString() : '—';
+              const sizeBytes = Number(snap.size_bytes);
+              const size = Number.isFinite(sizeBytes) && sizeBytes > 0
+                ? (sizeBytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB'
+                : '—';
+              const state = snap.state || '—';
+              row.innerHTML = `<td>${name}</td><td>${description}</td><td>${created}</td><td>${size}</td><td>${state}</td>`;
+              snapshotsBody.appendChild(row);
+            });
+            snapshotsSection.hidden = false;
+          } else {
+            snapshotsSection.hidden = true;
           }
 
           const attributesSection = document.getElementById('vm-attributes');

@@ -57,6 +57,11 @@ class VCenterVMDTO(DomainModel):
     tools_auto_update_supported: bool | None = None
     vcenter_url: str | None = None
     network_names: tuple[str, ...] = ()
+    snapshots: tuple[Mapping[str, Any], ...] = ()
+    snapshot_count: int | None = None
+    disks: tuple[Mapping[str, Any], ...] = ()
+    total_disk_capacity_bytes: int | None = None
+    total_provisioned_bytes: int | None = None
     summary: Mapping[str, object] | None = None
     detail: Mapping[str, object] | None = None
 
@@ -137,6 +142,11 @@ def vcenter_vm_to_dto(record: VCenterVM) -> VCenterVMDTO:
         tools_auto_update_supported=record.tools_auto_update_supported,
         vcenter_url=record.vcenter_url,
         network_names=record.network_names,
+        snapshots=record.snapshots,
+        snapshot_count=record.snapshot_count,
+        disks=record.disks,
+        total_disk_capacity_bytes=record.total_disk_capacity_bytes,
+        total_provisioned_bytes=record.total_provisioned_bytes,
         summary=record.raw_summary,
         detail=record.raw_detail,
     )

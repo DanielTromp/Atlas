@@ -61,6 +61,8 @@ class VCenterClient:
     _VM_CUSTOM_ATTRIBUTES_ENDPOINT = "/rest/vcenter/vm/{vm}/custom-attributes"
     _VM_GUEST_IDENTITY_ENDPOINT = "/rest/vcenter/vm/{vm}/guest/identity"
     _VM_TOOLS_ENDPOINT = "/rest/vcenter/vm/{vm}/tools"
+    _VM_SNAPSHOTS_ENDPOINT = "/rest/vcenter/vm/{vm}/snapshot"
+    _VM_DISKS_ENDPOINT = "/rest/vcenter/vm/{vm}/hardware/disk"
     _TAG_LIST_ENDPOINT = "/rest/com/vmware/cis/tagging/tag-association?~action=list-attached-tags"
     _TAG_INFO_ENDPOINT = "/rest/com/vmware/cis/tagging/tag/id:{tag_id}"
 
@@ -399,6 +401,304 @@ class VCenterClient:
             return None
         tools = payload.get("value")
         return tools if isinstance(tools, Mapping) else None
+
+    def get_vm_snapshots(self, vm_id: str) -> list[Mapping[str, Any]]:
+        if not vm_id:
+            return []
+        # Try REST API first
+        payload = self._request(
+            "GET",
+            self._VM_SNAPSHOTS_ENDPOINT.format(vm=vm_id),
+            null_status=(401, 403, 404, 500, 501, 503),
+        )
+        if isinstance(payload, Mapping):
+            snapshots = payload.get("value")
+            if isinstance(snapshots, list):
+                return [item for item in snapshots if isinstance(item, Mapping)]
+        return []
+
+    def get_vm_snapshots_vim(self, instance_uuid: str) -> list[Mapping[str, Any]]:  # pragma: no cover - network dependent
+        """Get VM snapshots using pyVmomi (SOAP API)."""
+        snapshots: list[Mapping[str, Any]] = []
+        if not instance_uuid:
+            return snapshots
+        try:
+            content = self._ensure_vim_connection()
+        except VCenterClientError:
+            return snapshots
+        if content is None or vim is None:
+            return snapshots
+        try:
+            search_index = getattr(content, "searchIndex", None)
+            if search_index is None:
+                return snapshots
+            vm = search_index.FindByUuid(None, instance_uuid, True, True)
+            if vm is None:
+                return snapshots
+
+            snapshot_info = getattr(vm, "snapshot", None)
+            if snapshot_info is None:
+                return snapshots
+
+            # Get layout information for snapshot delta disk sizes
+            # Delta disks (-000001.vmdk, -000002.vmdk, etc.) contain the actual data changes
+            layout_ex = getattr(vm, "layoutEx", None)
+            snapshot_sizes: dict[str, int] = {}
+
+            # First, collect all snapshot IDs to map deltas to
+            snapshot_list = []
+            if snapshot_info:
+                root_snapshots = getattr(snapshot_info, "rootSnapshotList", None)
+                if root_snapshots:
+                    def collect_snapshot_ids(snap_tree):
+                        ids = []
+                        if not isinstance(snap_tree, list):
+                            snap_tree = [snap_tree]
+                        for snap_node in snap_tree:
+                            snap = getattr(snap_node, "snapshot", None)
+                            if snap:
+                                snap_id = getattr(snap, "_moId", None)
+                                if snap_id:
+                                    ids.append(snap_id)
+                            children = getattr(snap_node, "childSnapshotList", None)
+                            if children:
+                                ids.extend(collect_snapshot_ids(children))
+                        return ids
+                    snapshot_list = collect_snapshot_ids(root_snapshots)
+
+            if layout_ex:
+                all_files = getattr(layout_ex, "file", None)
+                disk_layout = getattr(layout_ex, "disk", None)
+
+                if all_files:
+                    # Scan all files for delta disks
+                    # Delta disks have naming pattern: vmname-000001.vmdk, vmname-000002.vmdk, etc.
+                    total_delta_size = 0
+                    for file_info in all_files:
+                        name = getattr(file_info, "name", "")
+                        size = getattr(file_info, "size", 0)
+
+                        # Look for delta disk files (contain -0000 and .vmdk)
+                        if size and "-0000" in name and ".vmdk" in name:
+                            total_delta_size += int(size)
+
+                    # Assign the total delta size to the first/only snapshot
+                    # For multiple snapshots, this sums all deltas (a known limitation)
+                    if total_delta_size > 0 and snapshot_list:
+                        snapshot_sizes[snapshot_list[0]] = total_delta_size
+
+            def process_snapshot_tree(snapshot_tree):
+                """Recursively process snapshot tree."""
+                result = []
+                if not isinstance(snapshot_tree, list):
+                    snapshot_tree = [snapshot_tree]
+
+                for snap_node in snapshot_tree:
+                    snap = getattr(snap_node, "snapshot", None)
+                    if snap is None:
+                        continue
+
+                    snap_data: dict[str, Any] = {}
+
+                    # Get snapshot ID
+                    snap_id = getattr(snap, "_moId", None)
+                    if snap_id:
+                        snap_data["id"] = snap_id
+
+                    # Get snapshot name
+                    name = getattr(snap_node, "name", None)
+                    if name:
+                        snap_data["name"] = str(name)
+
+                    # Get description
+                    description = getattr(snap_node, "description", None)
+                    if description:
+                        snap_data["description"] = str(description)
+
+                    # Get creation time
+                    create_time = getattr(snap_node, "createTime", None)
+                    if create_time:
+                        snap_data["create_time"] = create_time.isoformat() if hasattr(create_time, "isoformat") else str(create_time)
+
+                    # Get state
+                    state = getattr(snap_node, "state", None)
+                    if state:
+                        snap_data["state"] = str(state)
+
+                    # Get quiesced flag
+                    quiesced = getattr(snap_node, "quiesced", None)
+                    if quiesced is not None:
+                        snap_data["quiesced"] = bool(quiesced)
+
+                    # Get snapshot size from layout information
+                    if snap_id and snap_id in snapshot_sizes:
+                        snap_data["size_bytes"] = snapshot_sizes[snap_id]
+
+                    result.append(snap_data)
+
+                    # Process child snapshots recursively
+                    child_snapshots = getattr(snap_node, "childSnapshotList", None)
+                    if child_snapshots:
+                        result.extend(process_snapshot_tree(child_snapshots))
+
+                return result
+
+            root_snapshots = getattr(snapshot_info, "rootSnapshotList", None)
+            if root_snapshots:
+                snapshots = process_snapshot_tree(root_snapshots)
+        except Exception as e:  # pragma: no cover - best effort
+            print(f"DEBUG VIM: Exception: {e}")
+            logger.debug("Failed to retrieve snapshots via pyVmomi", exc_info=True)
+
+        return snapshots
+
+    def get_vm_disks(self, vm_id: str) -> list[Mapping[str, Any]]:
+        """Get VM disk information using REST API."""
+        if not vm_id:
+            return []
+        payload = self._request(
+            "GET",
+            self._VM_DISKS_ENDPOINT.format(vm=vm_id),
+            null_status=(401, 403, 404, 500, 501, 503),
+        )
+        if isinstance(payload, Mapping):
+            disks = payload.get("value")
+            if isinstance(disks, list):
+                return [item for item in disks if isinstance(item, Mapping)]
+        return []
+
+    def get_vm_disks_vim(self, instance_uuid: str) -> list[Mapping[str, Any]]:  # pragma: no cover - network dependent
+        """Get VM disk information using pyVmomi (SOAP API)."""
+        disks: list[Mapping[str, Any]] = []
+        if not instance_uuid:
+            return disks
+        try:
+            content = self._ensure_vim_connection()
+        except VCenterClientError:
+            return disks
+        if content is None or vim is None:
+            return disks
+        try:
+            search_index = getattr(content, "searchIndex", None)
+            if search_index is None:
+                return disks
+            vm = search_index.FindByUuid(None, instance_uuid, True, True)
+            if vm is None:
+                return disks
+
+            # Get VM config for hardware info
+            config = getattr(vm, "config", None)
+            if config is None:
+                return disks
+
+            hardware = getattr(config, "hardware", None)
+            if hardware is None:
+                return disks
+
+            devices = getattr(hardware, "device", None)
+            if not devices:
+                return disks
+
+            # Get storage info for thin provisioning details
+            storage = getattr(vm, "storage", None)
+            per_datastore_usage = {}
+            if storage:
+                per_ds_usage = getattr(storage, "perDatastoreUsage", None)
+                if per_ds_usage:
+                    for usage in per_ds_usage:
+                        datastore = getattr(usage, "datastore", None)
+                        if datastore:
+                            ds_name = getattr(datastore, "name", None)
+                            committed = getattr(usage, "committed", None)
+                            uncommitted = getattr(usage, "uncommitted", None)
+                            if ds_name:
+                                per_datastore_usage[ds_name] = {
+                                    "committed": committed,
+                                    "uncommitted": uncommitted,
+                                }
+
+            # Process disk devices
+            for device in devices:
+                # Check if this is a disk device
+                if not isinstance(device, (vim.vm.device.VirtualDisk,)):
+                    continue
+
+                disk_data: dict[str, Any] = {}
+
+                # Get device info
+                device_info = getattr(device, "deviceInfo", None)
+                if device_info:
+                    label = getattr(device_info, "label", None)
+                    if label:
+                        disk_data["label"] = str(label)
+                    summary = getattr(device_info, "summary", None)
+                    if summary:
+                        disk_data["summary"] = str(summary)
+
+                # Get capacity
+                capacity = getattr(device, "capacityInBytes", None)
+                if capacity is not None:
+                    disk_data["capacity_bytes"] = int(capacity)
+                else:
+                    # Fallback to KB if bytes not available
+                    capacity_kb = getattr(device, "capacityInKB", None)
+                    if capacity_kb is not None:
+                        disk_data["capacity_bytes"] = int(capacity_kb) * 1024
+
+                # Get backing info (VMDK file details)
+                backing = getattr(device, "backing", None)
+                if backing:
+                    # Get disk mode
+                    disk_mode = getattr(backing, "diskMode", None)
+                    if disk_mode:
+                        disk_data["disk_mode"] = str(disk_mode)
+
+                    # Get thin provisioning
+                    thin_provisioned = getattr(backing, "thinProvisioned", None)
+                    if thin_provisioned is not None:
+                        disk_data["thin_provisioned"] = bool(thin_provisioned)
+
+                    # Get file name (disk path)
+                    file_name = getattr(backing, "fileName", None)
+                    if file_name:
+                        disk_data["disk_path"] = str(file_name)
+                        # Extract datastore name from path [datastore1] path/to/disk.vmdk
+                        if file_name.startswith("[") and "]" in file_name:
+                            datastore = file_name[1:file_name.index("]")]
+                            disk_data["datastore"] = datastore
+
+                    # Get provisioned size for thin disks
+                    # For thin disks, capacity is max size, we need actual usage
+                    datastore_name = disk_data.get("datastore")
+                    if datastore_name and datastore_name in per_datastore_usage:
+                        usage = per_datastore_usage[datastore_name]
+                        # Use committed as provisioned size for thin disks
+                        if usage.get("committed"):
+                            disk_data["provisioned_bytes"] = int(usage["committed"])
+
+                # Get controller type (SCSI, IDE, SATA, NVMe)
+                controller_key = getattr(device, "controllerKey", None)
+                if controller_key is not None:
+                    # Find the controller
+                    for ctrl_device in devices:
+                        if getattr(ctrl_device, "key", None) == controller_key:
+                            ctrl_type = type(ctrl_device).__name__
+                            if "SCSI" in ctrl_type:
+                                disk_data["type"] = "SCSI"
+                            elif "IDE" in ctrl_type:
+                                disk_data["type"] = "IDE"
+                            elif "SATA" in ctrl_type:
+                                disk_data["type"] = "SATA"
+                            elif "NVMe" in ctrl_type:
+                                disk_data["type"] = "NVMe"
+                            break
+
+                disks.append(disk_data)
+
+        except Exception as e:  # pragma: no cover - best effort
+            logger.debug("Failed to retrieve disks via pyVmomi: %s", e, exc_info=True)
+
+        return disks
 
     def _get_tag_name(self, tag_id: str) -> str | None:
         cached = self._tag_cache.get(tag_id)

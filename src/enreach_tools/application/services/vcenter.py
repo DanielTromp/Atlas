@@ -400,6 +400,8 @@ def _build_vm(  # noqa: PLR0913
     tags: Iterable[str] | None,
     guest_identity: Mapping[str, Any] | None,
     tools_info: Mapping[str, Any] | None,
+    snapshots: Iterable[Mapping[str, Any]] | None,
+    disks: Iterable[Mapping[str, Any]] | None,
     *,
     base_url: str | None = None,
     server_guid: str | None = None,
@@ -598,6 +600,24 @@ def _build_vm(  # noqa: PLR0913
         if isinstance(tag, str) and str(tag).strip()
     )
 
+    snapshot_list = list(snapshots or [])
+    snapshot_tuple = tuple(dict(s) for s in snapshot_list if isinstance(s, Mapping))
+    snapshot_count = len(snapshot_tuple) if snapshot_tuple else None
+
+    disk_list = list(disks or [])
+    disk_tuple = tuple(dict(d) for d in disk_list if isinstance(d, Mapping))
+    total_capacity = 0
+    total_provisioned = 0
+    for disk in disk_tuple:
+        capacity = disk.get("capacity_bytes")
+        if isinstance(capacity, int):
+            total_capacity += capacity
+        provisioned = disk.get("provisioned_bytes")
+        if isinstance(provisioned, int):
+            total_provisioned += provisioned
+    total_disk_capacity_bytes = total_capacity if total_capacity > 0 else None
+    total_provisioned_bytes = total_provisioned if total_provisioned > 0 else None
+
     return VCenterVM(
         vm_id=vm_id,
         name=name_str,
@@ -631,6 +651,11 @@ def _build_vm(  # noqa: PLR0913
         network_names=tuple(sorted(network_names)),
         custom_attributes=attr_map,
         tags=tag_tuple,
+        snapshots=snapshot_tuple,
+        snapshot_count=snapshot_count,
+        disks=disk_tuple,
+        total_disk_capacity_bytes=total_disk_capacity_bytes,
+        total_provisioned_bytes=total_provisioned_bytes,
         raw_summary=summary,
         raw_detail=detail,
     )
@@ -671,6 +696,11 @@ def _serialize_vm(vm: VCenterVM) -> dict[str, Any]:
         "network_names": list(vm.network_names),
         "custom_attributes": vm.custom_attributes,
         "tags": list(vm.tags),
+        "snapshots": [dict(s) for s in vm.snapshots],
+        "snapshot_count": vm.snapshot_count,
+        "disks": [dict(d) for d in vm.disks],
+        "total_disk_capacity_bytes": vm.total_disk_capacity_bytes,
+        "total_provisioned_bytes": vm.total_provisioned_bytes,
     }
 
 
@@ -721,6 +751,21 @@ def _deserialize_vm(data: Mapping[str, Any]) -> VCenterVM:
     tools_install_type = _normalize_text(data.get("tools_install_type"))
     vcenter_url = _normalize_text(data.get("vcenter_url"))
 
+    raw_snapshots = data.get("snapshots")
+    snapshot_tuple: tuple[Mapping[str, Any], ...] = ()
+    if isinstance(raw_snapshots, list):
+        snapshot_tuple = tuple(dict(s) for s in raw_snapshots if isinstance(s, Mapping))
+
+    snapshot_count = _safe_int(data.get("snapshot_count"))
+
+    raw_disks = data.get("disks")
+    disk_tuple: tuple[Mapping[str, Any], ...] = ()
+    if isinstance(raw_disks, list):
+        disk_tuple = tuple(dict(d) for d in raw_disks if isinstance(d, Mapping))
+
+    total_disk_capacity_bytes = _safe_int(data.get("total_disk_capacity_bytes"))
+    total_provisioned_bytes = _safe_int(data.get("total_provisioned_bytes"))
+
     raw_vm_id = data.get("vm_id") or data.get("id")
 
     return VCenterVM(
@@ -758,6 +803,11 @@ def _deserialize_vm(data: Mapping[str, Any]) -> VCenterVM:
         network_names=network_names,
         custom_attributes=custom_attributes,
         tags=tag_tuple,
+        snapshots=snapshot_tuple,
+        snapshot_count=snapshot_count,
+        disks=disk_tuple,
+        total_disk_capacity_bytes=total_disk_capacity_bytes,
+        total_provisioned_bytes=total_provisioned_bytes,
         raw_summary=None,
         raw_detail=None,
     )
@@ -938,7 +988,9 @@ class VCenterService:
         with lock:
             filters = {vm_id.strip().lower() for vm_id in vm_ids} if vm_ids else None
             vms, meta = self._fetch_inventory_live(config, password, vm_filters=filters)
-            self._write_cache(config, vms, meta)
+            # Use partial update when filtering to specific VMs
+            is_partial = filters is not None
+            self._write_cache(config, vms, meta, partial_update=is_partial)
         meta_with_source = dict(meta)
         meta_with_source["source"] = "live"
         return config, vms, meta_with_source
@@ -1004,9 +1056,56 @@ class VCenterService:
         }
         return {"meta": meta, "vms": vms}
 
-    def _write_cache(self, config: VCenterConfigEntity, vms: Iterable[VCenterVM], meta: Mapping[str, Any]) -> None:
+    def _write_cache(
+        self,
+        config: VCenterConfigEntity,
+        vms: Iterable[VCenterVM],
+        meta: Mapping[str, Any],
+        *,
+        partial_update: bool = False,
+    ) -> None:
         path = self._cache_path(config.id)
         vm_list = list(vms)
+
+        # For partial updates, merge with existing cache
+        existing_generated_at = None
+        if partial_update and path.exists():
+            try:
+                existing_cache = self._load_cache_entry(config.id)
+                if existing_cache:
+                    existing_vms = existing_cache.get("vms", [])
+                    existing_meta = existing_cache.get("meta", {})
+                    existing_generated_at = existing_meta.get("generated_at")
+
+                    # Create a map of updated VMs by vm_id
+                    updated_vm_map = {vm.vm_id: vm for vm in vm_list}
+
+                    # Merge: keep existing VMs, update/add new ones
+                    merged_vms = []
+                    for existing_vm in existing_vms:
+                        vm_id = existing_vm.vm_id
+                        if vm_id in updated_vm_map:
+                            # Use the updated version
+                            merged_vms.append(updated_vm_map[vm_id])
+                            # Remove from map so we don't add it again
+                            del updated_vm_map[vm_id]
+                        else:
+                            # Keep existing VM
+                            merged_vms.append(existing_vm)
+
+                    # Add any new VMs that weren't in the existing cache
+                    merged_vms.extend(updated_vm_map.values())
+
+                    vm_list = merged_vms
+            except Exception:
+                logger.warning("Failed to merge partial cache update for %s, writing full update", config.id, exc_info=True)
+
+        # Use the actual merged list count for partial updates
+        vm_count = len(vm_list)
+
+        # For partial updates, keep the original generated_at unless we have a new one
+        generated_at = meta.get("generated_at") if isinstance(meta.get("generated_at"), datetime) else existing_generated_at
+
         payload = {
             "config": {
                 "id": config.id,
@@ -1015,8 +1114,8 @@ class VCenterService:
                 "username": config.username,
                 "verify_ssl": config.verify_ssl,
             },
-            "generated_at": _isoformat(meta.get("generated_at") if isinstance(meta.get("generated_at"), datetime) else None),
-            "vm_count": meta.get("vm_count", len(vm_list)),
+            "generated_at": _isoformat(generated_at),
+            "vm_count": vm_count,
             "vms": [_serialize_vm(vm) for vm in vm_list],
         }
         try:
@@ -1053,6 +1152,8 @@ class VCenterService:
                     tuple[str, ...] | None,
                     Mapping[str, Any] | None,
                     Mapping[str, Any] | None,
+                    list[Mapping[str, Any]],
+                    list[Mapping[str, Any]],
                 ]
             ] = []
 
@@ -1158,6 +1259,51 @@ class VCenterService:
                         exc_info=True,
                     )
 
+                snapshots: list[Mapping[str, Any]] = []
+                try:
+                    # Try REST API first
+                    snapshots = client.get_vm_snapshots(str(vm_identifier))
+                    # If REST API returns empty and we have instance_uuid, try pyVmomi
+                    if not snapshots and instance_uuid:
+                        snapshots = client.get_vm_snapshots_vim(instance_uuid)
+                except VCenterClientError:
+                    logger.warning(
+                        "Failed to load snapshots for VM %s on vCenter %s",
+                        vm_identifier,
+                        config.name,
+                        exc_info=True,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Unexpected error loading snapshots for VM %s on vCenter %s",
+                        vm_identifier,
+                        config.name,
+                        exc_info=True,
+                    )
+
+                disks: list[Mapping[str, Any]] = []
+                try:
+                    # Use pyVmomi for disks as REST API doesn't return detailed info
+                    if instance_uuid:
+                        disks = client.get_vm_disks_vim(instance_uuid)
+                    # Fallback to REST API if pyVmomi fails
+                    if not disks:
+                        disks = client.get_vm_disks(str(vm_identifier))
+                except VCenterClientError:
+                    logger.warning(
+                        "Failed to load disks for VM %s on vCenter %s",
+                        vm_identifier,
+                        config.name,
+                        exc_info=True,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Unexpected error loading disks for VM %s on vCenter %s",
+                        vm_identifier,
+                        config.name,
+                        exc_info=True,
+                    )
+
                 placement_from_vim: Mapping[str, str] = {}
                 if not placement_info and instance_uuid:
                     placement_from_vim = client.get_vm_placement_vim(instance_uuid)
@@ -1186,7 +1332,7 @@ class VCenterService:
                     detail_payload = merged_detail
 
                 vm_payloads.append(
-                    (summary_map, detail_payload, guest_interfaces, custom_attrs, tag_names, guest_identity, tools_info)
+                    (summary_map, detail_payload, guest_interfaces, custom_attrs, tag_names, guest_identity, tools_info, snapshots, disks)
                 )
 
                 host_ids.update(_collect_reference_ids(summary_map.get("host"), ("host",)))
@@ -1239,7 +1385,7 @@ class VCenterService:
                 "folders": _safe_lookup("folder", client.list_folders, folder_ids),
             }
 
-            for summary, detail, guest_interfaces, custom_attrs, tag_names, guest_identity, tools_info in vm_payloads:
+            for summary, detail, guest_interfaces, custom_attrs, tag_names, guest_identity, tools_info, snapshots, disks in vm_payloads:
                 try:
                     vm = _build_vm(
                         summary,
@@ -1250,6 +1396,8 @@ class VCenterService:
                         tag_names,
                         guest_identity,
                         tools_info,
+                        snapshots,
+                        disks,
                         base_url=config.base_url,
                         server_guid=server_guid,
                     )

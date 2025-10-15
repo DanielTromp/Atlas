@@ -741,6 +741,41 @@
     return `${mib.toLocaleString()} MiB`;
   }
 
+  function formatVmSnapshots(vm) {
+    const count = Number(vm?.snapshot_count);
+    if (!Number.isFinite(count) || count <= 0) return '—';
+
+    // Get total size from first snapshot (for single snapshot case, this is the total)
+    const snapshots = vm?.snapshots;
+    if (Array.isArray(snapshots) && snapshots.length > 0) {
+      const totalBytes = snapshots.reduce((sum, snap) => {
+        const size = Number(snap?.size_bytes);
+        return sum + (Number.isFinite(size) ? size : 0);
+      }, 0);
+
+      if (totalBytes > 0) {
+        // Format as GB
+        const gb = totalBytes / (1024 * 1024 * 1024);
+        const formatted = gb >= 10 ? Math.round(gb).toString() : gb.toFixed(1).replace(/\.0$/, '');
+        return `${count} (${formatted} GB)`;
+      }
+    }
+
+    return `${count}`;
+  }
+
+  function formatVmDisks(vm) {
+    const totalBytes = Number(vm?.total_disk_capacity_bytes);
+    if (!Number.isFinite(totalBytes) || totalBytes <= 0) return '—';
+
+    const gb = totalBytes / (1024 * 1024 * 1024);
+    if (gb >= 10) {
+      return `${Math.round(gb)} GB`;
+    }
+    const formatted = gb.toFixed(1).replace(/\.0$/, '');
+    return `${formatted} GB`;
+  }
+
   const BASE_VCENTER_COLUMNS = [
     { label: '#', className: 'vcenter-col-index', render: (_vm, idx) => idx + 1 },
     { label: 'Display Name', className: 'vcenter-col-name', render: (vm) => createVmNameCell(vm) },
@@ -751,6 +786,8 @@
     { label: 'Folder', className: 'vcenter-col-folder', render: (vm) => vm?.folder || '—' },
     { label: 'CPU', className: 'vcenter-col-cpu', render: (vm) => formatVmCpu(vm) },
     { label: 'Mem', className: 'vcenter-col-mem', render: (vm) => formatVmMemory(vm) },
+    { label: 'Disk', className: 'vcenter-col-disk', render: (vm) => formatVmDisks(vm) },
+    { label: 'Snapshots', className: 'vcenter-col-snapshots', render: (vm) => formatVmSnapshots(vm) },
     { label: 'Updated', className: 'vcenter-col-updated', render: () => formatVCenterUpdated() },
   ];
 
