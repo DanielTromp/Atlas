@@ -10,7 +10,7 @@ import sys
 
 from rich import print
 
-from enreach_tools.env import load_env, project_root
+from infrastructure_atlas.env import load_env, project_root
 
 
 def main() -> int:

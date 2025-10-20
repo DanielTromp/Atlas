@@ -4,8 +4,8 @@ import json
 
 from typer.testing import CliRunner
 
-from enreach_tools.cli import app
-from enreach_tools.infrastructure.caching import TTLCache, get_cache_registry
+from infrastructure_atlas.cli import app
+from infrastructure_atlas.infrastructure.caching import TTLCache, get_cache_registry
 
 runner = CliRunner()
 

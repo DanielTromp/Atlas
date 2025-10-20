@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import HTTPException
 from rich import print
 
-from enreach_tools.api.app import (
+from infrastructure_atlas.api.app import (
     _refresh_commvault_backups_sync,
     _refresh_commvault_plans_sync,
     _refresh_commvault_storage_sync,

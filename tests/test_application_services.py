@@ -7,9 +7,9 @@ from typing import cast
 
 from sqlalchemy.orm import Session
 
-from enreach_tools.application.services.chat import DefaultChatHistoryService, create_chat_history_service
-from enreach_tools.application.services.users import DefaultUserService, create_user_service
-from enreach_tools.domain.entities import (
+from infrastructure_atlas.application.services.chat import DefaultChatHistoryService, create_chat_history_service
+from infrastructure_atlas.application.services.users import DefaultUserService, create_user_service
+from infrastructure_atlas.domain.entities import (
     ChatMessageEntity,
     ChatSessionEntity,
     GlobalAPIKeyEntity,

@@ -5,7 +5,7 @@ This document tracks progress on the LangChain agent refactor. We will pause aft
 ## High-Level Migration Plan
 
 - **Introduce LangChain layer**
-  - Add an `enreach_tools/agents/` package (shared helpers, router, domain agents)
+  - Add an `infrastructure_atlas/agents/` package (shared helpers, router, domain agents)
   - Use LangChain `AgentExecutor` instances with deterministic prompts and AMS timezone formatting
 - **Tool wrappers**
   - Wrap existing integrations as LangChain Tools with clean schemas, retries, and secret redaction

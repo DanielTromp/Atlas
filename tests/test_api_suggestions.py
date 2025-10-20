@@ -4,7 +4,7 @@ import importlib
 import os
 from tempfile import TemporaryDirectory
 
-from enreach_tools.api.app import (
+from infrastructure_atlas.api.app import (
     SuggestionCommentCreate,
     SuggestionCreate,
     SuggestionLikeRequest,
@@ -16,14 +16,14 @@ from enreach_tools.api.app import (
     suggestions_list,
 )
 
-app_module = importlib.import_module("enreach_tools.api.app")
+app_module = importlib.import_module("infrastructure_atlas.api.app")
 
 
 def test_suggestions_crud_flow():
     tmp = TemporaryDirectory()
     try:
         os.environ["NETBOX_DATA_DIR"] = tmp.name
-        os.environ["ENREACH_API_TOKEN"] = ""
+        os.environ["ATLAS_API_TOKEN"] = ""
         app_module.API_TOKEN = ""
 
         initial = suggestions_list()
@@ -55,4 +55,4 @@ def test_suggestions_crud_flow():
     finally:
         tmp.cleanup()
         os.environ.pop("NETBOX_DATA_DIR", None)
-        os.environ.pop("ENREACH_API_TOKEN", None)
+        os.environ.pop("ATLAS_API_TOKEN", None)

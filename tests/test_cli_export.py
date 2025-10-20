@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from typer.testing import CliRunner
 
-from enreach_tools.cli import app
-from enreach_tools.domain.tasks import JobPriority, JobSpec
-from enreach_tools.infrastructure.metrics import get_metrics_snapshot, reset_metrics
+from infrastructure_atlas.cli import app
+from infrastructure_atlas.domain.tasks import JobPriority, JobSpec
+from infrastructure_atlas.infrastructure.metrics import get_metrics_snapshot, reset_metrics
 
 runner = CliRunner()
 
@@ -16,7 +16,7 @@ def test_export_update_runs_legacy_scripts(monkeypatch):
         calls.append((path, args))
         return 0
 
-    monkeypatch.setattr("enreach_tools.cli._run_script", fake_run_script)
+    monkeypatch.setattr("infrastructure_atlas.cli._run_script", fake_run_script)
     reset_metrics()
 
     result = runner.invoke(
@@ -61,7 +61,7 @@ def test_export_update_queue_path(monkeypatch):
 
     stub = StubService()
 
-    from enreach_tools.application.services import netbox as netbox_module
+    from infrastructure_atlas.application.services import netbox as netbox_module
 
     def fake_from_env(cls):
         return stub

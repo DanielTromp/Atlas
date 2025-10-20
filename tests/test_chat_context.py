@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from enreach_tools.agents.context import AgentContext
-from enreach_tools.api.app import _apply_chat_variables
+from infrastructure_atlas.agents.context import AgentContext
+from infrastructure_atlas.api.app import _apply_chat_variables
 
 
 def test_agent_context_prompt_fragment_formats_variables() -> None:

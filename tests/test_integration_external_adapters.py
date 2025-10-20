@@ -4,10 +4,10 @@ import types
 
 import pytest
 
-from enreach_tools.infrastructure.caching import get_cache_registry
-from enreach_tools.infrastructure.external.confluence_client import ConfluenceClient, ConfluenceClientConfig
-from enreach_tools.infrastructure.external.netbox_client import NetboxClient, NetboxClientConfig
-from enreach_tools.infrastructure.external.zabbix_client import ZabbixClient, ZabbixClientConfig
+from infrastructure_atlas.infrastructure.caching import get_cache_registry
+from infrastructure_atlas.infrastructure.external.confluence_client import ConfluenceClient, ConfluenceClientConfig
+from infrastructure_atlas.infrastructure.external.netbox_client import NetboxClient, NetboxClientConfig
+from infrastructure_atlas.infrastructure.external.zabbix_client import ZabbixClient, ZabbixClientConfig
 
 
 class _StubRecord:
@@ -71,7 +71,7 @@ def stub_netbox(monkeypatch):
     def fake_api(url: str, token: str):
         return api
 
-    import enreach_tools.infrastructure.external.netbox_client as netbox_module
+    import infrastructure_atlas.infrastructure.external.netbox_client as netbox_module
 
     monkeypatch.setattr(netbox_module, "pynetbox", types.SimpleNamespace(api=fake_api))
     yield api

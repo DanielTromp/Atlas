@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import argparse
 
-from enreach_tools.application.services.netbox import NetboxExportService
-from enreach_tools.env import load_env, require_env
+from infrastructure_atlas.application.services.netbox import NetboxExportService
+from infrastructure_atlas.env import load_env, require_env
 
 
 def main() -> int:

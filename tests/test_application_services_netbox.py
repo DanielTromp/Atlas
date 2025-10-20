@@ -8,13 +8,13 @@ from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from enreach_tools.application.exporter.netbox import ExportPaths, NativeNetboxExporter
-from enreach_tools.application.orchestration import AsyncJobRunner
-from enreach_tools.application.services.netbox import NetboxExportService
-from enreach_tools.domain.integrations import NetboxDeviceRecord, NetboxVMRecord
-from enreach_tools.domain.tasks import JobStatus
-from enreach_tools.infrastructure.metrics import reset_metrics
-from enreach_tools.infrastructure.queues import InMemoryJobQueue
+from infrastructure_atlas.application.exporter.netbox import ExportPaths, NativeNetboxExporter
+from infrastructure_atlas.application.orchestration import AsyncJobRunner
+from infrastructure_atlas.application.services.netbox import NetboxExportService
+from infrastructure_atlas.domain.integrations import NetboxDeviceRecord, NetboxVMRecord
+from infrastructure_atlas.domain.tasks import JobStatus
+from infrastructure_atlas.infrastructure.metrics import reset_metrics
+from infrastructure_atlas.infrastructure.queues import InMemoryJobQueue
 
 
 class _FakeNetboxClient:
@@ -225,7 +225,7 @@ def test_native_exporter_persists_manifest(tmp_path, monkeypatch):
         manifest_path=tmp_path / "manifest.json",
         cache_json=tmp_path / "cache.json",
     )
-    monkeypatch.setattr("enreach_tools.backup_sync.sync_paths", lambda *args, **kwargs: None)
+    monkeypatch.setattr("infrastructure_atlas.backup_sync.sync_paths", lambda *args, **kwargs: None)
     exporter = NativeNetboxExporter(client, paths)
 
     exporter.export(force=False, verbose=False)

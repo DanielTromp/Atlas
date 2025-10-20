@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 
-from enreach_tools.api.app import admin_env_settings
+from infrastructure_atlas.api.app import admin_env_settings
 
 
 def test_admin_env_settings_response_shape():

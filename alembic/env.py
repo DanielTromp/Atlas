@@ -12,8 +12,8 @@ root = Path(__file__).resolve().parents[1]
 if str(root / "src") not in sys.path:
     sys.path.insert(0, str(root / "src"))
 
-from enreach_tools.db.config import get_database_url  # noqa: E402
-from enreach_tools.db.models import Base  # noqa: E402
+from infrastructure_atlas.db.config import get_database_url  # noqa: E402
+from infrastructure_atlas.db.models import Base  # noqa: E402
 
 config = context.config
 if config.config_file_name:

@@ -1,6 +1,6 @@
 # Logging Guide
 
-The Enreach tooling ships with a single logging pipeline that covers the CLI, FastAPI
+The Infrastructure Atlas tooling ships with a single logging pipeline that covers the CLI, FastAPI
 backend, background jobs, and the web UI. Logs help answer three questions:
 
 1. **What ran?** → every CLI command and API request is annotated with relevant metadata.
@@ -11,12 +11,12 @@ This document explains where logs live, how they are structured, and how to tune
 
 ## Locations & Files
 
-- Default file: `logs/enreach.log`
-- Override directory: `ENREACH_LOG_DIR=/custom/path`
-- Override filename: `ENREACH_LOG_FILE=enreach.log`
+- Default file: `logs/atlas.log`
+- Override directory: `ATLAS_LOG_DIR=/custom/path`
+- Override filename: `ATLAS_LOG_FILE=atlas.log`
 - Rotation:
-  - `ENREACH_LOG_MAX_BYTES` (default `5 * 1024 * 1024` → ~5 MB)
-  - `ENREACH_LOG_BACKUP_COUNT` (default `5` rotated archives)
+  - `ATLAS_LOG_MAX_BYTES` (default `5 * 1024 * 1024` → ~5 MB)
+  - `ATLAS_LOG_BACKUP_COUNT` (default `5` rotated archives)
 - Legacy export scripts continue to write to `export.log`; the observability layer does
   not change this behaviour.
 
@@ -26,12 +26,12 @@ file handler remains active.
 
 ## CLI Logging
 
-- `src/enreach_tools/cli.py` registers a logger per command and wraps execution in a
+- `src/infrastructure_atlas/cli.py` registers a logger per command and wraps execution in a
   `logging_context` block.
-- Every command line run (e.g. `uv run enreach status`) emits a log entry with:
+- Every command line run (e.g. `uv run atlas status`) emits a log entry with:
   - `command_path` (Typer command path)
   - Raw argv (`raw_command`)
-  - `actor` (current shell user; override via `ENREACH_LOG_ACTOR`)
+  - `actor` (current shell user; override via `ATLAS_LOG_ACTOR`)
   - Working directory (`cwd`)
 - Legacy scripts run via `_run_script(...)` produce start/finish entries (including exit
   code) so that long-running operations can be correlated.
@@ -49,12 +49,12 @@ file handler remains active.
 - High-frequency polling endpoints (`/logs/tail`) are suppressed to avoid flooding the
   log file; everything else is recorded.
 - Metrics integration (`record_http_request`) uses the same timing information; toggle
-  via `ENREACH_METRICS_ENABLED`.
+  via `ATLAS_METRICS_ENABLED`.
 
 ## Task Logging
 
 Long-running operations use `task_logging(...)` (see
-`src/enreach_tools/api/app.py:task_logging`). It adds structured context and prints:
+`src/infrastructure_atlas/api/app.py:task_logging`). It adds structured context and prints:
 
 ```text
 INFO … Task started … task=<name>
@@ -68,7 +68,7 @@ If an exception bubbles out, the handler emits `Task failed` with the same conte
 - Chat providers (`/chat/complete`, `/chat/stream`) return a `ChatProviderResult` that
   contains both the reply text and normalised usage fields.
 - `task_logging` captures these values (`prompt_tokens`, `completion_tokens`,
-  `total_tokens`) so that every AI call is auditable in `enreach.log`.
+  `total_tokens`) so that every AI call is auditable in `atlas.log`.
 - The assistant reply stored in the database carries an embedded `[[TOKENS {...}]]`
   marker; the API strips the marker before returning the message and exposes the tokens
   as `usage`.
@@ -88,11 +88,11 @@ Because context is additive, nested operations (e.g. a chat completion triggered
 
 ## Runtime Tips
 
-- Tail the log: `tail -f logs/enreach.log`
-- Use `rg prompt_tokens logs/enreach.log` to inspect token usage.
-- Suppress console noise by setting `LOG_LEVEL`/`ENREACH_LOG_LEVEL` (values accepted by
+- Tail the log: `tail -f logs/atlas.log`
+- Use `rg prompt_tokens logs/atlas.log` to inspect token usage.
+- Suppress console noise by setting `LOG_LEVEL`/`ATLAS_LOG_LEVEL` (values accepted by
   `logging.getLevelName`, e.g. `DEBUG`, `INFO`, `WARNING`).
-- Set `ENREACH_LOG_STRUCTURED=1` to enable JSON logging when `structlog` is installed.
+- Set `ATLAS_LOG_STRUCTURED=1` to enable JSON logging when `structlog` is installed.
 
 ## FAQ
 
@@ -110,6 +110,6 @@ it prevents hundreds of duplicate entries without losing meaningful data.
 **How do I audit AI costs?**
 
 Every AI call now surfaces its token counts in three places: the chat bubble, the
-persisted message (`usage` field), and `logs/enreach.log`. Aggregators (e.g. a future
+persisted message (`usage` field), and `logs/atlas.log`. Aggregators (e.g. a future
 report) can consume whichever source suits them best.
 

@@ -5,8 +5,8 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from enreach_tools.cli import app
-from enreach_tools.db.setup import init_database
+from infrastructure_atlas.cli import app
+from infrastructure_atlas.db.setup import init_database
 
 runner = CliRunner()
 
@@ -16,8 +16,8 @@ def _with_temp_db():
     db_path = Path(tmpdir.name) / "cli.sqlite3"
     env = os.environ.copy()
     env_value = f"sqlite:///{db_path}"
-    env["ENREACH_DB_URL"] = env_value
-    os.environ["ENREACH_DB_URL"] = env_value
+    env["ATLAS_DB_URL"] = env_value
+    os.environ["ATLAS_DB_URL"] = env_value
     init_database()
     return tmpdir, env
 
@@ -80,4 +80,4 @@ def test_cli_user_create_set_password_and_list():
         assert "alice" in usernames
     finally:
         tmpdir.cleanup()
-        os.environ.pop("ENREACH_DB_URL", None)
+        os.environ.pop("ATLAS_DB_URL", None)

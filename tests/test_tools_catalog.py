@@ -4,7 +4,7 @@ import asyncio
 
 from starlette.requests import Request
 
-from enreach_tools.interfaces.api.routes import tools as tools_router
+from infrastructure_atlas.interfaces.api.routes import tools as tools_router
 
 
 async def _empty_receive():

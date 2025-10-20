@@ -1,8 +1,8 @@
 """Unit tests for SQLAlchemy-to-domain mappers."""
 from datetime import UTC, datetime
 
-from enreach_tools.db import models
-from enreach_tools.infrastructure.db import mappers
+from infrastructure_atlas.db import models
+from infrastructure_atlas.infrastructure.db import mappers
 
 
 def _now() -> datetime:

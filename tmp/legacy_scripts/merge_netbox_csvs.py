@@ -20,8 +20,8 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from enreach_tools import backup_sync
-from enreach_tools.env import load_env, project_root
+from infrastructure_atlas import backup_sync
+from infrastructure_atlas.env import load_env, project_root
 
 # Try to import Excel-related libraries
 EXCEL_AVAILABLE = False

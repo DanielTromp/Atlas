@@ -1,10 +1,10 @@
 [project]
-name = "enreach-tools"
+name = "infrastructure-atlas"
 version = "0.1.0"
-description = "Utilities and CLI tools for Enreach (Jira, Confluence, NetBox, Zabbix, GitLab, etc.)"
+description = "Utilities and CLI tools for Infrastructure Atlas (Jira, Confluence, NetBox, Zabbix, GitLab, etc.)"
 requires-python = ">=3.11"
 readme = "README.md"
-authors = [{ name = "Enreach", email = "Daniel.Tromp@Enreach.com" }]
+authors = [{ name = "Infrastructure Atlas Team", email = "Daniel.Tromp@Enreach.com" }]
 dependencies = [
   "python-dotenv>=1.0",
   "typer>=0.12",
@@ -36,7 +36,7 @@ dependencies = [
 ]
 
 [project.scripts]
-enreach = "enreach_tools.cli:main"
+atlas = "infrastructure_atlas.cli:main"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
@@ -48,7 +48,7 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 # Use src-layout; only include the project package
 where = ["src"]
-include = ["enreach_tools*"]
+include = ["infrastructure_atlas*"]
 exclude = ["personal*"]
 
 [tool.uv]
@@ -101,11 +101,11 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101", "S106"]
-"src/enreach_tools/api/app.py" = ["PLR0913", "PLR0911"]
-"src/enreach_tools/cli.py" = ["PLR0913"]
-"src/enreach_tools/application/chat_agents/enhanced_runtime.py" = ["PLR0913"]
-"src/enreach_tools/application/chat_agents/runtime.py" = ["PLR0911"]
-"src/enreach_tools/application/exporter/netbox.py" = ["PLR0913"]
-"src/enreach_tools/infrastructure/external/confluence_client.py" = ["PLR0913"]
-"src/enreach_tools/infrastructure/external/zabbix_client.py" = ["PLR0913"]
-"src/enreach_tools/infrastructure/rate_limiting.py" = ["PLR0911"]
+"src/infrastructure_atlas/api/app.py" = ["PLR0913", "PLR0911"]
+"src/infrastructure_atlas/cli.py" = ["PLR0913"]
+"src/infrastructure_atlas/application/chat_agents/enhanced_runtime.py" = ["PLR0913"]
+"src/infrastructure_atlas/application/chat_agents/runtime.py" = ["PLR0911"]
+"src/infrastructure_atlas/application/exporter/netbox.py" = ["PLR0913"]
+"src/infrastructure_atlas/infrastructure/external/confluence_client.py" = ["PLR0913"]
+"src/infrastructure_atlas/infrastructure/external/zabbix_client.py" = ["PLR0913"]
+"src/infrastructure_atlas/infrastructure/rate_limiting.py" = ["PLR0911"]

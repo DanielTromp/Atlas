@@ -30,7 +30,7 @@
 - **Adapter calls**:
   - Counter: `external_requests_total` (labels: `system`, `operation`, `status`).
 - **Exposure**:
-  - API: `/metrics` endpoint enabled via `ENREACH_METRICS_ENABLED` with optional bearer token guard (`ENREACH_METRICS_TOKEN`).
+  - API: `/metrics` endpoint enabled via `ATLAS_METRICS_ENABLED` with optional bearer token guard (`ATLAS_METRICS_TOKEN`).
   - CLI: optional `--metrics-port` to expose a registry when long-running.
 
 ## Tracing
@@ -38,7 +38,7 @@
 - **Strategy**:
   - Create spans for export orchestration (`NetboxExportService`), Confluence uploads, and Zabbix RPC calls when tracing is enabled.
   - Integrate FastAPI with `FastAPIInstrumentor` for request spans.
-  - Provide configuration via env (`OTEL_EXPORTER_OTLP_ENDPOINT`, `ENREACH_TRACING_ENABLED`).
+  - Provide configuration via env (`OTEL_EXPORTER_OTLP_ENDPOINT`, `ATLAS_TRACING_ENABLED`).
 
 ## Roll-out Steps
 1. Implement structured logging context helpers and replace print statements (PR5 step 3).

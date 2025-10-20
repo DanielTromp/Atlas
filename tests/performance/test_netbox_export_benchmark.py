@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from enreach_tools.application.exporter.netbox import ExportPaths
-from enreach_tools.application.services.netbox import NetboxExportService
-from enreach_tools.domain.integrations.netbox import NetboxDeviceRecord, NetboxVMRecord
+from infrastructure_atlas.application.exporter.netbox import ExportPaths
+from infrastructure_atlas.application.services.netbox import NetboxExportService
+from infrastructure_atlas.domain.integrations.netbox import NetboxDeviceRecord, NetboxVMRecord
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -75,7 +75,7 @@ def _make_device_records(count: int) -> list[NetboxDeviceRecord]:
                 "interface_count": 4,
             },
             source=None,
-            manufacturer="Enreach",
+            manufacturer="Atlas",
             model="GenX",
             rack=f"rack-{idx % 20}",
             rack_unit=str((idx % 42) + 1),
@@ -154,7 +154,7 @@ def test_netbox_export_service_benchmark(
 ):
     """Benchmark the synthetic NetBox export pipeline end-to-end."""
 
-    monkeypatch.setattr("enreach_tools.backup_sync.sync_paths", lambda *args, **kwargs: None)
+    monkeypatch.setattr("infrastructure_atlas.backup_sync.sync_paths", lambda *args, **kwargs: None)
     monkeypatch.setattr(NetboxExportService, "_create_excel", lambda self: None)
 
     def setup():

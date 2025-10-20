@@ -4,10 +4,10 @@ from datetime import UTC, datetime
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from enreach_tools.db.models import User
-from enreach_tools.domain.entities import UserEntity
-from enreach_tools.interfaces.api.dependencies import current_user, get_user_service
-from enreach_tools.interfaces.api.routes.auth import router
+from infrastructure_atlas.db.models import User
+from infrastructure_atlas.domain.entities import UserEntity
+from infrastructure_atlas.interfaces.api.dependencies import current_user, get_user_service
+from infrastructure_atlas.interfaces.api.routes.auth import router
 
 
 class _StubUserService:

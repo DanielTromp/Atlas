@@ -1,4 +1,4 @@
-from enreach_tools.infrastructure.external.confluence_client import ConfluenceClientConfig
+from infrastructure_atlas.infrastructure.external.confluence_client import ConfluenceClientConfig
 
 
 def test_confluence_config_api_root():

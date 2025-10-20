@@ -1,1 +1,1 @@
-"""Test suite for Enreach tools refactor."""
+"""Test suite for Infrastructure Atlas refactor."""

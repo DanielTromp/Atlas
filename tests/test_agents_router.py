@@ -4,8 +4,8 @@ from dataclasses import dataclass
 
 import pytest
 
-from enreach_tools.agents.context import AgentContext
-from enreach_tools.agents.router import RouterAgent
+from infrastructure_atlas.agents.context import AgentContext
+from infrastructure_atlas.agents.router import RouterAgent
 
 
 @dataclass

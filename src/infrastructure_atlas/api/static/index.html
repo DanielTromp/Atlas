@@ -96,16 +96,19 @@
     const logo = document.getElementById('app-brand-logo');
     if (!logo) return;
     const img = document.createElement('img');
-    img.src = 'logo.svg';
     img.alt = 'Atlas logo';
-    img.addEventListener('error', () => {
+    const show = () => { logo.hidden = false; };
+    const hide = () => {
       logo.hidden = true;
       logo.replaceChildren();
-    });
-    img.addEventListener('load', () => {
-      logo.hidden = false;
-    });
+    };
+    img.addEventListener('error', hide);
+    img.addEventListener('load', show);
+    img.src = 'logo.svg';
     logo.appendChild(img);
+    if (img.complete && img.naturalWidth > 0) {
+      show();
+    }
   })();
 </script>
 </header>

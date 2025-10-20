@@ -1,4 +1,4 @@
-# Enreach Tools Refactor Plan
+# Infrastructure Atlas Refactor Plan
 
 ## Roadmap
 - [x] PR1: Foundation scaffolding and package layout
@@ -56,4 +56,4 @@
 
 ### Migration Notes
 - 20250101_0003 adds supporting indexes only; no data copy required.
-- Seed data unchanged; apply migration via `uv run enreach db init` and verify index presence with `sqlite_schema`.
+- Seed data unchanged; apply migration via `uv run atlas db init` and verify index presence with `sqlite_schema`.

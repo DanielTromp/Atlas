@@ -12,7 +12,7 @@ Create a comprehensive shadow NetBox system that aggregates data from all infras
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                     Enreach Tools Platform                       │
+│                     Infrastructure Atlas Platform                       │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                   │
 │  ┌─────────────┐  ┌──────────────┐  ┌─────────────────────┐    │
@@ -108,7 +108,7 @@ Create a comprehensive shadow NetBox system that aggregates data from all infras
 
 **Validation**:
 ```bash
-sqlite3 data/enreach.db ".schema devices"
+sqlite3 data/atlas.db ".schema devices"
 ```
 
 ---
@@ -117,7 +117,7 @@ sqlite3 data/enreach.db ".schema devices"
 **Goal**: Add domain entities for the generic device model
 
 **Tasks**:
-- [x] Create `src/enreach_tools/domain/models/device.py` with `Device` dataclass
+- [x] Create `src/infrastructure_atlas/domain/models/device.py` with `Device` dataclass
 - [x] Add `DeviceType` enum (server, network_device, vm, storage, etc.)
 - [x] Add `SourceSystem` enum (vcenter, foreman, oxidized, etc.)
 - [x] Create `DeviceRelationship` dataclass for connections
@@ -132,7 +132,7 @@ sqlite3 data/enreach.db ".schema devices"
 **Goal**: Build reusable sync framework for all integrations
 
 **Tasks**:
-- [x] Create `src/enreach_tools/application/services/sync_framework.py`
+- [x] Create `src/infrastructure_atlas/application/services/sync_framework.py`
 - [x] Implement `SyncService` base class with:
   - `fetch()` - retrieve data from source
   - `transform()` - convert to generic Device model
@@ -169,7 +169,7 @@ sqlite3 data/enreach.db ".schema devices"
 **Goal**: Connect to Oxidized API and retrieve device list
 
 **Tasks**:
-- [ ] Create `src/enreach_tools/infrastructure/external/oxidized_client.py`
+- [ ] Create `src/infrastructure_atlas/infrastructure/external/oxidized_client.py`
 - [ ] Add Oxidized configuration to config model (URL, auth)
 - [ ] Implement `get_devices()` method
 - [ ] Add error handling and retries
@@ -177,7 +177,7 @@ sqlite3 data/enreach.db ".schema devices"
 
 **Validation**:
 ```bash
-uv run enreach oxidized list
+uv run atlas oxidized list
 ```
 
 ---
@@ -191,7 +191,7 @@ uv run enreach oxidized list
 - [ ] Create `OxidizedSyncService` extending `SyncService`
 - [ ] Transform Oxidized devices to generic `Device` model (type=network_device)
 - [ ] Store configs with versioning
-- [ ] Add CLI command: `uv run enreach oxidized refresh`
+- [ ] Add CLI command: `uv run atlas oxidized refresh`
 
 **Validation**: Configs visible in database and web UI
 
@@ -201,13 +201,13 @@ uv run enreach oxidized list
 **Goal**: Sync server inventory from Foreman
 
 **Tasks**:
-- [ ] Create `src/enreach_tools/infrastructure/external/foreman_client.py`
+- [ ] Create `src/infrastructure_atlas/infrastructure/external/foreman_client.py`
 - [ ] Add Foreman configuration (URL, auth)
 - [ ] Implement `get_hosts()` method to retrieve server list
 - [ ] Create `ForemanSyncService`
 - [ ] Transform Foreman hosts to `Device` model (type=server)
 - [ ] Extract metadata: OS, IP addresses, host groups, environment
-- [ ] Add CLI command: `uv run enreach foreman refresh`
+- [ ] Add CLI command: `uv run atlas foreman refresh`
 
 **Validation**: Foreman servers appear in unified device list
 
@@ -217,13 +217,13 @@ uv run enreach oxidized list
 **Goal**: Enrich server data with Puppet facts
 
 **Tasks**:
-- [ ] Create `src/enreach_tools/infrastructure/external/puppet_client.py`
+- [ ] Create `src/infrastructure_atlas/infrastructure/external/puppet_client.py`
 - [ ] Implement PuppetDB query interface
 - [ ] Create migration for `puppet_facts` table
 - [ ] Implement `get_facts(certname)` method
 - [ ] Store key facts: CPU, memory, disks, kernel, uptime
 - [ ] Link facts to devices via certname/hostname matching
-- [ ] Add CLI command: `uv run enreach puppet refresh`
+- [ ] Add CLI command: `uv run atlas puppet refresh`
 
 **Validation**: Puppet facts visible in server detail view
 
@@ -233,13 +233,13 @@ uv run enreach oxidized list
 **Goal**: Inventory Dorado SAN storage
 
 **Tasks**:
-- [ ] Create `src/enreach_tools/infrastructure/external/dorado_client.py`
+- [ ] Create `src/infrastructure_atlas/infrastructure/external/dorado_client.py`
 - [ ] Add Dorado configuration (REST API endpoint, auth)
 - [ ] Implement `get_luns()` and `get_filesystems()` methods
 - [ ] Create migration for `storage_volumes` table
 - [ ] Create `DoradoSyncService`
 - [ ] Store volume metadata: capacity, allocated, RAID level, controller
-- [ ] Add CLI command: `uv run enreach storage refresh --type dorado`
+- [ ] Add CLI command: `uv run atlas storage refresh --type dorado`
 
 **Validation**: Storage volumes visible in web UI
 
@@ -249,13 +249,13 @@ uv run enreach oxidized list
 **Goal**: Inventory NetApp NAS storage
 
 **Tasks**:
-- [ ] Create `src/enreach_tools/infrastructure/external/netapp_client.py`
+- [ ] Create `src/infrastructure_atlas/infrastructure/external/netapp_client.py`
 - [ ] Add NetApp configuration (ONTAP API endpoint, auth)
 - [ ] Implement `get_volumes()` and `get_qtrees()` methods
 - [ ] Extend `storage_volumes` table for NAS-specific fields
 - [ ] Create `NetAppSyncService`
 - [ ] Store volume metadata: aggregates, snapshots, quotas, exports
-- [ ] Add CLI command: `uv run enreach storage refresh --type netapp`
+- [ ] Add CLI command: `uv run atlas storage refresh --type netapp`
 
 **Validation**: NetApp volumes visible alongside Dorado in unified view
 
@@ -284,11 +284,11 @@ uv run enreach oxidized list
 
 **Tasks**:
 - [ ] Create migration for `kb_articles` table (id, space_key, title, body_text, body_html, url, last_updated)
-- [ ] Create `src/enreach_tools/infrastructure/external/confluence_client.py`
+- [ ] Create `src/infrastructure_atlas/infrastructure/external/confluence_client.py`
 - [ ] Implement `get_spaces()` and `get_pages(space_key)` methods
 - [ ] Create `ConfluenceSyncService`
 - [ ] Store both HTML (for display) and plain text (for AI)
-- [ ] Add CLI command: `uv run enreach kb refresh`
+- [ ] Add CLI command: `uv run atlas kb refresh`
 
 **Validation**: Confluence articles cached in database
 
@@ -299,11 +299,11 @@ uv run enreach oxidized list
 
 **Tasks**:
 - [ ] Create migration for `issues` table (key, summary, description, status, resolution, assignee, created, updated)
-- [ ] Create `src/enreach_tools/infrastructure/external/jira_client.py`
+- [ ] Create `src/infrastructure_atlas/infrastructure/external/jira_client.py`
 - [ ] Implement `get_issues(jql)` method
 - [ ] Cache issues from specific projects
 - [ ] Store comments for context
-- [ ] Add CLI command: `uv run enreach issues refresh`
+- [ ] Add CLI command: `uv run atlas issues refresh`
 
 **Validation**: Jira issues cached and browsable
 
@@ -315,7 +315,7 @@ uv run enreach oxidized list
 **Tasks**:
 - [ ] Create migration for `embeddings` table (content_type, content_id, embedding_vector, model_version, created_at)
 - [ ] Add dependency: `sentence-transformers` or similar
-- [ ] Create `src/enreach_tools/application/services/embedding_service.py`
+- [ ] Create `src/infrastructure_atlas/application/services/embedding_service.py`
 - [ ] Implement `generate_embedding(text)` using open-source model
 - [ ] Create `search_similar(query, limit)` using cosine similarity
 - [ ] Add index for efficient vector search
@@ -332,7 +332,7 @@ uv run enreach oxidized list
 - [ ] Chunk long articles (max 512 tokens per chunk)
 - [ ] Generate embeddings for each chunk
 - [ ] Store in `embeddings` table linked to `kb_articles`
-- [ ] Add CLI command: `uv run enreach kb vectorize`
+- [ ] Add CLI command: `uv run atlas kb vectorize`
 - [ ] Track vectorization status per article
 
 **Validation**: All KB articles have embeddings
@@ -346,7 +346,7 @@ uv run enreach oxidized list
 - [ ] Process issue summary + description + resolution
 - [ ] Generate embeddings for resolved issues
 - [ ] Create index of issue patterns
-- [ ] Add CLI command: `uv run enreach issues vectorize`
+- [ ] Add CLI command: `uv run atlas issues vectorize`
 
 **Validation**: Can search for similar resolved issues
 
@@ -356,7 +356,7 @@ uv run enreach oxidized list
 **Goal**: Add AI-powered query interface
 
 **Tasks**:
-- [ ] Create `src/enreach_tools/application/services/ai_assistant.py`
+- [ ] Create `src/infrastructure_atlas/application/services/ai_assistant.py`
 - [ ] Add configuration for AI model (Anthropic API, OpenAI, or local)
 - [ ] Implement `query(question, context)` method
 - [ ] Create context builder from vector search results
@@ -390,7 +390,7 @@ uv run enreach oxidized list
 - [ ] Implement `suggest_kb_updates()` - identify outdated articles
 - [ ] Detect duplicate/overlapping articles
 - [ ] Create maintenance dashboard in web UI
-- [ ] Add CLI command: `uv run enreach kb analyze`
+- [ ] Add CLI command: `uv run atlas kb analyze`
 
 **Validation**: Get list of KB improvement suggestions
 
@@ -416,7 +416,7 @@ uv run enreach oxidized list
 **Goal**: Create NetBox API client
 
 **Tasks**:
-- [ ] Create `src/enreach_tools/infrastructure/external/netbox_client.py`
+- [ ] Create `src/infrastructure_atlas/infrastructure/external/netbox_client.py`
 - [ ] Implement CRUD methods for devices, interfaces, IPs
 - [ ] Add error handling for NetBox API
 - [ ] Test against production NetBox instance
@@ -430,14 +430,14 @@ uv run enreach oxidized list
 **Goal**: Validate data before syncing to NetBox
 
 **Tasks**:
-- [ ] Create `src/enreach_tools/application/services/netbox_validator.py`
+- [ ] Create `src/infrastructure_atlas/application/services/netbox_validator.py`
 - [ ] Implement validation rules:
   - Required fields present
   - IP addresses valid and not duplicated
   - Devices have valid site/role
   - Interface names standardized
 - [ ] Create validation report format
-- [ ] Add CLI command: `uv run enreach netbox validate`
+- [ ] Add CLI command: `uv run atlas netbox validate`
 
 **Validation**: Get clear report of data issues before sync
 
@@ -452,7 +452,7 @@ uv run enreach oxidized list
 - [ ] Show side-by-side comparison of current vs proposed state
 - [ ] Add approval workflow (approve all, approve selected, reject)
 - [ ] Store approval history in database
-- [ ] Add CLI command: `uv run enreach netbox preview`
+- [ ] Add CLI command: `uv run atlas netbox preview`
 
 **Validation**: Can review and approve changes safely
 
@@ -467,7 +467,7 @@ uv run enreach oxidized list
 - [ ] Add transaction/rollback support
 - [ ] Handle partial failures gracefully
 - [ ] Log all changes to `sync_history` table
-- [ ] Add CLI command: `uv run enreach netbox sync --approve`
+- [ ] Add CLI command: `uv run atlas netbox sync --approve`
 
 **Validation**: Successfully update NetBox with new data
 
@@ -483,7 +483,7 @@ uv run enreach oxidized list
   - Newest data wins
   - Manual resolution
 - [ ] Create conflict resolution UI
-- [ ] Add CLI command: `uv run enreach netbox conflicts`
+- [ ] Add CLI command: `uv run atlas netbox conflicts`
 
 **Validation**: Conflicts are detected and can be resolved
 
@@ -497,7 +497,7 @@ uv run enreach oxidized list
 - [ ] Create web UI page for sync history
 - [ ] Add filtering by source, device, date range
 - [ ] Implement rollback capability for recent syncs
-- [ ] Add CLI command: `uv run enreach netbox history`
+- [ ] Add CLI command: `uv run atlas netbox history`
 
 **Validation**: Can see complete history of NetBox changes
 
@@ -521,10 +521,10 @@ uv run enreach oxidized list
 
 1. Run tests: uv run pytest
 2. Check migrations: uv run alembic check
-3. Backup production database: cp data/enreach.db data/enreach.db.backup
+3. Backup production database: cp data/atlas.db data/atlas.db.backup
 4. Sync code: rsync -av --exclude data/ ./ production:/app/
 5. Run migrations on production: ssh production "cd /app && uv run alembic upgrade head"
-6. Restart services: ssh production "systemctl restart enreach-api"
+6. Restart services: ssh production "systemctl restart atlas-api"
 7. Health check: curl https://production/api/health
 8. Rollback on failure: restore backup and restart
 ```

@@ -10,8 +10,8 @@ from pathlib import Path
 
 from rich import print
 
-from enreach_tools.env import get_env, load_env, project_root
-from enreach_tools.infrastructure.external import ConfluenceClient, ConfluenceClientConfig
+from infrastructure_atlas.env import get_env, load_env, project_root
+from infrastructure_atlas.infrastructure.external import ConfluenceClient, ConfluenceClientConfig
 
 
 def read_file(path: Path) -> bytes:

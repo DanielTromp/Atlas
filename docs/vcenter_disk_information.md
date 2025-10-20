@@ -135,13 +135,13 @@ Disk data is always fetched as it's considered essential VM information. To opti
 ### Full Refresh (includes disks)
 
 ```bash
-uv run enreach vcenter refresh --id {config_id}
+uv run atlas vcenter refresh --id {config_id}
 ```
 
 ### Single VM Refresh (includes disks)
 
 ```bash
-uv run enreach vcenter refresh --id {config_id} --vm {vm_id}
+uv run atlas vcenter refresh --id {config_id} --vm {vm_id}
 ```
 
 ### View Disk Data in Cache

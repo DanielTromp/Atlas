@@ -5,7 +5,7 @@ import sys
 import pynetbox
 from rich import print
 
-from enreach_tools.env import apply_extra_headers, load_env, require_env
+from infrastructure_atlas.env import apply_extra_headers, load_env, require_env
 
 
 def main():

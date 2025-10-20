@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Production Deployment Script for Enreach Tools
+# Production Deployment Script for Infrastructure Atlas
 #
 # This script automates deployment to production with safety checks,
 # backups, and rollback capability.
@@ -19,8 +19,8 @@ NC='\033[0m' # No Color
 
 # Configuration
 PRODUCTION_HOST="${PRODUCTION_HOST:-production}"
-PRODUCTION_PATH="${PRODUCTION_PATH:-/app/enreach-tools}"
-PRODUCTION_USER="${PRODUCTION_USER:-enreach}"
+PRODUCTION_PATH="${PRODUCTION_PATH:-/app/infrastructure-atlas}"
+PRODUCTION_USER="${PRODUCTION_USER:-atlas}"
 BACKUP_DIR="./backups"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
@@ -131,7 +131,7 @@ BACKUP_FILE="$BACKUP_DIR/backup_${TIMESTAMP}.tar.gz"
 if [ "$DRY_RUN" = false ]; then
     # Backup database and important files
     tar -czf "$BACKUP_FILE" \
-        data/enreach.db \
+        data/atlas.db \
         .env \
         2>/dev/null || true
 
@@ -195,7 +195,7 @@ fi
 # 7. Restart services
 step "Step 7: Restarting services"
 
-RESTART_CMD="sudo systemctl restart enreach-api"
+RESTART_CMD="sudo systemctl restart atlas-api"
 
 if [ "$DRY_RUN" = false ]; then
     if ssh "${PRODUCTION_USER}@${PRODUCTION_HOST}" "$RESTART_CMD" 2>/dev/null || true; then

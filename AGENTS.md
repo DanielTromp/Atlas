@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-- `src/enreach_tools/`: primary package (Typer CLI, env loader, FastAPI app + static UI).
+- `src/infrastructure_atlas/`: primary package (Typer CLI, env loader, FastAPI app + static UI).
 - `netbox-export/bin/`: task scripts invoked by the CLI (devices/vms export, merge, Confluence publish).
 - `data/`: default output directory for CSV/Excel.
 - `scripts/`: local utilities (e.g., `visit_app.py`).
@@ -10,11 +10,11 @@
 
 ## Build, Test, and Development Commands
 
-- Run CLI: `uv run enreach status` — quick API/token check.
-- Export all: `uv run enreach export update --force` — devices → vms → merge.
-- Serve API/UI: `uv run enreach api serve --host 127.0.0.1 --port 8000` then open `/app/`.
-- Confluence: `uv run enreach confluence publish-cmdb` — publish CMDB Excel attachment.
-- Confluence table: `uv run enreach confluence publish-devices-table` — refresh devices CSV as page table.
+- Run CLI: `uv run atlas status` — quick API/token check.
+- Export all: `uv run atlas export update --force` — devices → vms → merge.
+- Serve API/UI: `uv run atlas api serve --host 127.0.0.1 --port 8000` then open `/app/`.
+- Confluence: `uv run atlas confluence publish-cmdb` — publish CMDB Excel attachment.
+- Confluence table: `uv run atlas confluence publish-devices-table` — refresh devices CSV as page table.
 - Lint: `uv run ruff check .` • Format: `uv run ruff format .`.
 - Types: `uv run mypy src`.
 - Tests (when added): `uv run -m pytest`.
@@ -22,7 +22,7 @@
 ## Coding Style & Naming Conventions
 
 - Python 3.11, 4‑space indent, line length 120 (ruff).
-- Package/modules: snake_case (`enreach_tools/...`).
+- Package/modules: snake_case (`infrastructure_atlas/...`).
 - Functions/vars: snake_case; classes: PascalCase; constants: UPPER_SNAKE.
 - CLI subcommands mirror directories (`export`, `api`, `confluence`).
 - Use `rich.print` for user‑facing CLI messages.

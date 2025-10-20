@@ -17,13 +17,13 @@ ToDo list
 - [x] Update the CLI log output, make the output for Devices and vms the same, and have the other endpoint output similar. 
 - [x] Add logging to a file and make it viewable in the front ui.
 
-- [ ] Refactor common NetBox helpers into `src/enreach_tools/netbox_common.py` (contacts fetching, incremental update helpers, CSV write util) and reuse in device/VM exporters.
+- [ ] Refactor common NetBox helpers into `src/infrastructure_atlas/netbox_common.py` (contacts fetching, incremental update helpers, CSV write util) and reuse in device/VM exporters.
 - [ ] Split long functions: extract focused helpers from `netbox-export/bin/get_netbox_devices.py:get_full_device_data` and `netbox-export/bin/get_netbox_vms.py:get_vm_details`.
 - [ ] Dynamic VM CSV headers: derive headers from collected VM dicts instead of hardcoding; ensure merge script handles dynamic columns.
 - [ ] Batch contact fetching: add batched queries for contact assignments with configurable batch size via `CONTACT_BATCH_SIZE`.
-- [ ] Type hints: add comprehensive typing across `src/enreach_tools/` and `netbox-export/bin/` and validate with `mypy`.
-- [ ] Error handling: add `src/enreach_tools/exceptions.py`, standardize messages, and add simple retry for transient NetBox/API errors.
+- [ ] Type hints: add comprehensive typing across `src/infrastructure_atlas/` and `netbox-export/bin/` and validate with `mypy`.
+- [ ] Error handling: add `src/infrastructure_atlas/exceptions.py`, standardize messages, and add simple retry for transient NetBox/API errors.
 - [ ] API caching: add simple caching layer for `/devices`, `/vms`, `/all` responses (in‑memory by default; allow Redis via env).
 - [ ] Unit tests: set up pytest and add tests for env loader, CLI wiring, API endpoints, and contact helpers (with mocked NetBox).
-- [ ] Logging: centralize logging in `src/enreach_tools/logging.py` and replace prints with structured logs.
+- [ ] Logging: centralize logging in `src/infrastructure_atlas/logging.py` and replace prints with structured logs.
 - [ ] Documentation: update docstrings and README to reflect shared helpers, config, logging, and API caching.

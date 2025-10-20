@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from enreach_tools.infrastructure.metrics import (
+from infrastructure_atlas.infrastructure.metrics import (
     get_metrics_snapshot,
     record_netbox_export,
     reset_metrics,

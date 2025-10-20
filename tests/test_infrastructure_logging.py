@@ -1,5 +1,5 @@
 """Smoke tests for the logging scaffolding introduced during the refactor."""
-from enreach_tools.infrastructure.logging import setup_logging
+from infrastructure_atlas.infrastructure.logging import setup_logging
 
 
 def test_setup_logging_idempotent():

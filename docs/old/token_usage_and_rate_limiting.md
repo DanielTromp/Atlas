@@ -9,7 +9,7 @@ This document describes the comprehensive token usage tracking and rate limiting
 ### 1. Rate Limiting Infrastructure
 
 **Files:**
-- [`src/enreach_tools/infrastructure/rate_limiting.py`](../src/enreach_tools/infrastructure/rate_limiting.py)
+- [`src/infrastructure_atlas/infrastructure/rate_limiting.py`](../src/infrastructure_atlas/infrastructure/rate_limiting.py)
 
 **Key Components:**
 - `RateLimitConfig`: Configurable rate limits and retry settings
@@ -32,7 +32,7 @@ OPENAI_STABILIZATION_MINUTES=15      # Stabilization period after rate limits
 ### 2. Enhanced OpenAI Client
 
 **Files:**
-- [`src/enreach_tools/infrastructure/openai_client.py`](../src/enreach_tools/infrastructure/openai_client.py)
+- [`src/infrastructure_atlas/infrastructure/openai_client.py`](../src/infrastructure_atlas/infrastructure/openai_client.py)
 
 **Features:**
 - Exponential backoff retry with jitter
@@ -45,7 +45,7 @@ OPENAI_STABILIZATION_MINUTES=15      # Stabilization period after rate limits
 ### 3. Queue Management System
 
 **Files:**
-- [`src/enreach_tools/infrastructure/queues/chat_queue.py`](../src/enreach_tools/infrastructure/queues/chat_queue.py)
+- [`src/infrastructure_atlas/infrastructure/queues/chat_queue.py`](../src/infrastructure_atlas/infrastructure/queues/chat_queue.py)
 
 **Features:**
 - Priority-based request queuing
@@ -57,7 +57,7 @@ OPENAI_STABILIZATION_MINUTES=15      # Stabilization period after rate limits
 ### 4. Enhanced Agent Runtime
 
 **Files:**
-- [`src/enreach_tools/application/chat_agents/enhanced_runtime.py`](../src/enreach_tools/application/chat_agents/enhanced_runtime.py)
+- [`src/infrastructure_atlas/application/chat_agents/enhanced_runtime.py`](../src/infrastructure_atlas/application/chat_agents/enhanced_runtime.py)
 
 **Features:**
 - Integration with rate limiting infrastructure
@@ -69,7 +69,7 @@ OPENAI_STABILIZATION_MINUTES=15      # Stabilization period after rate limits
 ### 5. Monitoring API Endpoints
 
 **Files:**
-- [`src/enreach_tools/interfaces/api/routes/monitoring.py`](../src/enreach_tools/interfaces/api/routes/monitoring.py)
+- [`src/infrastructure_atlas/interfaces/api/routes/monitoring.py`](../src/infrastructure_atlas/interfaces/api/routes/monitoring.py)
 
 **Endpoints:**
 - `GET /monitoring/token-usage` - Token usage statistics
@@ -83,9 +83,9 @@ OPENAI_STABILIZATION_MINUTES=15      # Stabilization period after rate limits
 ### 6. Frontend Enhancements
 
 **Files:**
-- [`src/enreach_tools/api/static/app.js`](../src/enreach_tools/api/static/app.js)
-- [`src/enreach_tools/api/static/styles.css`](../src/enreach_tools/api/static/styles.css)
-- [`src/enreach_tools/api/static/index.html`](../src/enreach_tools/api/static/index.html)
+- [`src/infrastructure_atlas/api/static/app.js`](../src/infrastructure_atlas/api/static/app.js)
+- [`src/infrastructure_atlas/api/static/styles.css`](../src/infrastructure_atlas/api/static/styles.css)
+- [`src/infrastructure_atlas/api/static/index.html`](../src/infrastructure_atlas/api/static/index.html)
 
 **Features:**
 - Real-time token usage display in chat messages
@@ -131,8 +131,8 @@ The system handles several types of errors:
 # Test the core infrastructure components
 uv run python -c "
 import asyncio
-from src.enreach_tools.infrastructure.rate_limiting import get_rate_limiter, get_token_tracker
-from src.enreach_tools.infrastructure.queues.chat_queue import get_chat_queue
+from src.infrastructure_atlas.infrastructure.rate_limiting import get_rate_limiter, get_token_tracker
+from src.infrastructure_atlas.infrastructure.queues.chat_queue import get_chat_queue
 
 async def test():
     rate_limiter = get_rate_limiter()
@@ -150,7 +150,7 @@ asyncio.run(test())
 
 ```bash
 # Start the API server
-uv run enreach api serve --host 0.0.0.0 --port 8443
+uv run atlas api serve --host 0.0.0.0 --port 8443
 ```
 
 ### 3. Monitoring Endpoints Test
@@ -264,8 +264,8 @@ The monitoring dashboard provides real-time visibility into:
 ### Backend Integration
 
 The enhanced runtime is automatically used for OpenAI providers in:
-- [`/chat/complete`](../src/enreach_tools/api/app.py) endpoint
-- [`/chat/stream`](../src/enreach_tools/api/app.py) endpoint
+- [`/chat/complete`](../src/infrastructure_atlas/api/app.py) endpoint
+- [`/chat/stream`](../src/infrastructure_atlas/api/app.py) endpoint
 - Tool sample execution
 
 ### Frontend Integration

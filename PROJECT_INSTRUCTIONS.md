@@ -1,6 +1,6 @@
-# Enreach Tools - Project Instructions
+# Infrastructure Atlas - Project Instructions
 
-**Project Path**: `/Users/daniel/Documents/code/enreach-tools`  
+**Project Path**: `/Users/daniel/Documents/code/infrastructure-atlas`  
 **Purpose**: Personal infrastructure automation toolkit integrating NetBox, vCenter, Commvault, Zabbix, Atlassian, and other systems.  
 **Development**: Local Mac with Claude Code (terminal), ChatGPT Codex (VS Code), Claude AI (web)  
 **Version Control**: GitHub  
@@ -11,12 +11,12 @@
 ## Quick Start
 
 ```bash
-cd /Users/daniel/Documents/code/enreach-tools
+cd /Users/daniel/Documents/code/infrastructure-atlas
 cp .env.example .env
 # Edit .env with credentials
-uv run enreach --help
+uv run atlas --help
 uv run pytest
-uv run enreach api serve --host 127.0.0.1 --port 8443 --ssl-certfile certs/localhost.pem --ssl-keyfile certs/localhost-key.pem
+uv run atlas api serve --host 127.0.0.1 --port 8443 --ssl-certfile certs/localhost.pem --ssl-keyfile certs/localhost-key.pem
 ```
 
 ---
@@ -37,8 +37,8 @@ uv run enreach api serve --host 127.0.0.1 --port 8443 --ssl-certfile certs/local
 ## Project Structure
 
 ```
-enreach-tools/
-├── src/enreach_tools/     # Main source
+infrastructure-atlas/
+├── src/infrastructure_atlas/     # Main source
 │   ├── domain/            # Business entities (no dependencies)
 │   ├── application/       # Services & use cases
 │   ├── infrastructure/    # External adapters (clients, DB)
@@ -95,13 +95,13 @@ claude "refactor cli.py vcenter to use VCenterService, maintain --all flag"
 
 ```bash
 # Daily cycle
-cd /Users/daniel/Documents/code/enreach-tools
+cd /Users/daniel/Documents/code/infrastructure-atlas
 uv sync
 git checkout -b feature/my-feature  # optional
 # ... make changes ...
 uv run pytest -v
 uv run ruff check . && uv run ruff format .
-uv run enreach <command>  # manual test
+uv run atlas <command>  # manual test
 git commit -m "feat: add feature"  # English only
 git push origin main
 ```
@@ -110,8 +110,8 @@ git push origin main
 ```bash
 NETBOX_URL=https://netbox.example.com
 NETBOX_TOKEN=token
-ENREACH_SECRET_KEY=fernet-key-base64==
-ENREACH_API_TOKEN=bearer-token
+ATLAS_SECRET_KEY=fernet-key-base64==
+ATLAS_API_TOKEN=bearer-token
 LOG_LEVEL=debug
 ```
 
@@ -133,7 +133,7 @@ LOG_LEVEL=debug
 # Imports: stdlib, third-party, local
 import logging
 import typer
-from enreach_tools.domain.entities import Device
+from infrastructure_atlas.domain.entities import Device
 
 # Domain (no dependencies)
 @dataclass(slots=True)
@@ -199,13 +199,13 @@ ssh prod "cp -r /path/app ../backup-$(date +%Y%m%d)"
 
 # 2. Sync
 rsync -av --exclude='.git' --exclude='.venv' --exclude='data/' \
-  /Users/daniel/Documents/code/enreach-tools/ prod:/path/app/
+  /Users/daniel/Documents/code/infrastructure-atlas/ prod:/path/app/
 
 # 3. Update
 ssh prod "cd /path/app && uv sync && uv run alembic upgrade head"
 
 # 4. Restart
-ssh prod "systemctl restart enreach-api"
+ssh prod "systemctl restart atlas-api"
 ```
 
 **Pre-Deployment Checklist**:
@@ -312,7 +312,7 @@ def get_pipeline(
 3. Update `application/services/vcenter.py`: Update build, serialize, deserialize methods
 4. Update `application/dto/vcenter.py`: Add field to DTO
 5. Update web UI: `api/static/app.js` and `api/static/vcenter/view.html`
-6. Test: `uv run enreach vcenter refresh --id <id> --vm <vm-id>`
+6. Test: `uv run atlas vcenter refresh --id <id> --vm <vm-id>`
 
 ### Database Migration
 
@@ -334,11 +334,11 @@ uv run alembic downgrade -1
 
 ```bash
 # View statistics
-uv run enreach cache-stats
-uv run enreach cache-stats --json
+uv run atlas cache-stats
+uv run atlas cache-stats --json
 
 # In code
-from enreach_tools.infrastructure.cache import get_cache
+from infrastructure_atlas.infrastructure.cache import get_cache
 cache = get_cache("netbox.devices", ttl_seconds=300)
 cache.clear()  # Invalidate all
 cache.invalidate("key")  # Invalidate specific key
@@ -350,18 +350,18 @@ cache.invalidate("key")  # Invalidate specific key
 
 **Module not found**: `uv sync`  
 **Tests failing**: `uv run pytest -vv`  
-**API won't start**: `lsof -i :8000`, check logs, enable debug: `LOG_LEVEL=debug uv run enreach api serve`  
-**vCenter issues**: `ENREACH_LOG_LEVEL=debug uv run enreach vcenter refresh --id <id> --verbose`  
-**Database issues**: `sqlite3 data/enreach.db`, `.tables`, `SELECT * FROM table;`
+**API won't start**: `lsof -i :8000`, check logs, enable debug: `LOG_LEVEL=debug uv run atlas api serve`  
+**vCenter issues**: `ATLAS_LOG_LEVEL=debug uv run atlas vcenter refresh --id <id> --verbose`  
+**Database issues**: `sqlite3 data/atlas.db`, `.tables`, `SELECT * FROM table;`
 
 ### Debug Logging
 
 ```bash
 # API
-LOG_LEVEL=debug uv run enreach api serve
+LOG_LEVEL=debug uv run atlas api serve
 
 # CLI
-ENREACH_LOG_LEVEL=debug ENREACH_LOG_STRUCTURED=1 uv run enreach <command>
+ATLAS_LOG_LEVEL=debug ATLAS_LOG_STRUCTURED=1 uv run atlas <command>
 ```
 
 ---
@@ -372,34 +372,34 @@ ENREACH_LOG_LEVEL=debug ENREACH_LOG_STRUCTURED=1 uv run enreach <command>
 
 ```bash
 # Development
-uv run enreach --help
-uv run enreach api serve
+uv run atlas --help
+uv run atlas api serve
 uv run pytest
 uv run ruff check . && uv run ruff format .
 
 # NetBox Export
-uv run enreach export update
-uv run enreach export cache
+uv run atlas export update
+uv run atlas export cache
 
 # vCenter
-uv run enreach vcenter refresh --all
-uv run enreach vcenter refresh --id <config-id>
+uv run atlas vcenter refresh --all
+uv run atlas vcenter refresh --id <config-id>
 
 # Commvault
-uv run enreach commvault backups
-uv run enreach commvault storage list
+uv run atlas commvault backups
+uv run atlas commvault storage list
 
 # Zabbix
-uv run enreach zabbix problems
-uv run enreach zabbix dashboard
+uv run atlas zabbix problems
+uv run atlas zabbix dashboard
 
 # Atlassian
-uv run enreach jira search --q "text"
-uv run enreach confluence search --q "text"
-uv run enreach confluence publish-cmdb
+uv run atlas jira search --q "text"
+uv run atlas confluence search --q "text"
+uv run atlas confluence publish-cmdb
 
 # Cache & Database
-uv run enreach cache-stats
+uv run atlas cache-stats
 uv run alembic upgrade head
 ```
 
@@ -409,20 +409,20 @@ uv run alembic upgrade head
 ```bash
 NETBOX_URL=https://netbox.example.com
 NETBOX_TOKEN=your-token
-ENREACH_SECRET_KEY=your-fernet-key-base64==
+ATLAS_SECRET_KEY=your-fernet-key-base64==
 ```
 
 **API Auth**:
 ```bash
-ENREACH_API_TOKEN=bearer-token
-ENREACH_UI_PASSWORD=password
+ATLAS_API_TOKEN=bearer-token
+ATLAS_UI_PASSWORD=password
 ```
 
 **Logging**:
 ```bash
 LOG_LEVEL=warning
-ENREACH_LOG_LEVEL=info
-ENREACH_LOG_STRUCTURED=1
+ATLAS_LOG_LEVEL=info
+ATLAS_LOG_STRUCTURED=1
 ```
 
 **External Systems**:
@@ -479,13 +479,13 @@ ATLASSIAN_API_TOKEN=token
 | Purpose | Path |
 |---------|------|
 | Config | `.env` |
-| CLI | `src/enreach_tools/cli.py` |
-| API | `src/enreach_tools/api/app.py` |
-| Domain | `src/enreach_tools/domain/` |
-| Services | `src/enreach_tools/application/services/` |
-| Clients | `src/enreach_tools/infrastructure/external/` |
+| CLI | `src/infrastructure_atlas/cli.py` |
+| API | `src/infrastructure_atlas/api/app.py` |
+| Domain | `src/infrastructure_atlas/domain/` |
+| Services | `src/infrastructure_atlas/application/services/` |
+| Clients | `src/infrastructure_atlas/infrastructure/external/` |
 | Exports | `data/` |
-| Database | `data/enreach.db` |
+| Database | `data/atlas.db` |
 | Logs | `logs/` |
 
 ---
@@ -540,7 +540,7 @@ git commit -m "refactor: migrate Zabbix to service layer"
 
 **Encrypted store**:
 ```python
-from enreach_tools.infrastructure.security.secrets import SecretStore
+from infrastructure_atlas.infrastructure.security.secrets import SecretStore
 store = SecretStore()
 store.set("key", "value")
 value = store.get("key")
@@ -550,7 +550,7 @@ value = store.get("key")
 
 **API** (Bearer token):
 ```bash
-curl -H "Authorization: Bearer $ENREACH_API_TOKEN" \
+curl -H "Authorization: Bearer $ATLAS_API_TOKEN" \
   http://localhost:8000/api/devices
 ```
 
@@ -567,7 +567,7 @@ openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
   -subj "/CN=localhost"
 
 # Run with HTTPS
-uv run enreach api serve --port 8443 \
+uv run atlas api serve --port 8443 \
   --ssl-certfile certs/localhost.pem \
   --ssl-keyfile certs/localhost-key.pem
 ```
@@ -621,7 +621,7 @@ uv run enreach api serve --port 8443 \
 **Version**: 1.0  
 **Date**: October 17, 2025  
 **Maintained By**: Daniel Tromp  
-**Project**: Enreach Tools
+**Project**: Infrastructure Atlas
 
 **Purpose**: Comprehensive project instructions for development, deployment, and maintenance. This document serves as the primary reference for all AI coding assistants (Claude Code, ChatGPT Codex, Claude AI) and human developers.
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document describes the automated deployment process for Enreach Tools to production.
+This document describes the automated deployment process for Infrastructure Atlas to production.
 
 ## Prerequisites
 
@@ -16,8 +16,8 @@ Configure these variables before deploying:
 
 ```bash
 export PRODUCTION_HOST="production.example.com"   # Production server hostname
-export PRODUCTION_PATH="/app/enreach-tools"       # Installation path on server
-export PRODUCTION_USER="enreach"                  # SSH user
+export PRODUCTION_PATH="/app/infrastructure-atlas"       # Installation path on server
+export PRODUCTION_USER="atlas"                  # SSH user
 ```
 
 You can also create a `.env.production` file:
@@ -25,8 +25,8 @@ You can also create a `.env.production` file:
 ```bash
 # .env.production
 PRODUCTION_HOST=production.example.com
-PRODUCTION_PATH=/app/enreach-tools
-PRODUCTION_USER=enreach
+PRODUCTION_PATH=/app/infrastructure-atlas
+PRODUCTION_USER=atlas
 ```
 
 Then source it before deploying:
@@ -83,7 +83,7 @@ The script performs the following steps automatically:
 ### 4. Create Backup
 - Creates timestamped backup in `./backups/`
 - Includes:
-  - `data/enreach.db` (SQLite database)
+  - `data/atlas.db` (SQLite database)
   - `.env` file (environment configuration)
 - Backup file: `backup_YYYYMMDD_HHMMSS.tar.gz`
 
@@ -105,7 +105,7 @@ The script performs the following steps automatically:
 - Preserves production database
 
 ### 7. Restart Services
-- Restarts the API service: `sudo systemctl restart enreach-api`
+- Restarts the API service: `sudo systemctl restart atlas-api`
 - Requires sudo access configured on production server
 
 ### 8. Health Check
@@ -128,7 +128,7 @@ If deployment fails or issues are discovered:
 1. **Restore Database Backup**:
    ```bash
    # On production server
-   cd /app/enreach-tools
+   cd /app/infrastructure-atlas
    tar -xzf /path/to/backup_YYYYMMDD_HHMMSS.tar.gz
    ```
 
@@ -142,7 +142,7 @@ If deployment fails or issues are discovered:
 3. **Restart Services**:
    ```bash
    # On production server
-   sudo systemctl restart enreach-api
+   sudo systemctl restart atlas-api
    ```
 
 ### Automatic Rollback (Future Enhancement)
@@ -167,13 +167,13 @@ A rollback script can be added:
 
 2. **Create Directory**:
    ```bash
-   sudo mkdir -p /app/enreach-tools
-   sudo chown enreach:enreach /app/enreach-tools
+   sudo mkdir -p /app/infrastructure-atlas
+   sudo chown atlas:atlas /app/infrastructure-atlas
    ```
 
 3. **Clone Repository**:
    ```bash
-   cd /app/enreach-tools
+   cd /app/infrastructure-atlas
    git clone <repository-url> .
    ```
 
@@ -196,20 +196,20 @@ A rollback script can be added:
 
 ### Systemd Service
 
-Create `/etc/systemd/system/enreach-api.service`:
+Create `/etc/systemd/system/atlas-api.service`:
 
 ```ini
 [Unit]
-Description=Enreach Tools API
+Description=Infrastructure Atlas API
 After=network.target
 
 [Service]
 Type=simple
-User=enreach
-Group=enreach
-WorkingDirectory=/app/enreach-tools
-Environment="PATH=/home/enreach/.local/bin:/usr/local/bin:/usr/bin:/bin"
-ExecStart=/home/enreach/.local/bin/uv run enreach api serve --host 0.0.0.0 --port 8443
+User=atlas
+Group=atlas
+WorkingDirectory=/app/infrastructure-atlas
+Environment="PATH=/home/atlas/.local/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/home/atlas/.local/bin/uv run atlas api serve --host 0.0.0.0 --port 8443
 Restart=always
 RestartSec=10
 
@@ -221,17 +221,17 @@ Enable and start:
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable enreach-api
-sudo systemctl start enreach-api
+sudo systemctl enable atlas-api
+sudo systemctl start atlas-api
 ```
 
 ### Sudo Configuration
 
-Allow enreach user to restart services without password:
+Allow atlas user to restart services without password:
 
 ```bash
-# /etc/sudoers.d/enreach
-enreach ALL=(ALL) NOPASSWD: /bin/systemctl restart enreach-api
+# /etc/sudoers.d/atlas
+atlas ALL=(ALL) NOPASSWD: /bin/systemctl restart atlas-api
 ```
 
 ## Monitoring Deployment
@@ -240,21 +240,21 @@ enreach ALL=(ALL) NOPASSWD: /bin/systemctl restart enreach-api
 
 ```bash
 # On production server
-sudo journalctl -u enreach-api -f
+sudo journalctl -u atlas-api -f
 ```
 
 ### Check Service Status
 
 ```bash
-sudo systemctl status enreach-api
+sudo systemctl status atlas-api
 ```
 
 ### Database Verification
 
 ```bash
 # On production server
-cd /app/enreach-tools
-sqlite3 data/enreach.db "SELECT name FROM sqlite_master WHERE type='table';"
+cd /app/infrastructure-atlas
+sqlite3 data/atlas.db "SELECT name FROM sqlite_master WHERE type='table';"
 ```
 
 ## Troubleshooting
@@ -275,20 +275,20 @@ sqlite3 data/enreach.db "SELECT name FROM sqlite_master WHERE type='table';"
 **Symptom**: HTTP health check returns non-200 status
 
 **Solution**:
-1. Check service logs: `sudo journalctl -u enreach-api -n 50`
-2. Verify service is running: `sudo systemctl status enreach-api`
+1. Check service logs: `sudo journalctl -u atlas-api -n 50`
+2. Verify service is running: `sudo systemctl status atlas-api`
 3. Check port binding: `sudo lsof -i :8443`
 4. Review .env configuration
-5. Restart service: `sudo systemctl restart enreach-api`
+5. Restart service: `sudo systemctl restart atlas-api`
 
 ### rsync Permission Denied
 
 **Symptom**: Cannot sync files to production
 
 **Solution**:
-1. Verify SSH access: `ssh enreach@production`
+1. Verify SSH access: `ssh atlas@production`
 2. Check directory permissions on production
-3. Ensure enreach user owns `/app/enreach-tools`
+3. Ensure atlas user owns `/app/infrastructure-atlas`
 
 ### Git Working Directory Not Clean
 

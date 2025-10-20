@@ -1,7 +1,7 @@
 """Tests for DTO conversion convenience functions."""
 from datetime import UTC, datetime
 
-from enreach_tools.application.dto import (
+from infrastructure_atlas.application.dto import (
     chat_message_to_dto,
     chat_messages_to_dto,
     chat_session_to_dto,
@@ -12,7 +12,7 @@ from enreach_tools.application.dto import (
     user_to_dto,
     users_to_dto,
 )
-from enreach_tools.domain.entities import (
+from infrastructure_atlas.domain.entities import (
     ChatMessageEntity,
     ChatSessionEntity,
     GlobalAPIKeyEntity,

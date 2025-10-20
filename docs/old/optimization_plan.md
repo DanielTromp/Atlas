@@ -1,7 +1,7 @@
 # NetBox Export Optimization Plan (PR5)
 
 ## Objectives
-- Reduce the end-to-end runtime of `enreach export update` (service + queued mode) by removing redundant work and HTTP chatter.
+- Reduce the end-to-end runtime of `atlas export update` (service + queued mode) by removing redundant work and HTTP chatter.
 - Avoid reprocessing unchanged data (CSV/Excel) whenever possible.
 - Lay groundwork for future concurrency/streaming improvements while maintaining the legacy CSV format and external CLI compatibility.
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from enreach_tools.infrastructure.caching import CacheRegistry, TTLCache, get_cache_registry
+from infrastructure_atlas.infrastructure.caching import CacheRegistry, TTLCache, get_cache_registry
 
 
 def test_ttlcache_loader_called_once_and_metrics_snapshot() -> None:

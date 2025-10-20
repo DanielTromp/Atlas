@@ -4,10 +4,10 @@ from datetime import UTC, datetime
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from enreach_tools.application.security import hash_password
-from enreach_tools.domain.entities import GlobalAPIKeyEntity, RolePermissionEntity, UserEntity
-from enreach_tools.interfaces.api.dependencies import current_user, get_admin_service
-from enreach_tools.interfaces.api.routes import admin as admin_routes
+from infrastructure_atlas.application.security import hash_password
+from infrastructure_atlas.domain.entities import GlobalAPIKeyEntity, RolePermissionEntity, UserEntity
+from infrastructure_atlas.interfaces.api.dependencies import current_user, get_admin_service
+from infrastructure_atlas.interfaces.api.routes import admin as admin_routes
 
 
 class _StubAdminService:

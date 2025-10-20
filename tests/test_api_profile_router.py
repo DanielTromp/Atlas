@@ -4,11 +4,11 @@ from datetime import UTC, datetime
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from enreach_tools.application.security import hash_password
-from enreach_tools.db.models import User
-from enreach_tools.domain.entities import UserAPIKeyEntity, UserEntity
-from enreach_tools.interfaces.api.dependencies import current_user, get_profile_service
-from enreach_tools.interfaces.api.routes import profile
+from infrastructure_atlas.application.security import hash_password
+from infrastructure_atlas.db.models import User
+from infrastructure_atlas.domain.entities import UserAPIKeyEntity, UserEntity
+from infrastructure_atlas.interfaces.api.dependencies import current_user, get_profile_service
+from infrastructure_atlas.interfaces.api.routes import profile
 
 
 class _StubProfileService:

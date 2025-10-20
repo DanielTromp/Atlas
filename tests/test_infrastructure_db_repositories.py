@@ -6,8 +6,8 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from enreach_tools.db import models
-from enreach_tools.infrastructure.db.repositories import (
+from infrastructure_atlas.db import models
+from infrastructure_atlas.infrastructure.db.repositories import (
     SqlAlchemyChatSessionRepository,
     SqlAlchemyGlobalAPIKeyRepository,
     SqlAlchemyUserAPIKeyRepository,

@@ -5,13 +5,13 @@ from unittest.mock import patch
 
 import pytest
 
-from enreach_tools.agents import AgentContext
-from enreach_tools.agents.admin import ADMIN_TOOL_KEYS, build_admin_agent
-from enreach_tools.agents.confluence import CONFLUENCE_TOOL_KEYS, build_confluence_agent
-from enreach_tools.agents.export import EXPORT_TOOL_KEYS, build_export_agent
-from enreach_tools.agents.jira import JIRA_TOOL_KEYS, build_jira_agent
-from enreach_tools.agents.netbox import NETBOX_TOOL_KEYS, build_netbox_agent
-from enreach_tools.agents.zabbix import ZABBIX_TOOL_KEYS, build_zabbix_agent
+from infrastructure_atlas.agents import AgentContext
+from infrastructure_atlas.agents.admin import ADMIN_TOOL_KEYS, build_admin_agent
+from infrastructure_atlas.agents.confluence import CONFLUENCE_TOOL_KEYS, build_confluence_agent
+from infrastructure_atlas.agents.export import EXPORT_TOOL_KEYS, build_export_agent
+from infrastructure_atlas.agents.jira import JIRA_TOOL_KEYS, build_jira_agent
+from infrastructure_atlas.agents.netbox import NETBOX_TOOL_KEYS, build_netbox_agent
+from infrastructure_atlas.agents.zabbix import ZABBIX_TOOL_KEYS, build_zabbix_agent
 
 BuilderFunc = Callable[[object, AgentContext, dict[str, object]], object]
 

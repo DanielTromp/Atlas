@@ -17,7 +17,7 @@ from pathlib import Path
 import requests
 from rich import print
 
-from enreach_tools.env import get_env, load_env, project_root
+from infrastructure_atlas.env import get_env, load_env, project_root
 
 CONFLUENCE_STORAGE = "storage"
 SELECTED_COLUMNS = ["Name", "Status", "Cluster", "IP Address", "Device"]
