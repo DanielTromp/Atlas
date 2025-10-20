@@ -1,4 +1,4 @@
-Enreach scripts/tools (uv)
+Infrastructure Atlas scripts/tools (uv)
 =========================
 
 This repository provides a base for work scripts/tools using uv + pyproject.toml. Scripts run from the project root via a shared CLI and centralized dotenv handling.
@@ -8,16 +8,16 @@ Usage
 
 - Prepare: copy `.env.example` to `.env` and fill in values.
 - Run via uv without installing:
-  - `uv run enreach status`
-  - `uv run enreach export devices` (add `--force` to re-fetch all)
-  - `uv run enreach export vms` (add `--force` to re-fetch all)
-  - `uv run enreach export merge`
-  - `uv run enreach export cache` (refreshes the NetBox JSON cache in `data/netbox_cache.json` without touching CSV/Excel outputs)
-  - `uv run enreach export update` (runs devices → vms → merge; supports `--force` to re-fetch all before merge, `--no-refresh-cache` to reuse the existing JSON snapshot, and `--queue` to execute via the in-memory job runner instead of legacy scripts)
+  - `uv run atlas status`
+  - `uv run atlas export devices` (add `--force` to re-fetch all)
+  - `uv run atlas export vms` (add `--force` to re-fetch all)
+  - `uv run atlas export merge`
+  - `uv run atlas export cache` (refreshes the NetBox JSON cache in `data/netbox_cache.json` without touching CSV/Excel outputs)
+  - `uv run atlas export update` (runs devices → vms → merge; supports `--force` to re-fetch all before merge, `--no-refresh-cache` to reuse the existing JSON snapshot, and `--queue` to execute via the in-memory job runner instead of legacy scripts)
   - After `update`, if Confluence publishing is configured via `.env` (`ATLASSIAN_*` + `CONFLUENCE_CMDB_PAGE_ID`), it automatically uploads the CMDB Excel as an attachment and refreshes the NetBox devices table on Confluence.
-  - API server (HTTP): `uv run enreach api serve --host 127.0.0.1 --port 8000`
-- API server (HTTPS): `uv run enreach api serve --host 127.0.0.1 --port 8443 --ssl-certfile certs/localhost.pem --ssl-keyfile certs/localhost-key.pem`
-    - Alternatively set env vars `ENREACH_SSL_CERTFILE` and `ENREACH_SSL_KEYFILE` and omit the flags
+  - API server (HTTP): `uv run atlas api serve --host 127.0.0.1 --port 8000`
+- API server (HTTPS): `uv run atlas api serve --host 127.0.0.1 --port 8443 --ssl-certfile certs/localhost.pem --ssl-keyfile certs/localhost-key.pem`
+    - Alternatively set env vars `ATLAS_SSL_CERTFILE` and `ATLAS_SSL_KEYFILE` and omit the flags
   - Frontend UI (same server): open http://127.0.0.1:8000/app/ or https://127.0.0.1:8443/app/
 
 vCenter inventory
@@ -30,12 +30,12 @@ vCenter configuration is already registered through the admin UI or CLI API.
 Common commands:
 
 - Refresh every configured vCenter and emit placement coverage summaries:
-  `uv run enreach vcenter refresh --all --verbose`
+  `uv run atlas vcenter refresh --all --verbose`
 - Refresh a single configuration by name or ID:
-  `uv run enreach vcenter refresh --name "2. vw-vcenter03.systems.ispworks.net"`
-  or `uv run enreach vcenter refresh --id b55f0fa8-e253-4b5d-a0b6-8f9135bce4d8`
+  `uv run atlas vcenter refresh --name "2. vw-vcenter03.systems.ispworks.net"`
+  or `uv run atlas vcenter refresh --id b55f0fa8-e253-4b5d-a0b6-8f9135bce4d8`
 - Limit the refresh to one or more VM IDs (useful for debugging placement data):
-  `uv run enreach vcenter refresh --id b55f0fa8-e253-4b5d-a0b6-8f9135bce4d8 --vm vm-1058`
+  `uv run atlas vcenter refresh --id b55f0fa8-e253-4b5d-a0b6-8f9135bce4d8 --vm vm-1058`
 
 Flags worth noting:
 
@@ -59,13 +59,13 @@ Prefer the terminal? The CLI exposes the same commands:
 
 ```
 # List every dataset, see the command that will run, and check cache metadata
-uv run enreach tasks refresh --list
+uv run atlas tasks refresh --list
 
 # Refresh everything (same behaviour as Update all)
-uv run enreach tasks refresh
+uv run atlas tasks refresh
 
 # Refresh only Commvault + NetBox cache, showing the commands without executing them
-uv run enreach tasks refresh commvault-cache netbox-cache --dry-run
+uv run atlas tasks refresh commvault-cache netbox-cache --dry-run
 ```
 
 The CLI command reuses the same command builders as the UI, so any future dataset additions appear in both places automatically.
@@ -73,11 +73,11 @@ The CLI command reuses the same command builders as the UI, so any future datase
 Commvault CLI quick reference
 ----------------------------
 
-All Commvault commands live under `uv run enreach commvault ...` and share the same connection settings from `.env` (`COMMVAULT_BASE_URL`, `COMMVAULT_API_TOKEN`, optional `COMMVAULT_VERIFY_TLS`).
+All Commvault commands live under `uv run atlas commvault ...` and share the same connection settings from `.env` (`COMMVAULT_BASE_URL`, `COMMVAULT_API_TOKEN`, optional `COMMVAULT_VERIFY_TLS`).
 
 ### Backups command (primary workflow)
 
-`uv run enreach commvault backups` reads directly from the cached job snapshot (or the API when `--refresh-cache` is passed) and can export filtered results for reporting.
+`uv run atlas commvault backups` reads directly from the cached job snapshot (or the API when `--refresh-cache` is passed) and can export filtered results for reporting.
 
 Common switches:
 
@@ -93,16 +93,16 @@ Examples:
 
 ```
 # Review the most recent week of jobs for a single client
-uv run enreach commvault backups --client core-prod3 --since 168h --limit 0
+uv run atlas commvault backups --client core-prod3 --since 168h --limit 0
 
 # Produce retained-job reports in both CSV and Excel formats
-uv run enreach commvault backups --since 0h --retained --export-xlsx --client cdr-prod
+uv run atlas commvault backups --since 0h --retained --export-xlsx --client cdr-prod
 ```
 
 ### Storage overview
 
-- `uv run enreach commvault storage list` — overview of all storage pools with capacity and status.
-- `uv run enreach commvault storage show <pool-id>` — detailed view for a specific pool (add `--json` for raw data).
+- `uv run atlas commvault storage list` — overview of all storage pools with capacity and status.
+- `uv run atlas commvault storage show <pool-id>` — detailed view for a specific pool (add `--json` for raw data).
 
 ### Refresh the Commvault cache without opening the web app
 
@@ -122,62 +122,62 @@ uv run python scripts/update_commvault_cache.py --since 24 --limit 0
 Confluence Upload
 -----------------
 
-- Run: `uv run enreach confluence upload --file "data/Systems CMDB.xlsx"`.
+- Run: `uv run atlas confluence upload --file "data/Systems CMDB.xlsx"`.
 - Provide `--page-id 981533033` to override the target page (defaults to `CONFLUENCE_CMDB_PAGE_ID`).
 - Use `--name` to upload under a different attachment name or `--comment` to add a version note.
 
 Publish CMDB
 ------------
 
-- One-shot publish: `uv run enreach confluence publish-cmdb` (defaults to the Systems CMDB attachment name).
-- Auto-publish after update: `uv run enreach export update` triggers the same upload when Confluence env vars are present.
-- The attachment is uploaded to the configured page (e.g. https://enreach-services.atlassian.net/wiki/x/aQGBOg) and replaces the previous version when the filename matches.
+- One-shot publish: `uv run atlas confluence publish-cmdb` (defaults to the Systems CMDB attachment name).
+- Auto-publish after update: `uv run atlas export update` triggers the same upload when Confluence env vars are present.
+- The attachment is uploaded to the configured page (e.g. https://atlas-services.atlassian.net/wiki/x/aQGBOg) and replaces the previous version when the filename matches.
 
 Publish Devices Table
 ---------------------
 
-- Run: `uv run enreach confluence publish-devices-table` to read `netbox_devices_export.csv`, attach the CSV to the page, and render a wide table with columns `Name`, `Status`, `Role`, `IP Address`, `OOB IP` (ordering respects `netbox-export/etc/column_order.xlsx` when present).
+- Run: `uv run atlas confluence publish-devices-table` to read `netbox_devices_export.csv`, attach the CSV to the page, and render a wide table with columns `Name`, `Status`, `Role`, `IP Address`, `OOB IP` (ordering respects `netbox-export/etc/column_order.xlsx` when present).
 - Enable macros by passing `--filter`/`--sort` or setting env vars `CONFLUENCE_ENABLE_TABLE_FILTER=1` / `CONFLUENCE_ENABLE_TABLE_SORT=1` (requires the Table Filter & Charts app). By default a plain HTML table is published for compatibility.
-- The CLI auto-refreshes the table after `uv run enreach export update` so the Devices page (https://enreach-services.atlassian.net/wiki/x/hAGBOg) always shows the latest CSV.
+- The CLI auto-refreshes the table after `uv run atlas export update` so the Devices page (https://atlas-services.atlassian.net/wiki/x/hAGBOg) always shows the latest CSV.
 
 Publish VMs Table
 -----------------
 
-- Run: `uv run enreach confluence publish-vms-table` to read `netbox_vms_export.csv`, attach the CSV, and render the table with columns `Name`, `Status`, `Cluster`, `IP Address`, `Device` (ordering respects `netbox-export/etc/column_order.xlsx`).
+- Run: `uv run atlas confluence publish-vms-table` to read `netbox_vms_export.csv`, attach the CSV, and render the table with columns `Name`, `Status`, `Cluster`, `IP Address`, `Device` (ordering respects `netbox-export/etc/column_order.xlsx`).
 - Macros en breedte werken gelijk aan de devices-variant.
-- Auto-refresh via `uv run enreach export update` houdt https://enreach-services.atlassian.net/wiki/x/GACFOg up-to-date.
+- Auto-refresh via `uv run atlas export update` houdt https://atlas-services.atlassian.net/wiki/x/GACFOg up-to-date.
 
 .env behavior
 -------------
 
 - The CLI automatically loads `.env` from the project root (toggle overriding existing env with `--override-env`).
-- Set `ENREACH_SECRET_KEY` (Fernet base64, 32 bytes) to enable the encrypted secret store; when present, values you keep in `.env` are synchronised into the database and missing entries are restored from there.
+- Set `ATLAS_SECRET_KEY` (Fernet base64, 32 bytes) to enable the encrypted secret store; when present, values you keep in `.env` are synchronised into the database and missing entries are restored from there.
 - Required variables for NetBox: `NETBOX_URL`, `NETBOX_TOKEN`.
 - Optional Confluence envs: `CONFLUENCE_CMDB_PAGE_ID`, `CONFLUENCE_DEVICES_PAGE_ID`, `CONFLUENCE_VMS_PAGE_ID` (defaults provided), and `CONFLUENCE_ENABLE_TABLE_FILTER/SORT` to toggle macros.
-- Optional logging envs: `LOG_LEVEL` (API logging), `ENREACH_LOG_LEVEL`/`ENREACH_LOG_STRUCTURED` for CLI/background structured output.
+- Optional logging envs: `LOG_LEVEL` (API logging), `ATLAS_LOG_LEVEL`/`ATLAS_LOG_STRUCTURED` for CLI/background structured output.
 
 Service-driven NetBox exports
 -----------------------------
 
 - CLI commands resolve to `NetboxExportService`, which orchestrates the device and VM exports, CSV merge, Excel build, and post-run cache invalidation. The service is also exposed to background workers (`--queue`) via an in-memory job queue.
-- `uv run enreach export cache` stores the latest devices/VMs snapshot (with per-record hashes and metadata) in `data/netbox_cache.json`. Subsequent `export update` runs can reuse that snapshot with `--no-refresh-cache`, so the full CSV/Excel pipeline only needs to run when publishing.
-- Named TTL caches (`netbox.devices`, `netbox.vms`) provide per-process caching with hit/miss instrumentation. Inspect their state with `uv run enreach cache-stats [--json --include-empty --prime-netbox]`.
+- `uv run atlas export cache` stores the latest devices/VMs snapshot (with per-record hashes and metadata) in `data/netbox_cache.json`. Subsequent `export update` runs can reuse that snapshot with `--no-refresh-cache`, so the full CSV/Excel pipeline only needs to run when publishing.
+- Named TTL caches (`netbox.devices`, `netbox.vms`) provide per-process caching with hit/miss instrumentation. Inspect their state with `uv run atlas cache-stats [--json --include-empty --prime-netbox]`.
 - As we migrate the legacy scripts, the same service hooks (and caching) will back the FastAPI endpoints, CLI, and scheduled jobs.
 
 Structure
 ---------
 
-- `src/enreach_tools/env.py`: central dotenv loader, validates required variables.
-- `src/enreach_tools/cli.py`: Typer CLI with `enreach export ...` subcommands; calls existing scripts under `netbox-export/bin/`.
+- `src/infrastructure_atlas/env.py`: central dotenv loader, validates required variables.
+- `src/infrastructure_atlas/cli.py`: Typer CLI with `atlas export ...` subcommands; calls existing scripts under `netbox-export/bin/`.
 - Commvault caching:
   - Per-client job metrics are cached in-process (`commvault.job_metrics`) with a configurable TTL.
   - Configure via `.env`: `COMMVAULT_JOB_CACHE_TTL` (seconds, default 600; set ≤0 to disable) and `COMMVAULT_JOB_CACHE_BUCKET_SECONDS` (default 300) to bucket timestamps within cache keys.
-  - Append `--refresh-cache` to any `enreach commvault servers ...` command to invalidate the cached entry and force a live refresh.
+  - Append `--refresh-cache` to any `atlas commvault servers ...` command to invalidate the cached entry and force a live refresh.
 
 Diagnostics
 -----------
 
-- `uv run enreach status` checks `/api/status/` and a token‑protected endpoint for quick 200/403 diagnostics.
+- `uv run atlas status` checks `/api/status/` and a token‑protected endpoint for quick 200/403 diagnostics.
 - Logging pipeline overview and configuration live in `docs/logging.md`.
 
 Performance Benchmarks
@@ -190,8 +190,8 @@ Performance Benchmarks
 API (FastAPI + DuckDB)
 ----------------------
 
-- Serve (HTTP): `uv run enreach api serve --host 127.0.0.1 --port 8000`
-- Serve (HTTPS): `uv run enreach api serve --host 127.0.0.1 --port 8443 --ssl-certfile certs/localhost.pem --ssl-keyfile certs/localhost-key.pem`
+- Serve (HTTP): `uv run atlas api serve --host 127.0.0.1 --port 8000`
+- Serve (HTTPS): `uv run atlas api serve --host 127.0.0.1 --port 8443 --ssl-certfile certs/localhost.pem --ssl-keyfile certs/localhost-key.pem`
 - Log level: add `--log-level warning` (or set `LOG_LEVEL` in `.env`) to reduce Uvicorn noise (defaults to `warning`).
  - Endpoints:
   - `GET /health` — reports `NETBOX_DATA_DIR` and CSV presence
@@ -219,14 +219,14 @@ Authentication
 --------------
 
 - API (Bearer token):
-  - Set `ENREACH_API_TOKEN` in `.env` to require `Authorization: Bearer <token>` on all API endpoints.
-  - Example: `curl -H "Authorization: Bearer $ENREACH_API_TOKEN" https://127.0.0.1:8443/devices`
+  - Set `ATLAS_API_TOKEN` in `.env` to require `Authorization: Bearer <token>` on all API endpoints.
+  - Example: `curl -H "Authorization: Bearer $ATLAS_API_TOKEN" https://127.0.0.1:8443/devices`
   - `/health` remains public for simple checks.
 - Web UI (session login):
-  - Set `ENREACH_UI_PASSWORD` to require a login for `/app/*`.
-  - Login at `/auth/login`; a secure session cookie (`enreach_ui`) is set on success.
+  - Set `ATLAS_UI_PASSWORD` to require a login for `/app/*`.
+  - Login at `/auth/login`; a secure session cookie (`atlas_ui`) is set on success.
   - When logged in, the browser session may call API endpoints without the Bearer token.
-  - Optional: set `ENREACH_UI_SECRET` to control the session secret; otherwise a random secret is generated each start.
+  - Optional: set `ATLAS_UI_SECRET` to control the session secret; otherwise a random secret is generated each start.
 
 HTTPS (local certificates)
 --------------------------
@@ -234,14 +234,14 @@ HTTPS (local certificates)
 - Quick self-signed via OpenSSL (dev only):
   - `mkdir -p certs`
   - `openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout certs/localhost-key.pem -out certs/localhost.pem -subj "/CN=localhost"`
-  - Run: `uv run enreach api serve --port 8443 --ssl-certfile certs/localhost.pem --ssl-keyfile certs/localhost-key.pem`
+  - Run: `uv run atlas api serve --port 8443 --ssl-certfile certs/localhost.pem --ssl-keyfile certs/localhost-key.pem`
 - Or use mkcert (trusted in local OS):
   - Install mkcert, then: `mkcert -key-file certs/localhost-key.pem -cert-file certs/localhost.pem localhost 127.0.0.1 ::1`
   - Run same command as above.
 - You can set env vars and skip flags:
-  - `ENREACH_SSL_CERTFILE=certs/localhost.pem`
-  - `ENREACH_SSL_KEYFILE=certs/localhost-key.pem`
-  - Optional: `ENREACH_SSL_KEY_PASSWORD` if your key is encrypted
+  - `ATLAS_SSL_CERTFILE=certs/localhost.pem`
+  - `ATLAS_SSL_KEYFILE=certs/localhost-key.pem`
+  - Optional: `ATLAS_SSL_KEY_PASSWORD` if your key is encrypted
 
 Frontend (UI)
 --------------
@@ -282,31 +282,31 @@ CLI (Jira/Confluence/Zabbix)
 ----------------------------
 
 - Jira search:
-  - `uv run enreach jira search --q "router" --project ABC --updated -30d --open`
+  - `uv run atlas jira search --q "router" --project ABC --updated -30d --open`
   - Options: `--jql`, `--project`, `--status`, `--assignee`, `--priority`, `--type`, `--team`, `--updated`, `--open/--all`, `--max`
 
 - Confluence search:
-  - `uv run enreach confluence search --q "vm" --space "Operations - Network" --type page --updated -90d --max 50`
+  - `uv run atlas confluence search --q "vm" --space "Operations - Network" --type page --updated -90d --max 50`
   - `--space` accepts a space key or exact space name (comma‑separated allowed)
 
 - Zabbix problems (existing):
-  - `uv run enreach zabbix problems --limit 20 --severities 2,3,4`
+  - `uv run atlas zabbix problems --limit 20 --severities 2,3,4`
   - Filters: `--groupids`, `--all` (include acknowledged)
 - Zabbix dashboard (mirrors /app/#zabbix view):
-  - `uv run enreach zabbix dashboard --systems-only --unack-only`
+  - `uv run atlas zabbix dashboard --systems-only --unack-only`
   - Add `--json` for automation, `--groupids/--hostids/--severities` to override defaults, and `--include-subgroups/--no-include-subgroups` when you manage group scoping yourself.
 
 - NetBox helpers:
   - Live search (no CSV):
-    - `uv run enreach netbox search --q "edge01" --dataset devices --limit 25`
+    - `uv run atlas netbox search --q "edge01" --dataset devices --limit 25`
     - Datasets: `all|devices|vms`; `--limit 0` fetches all pages.
   - Device JSON (full object):
-    - By id: `uv run enreach netbox device-json --id 1202`
-    - By name: `uv run enreach netbox device-json --name edge01`
+    - By id: `uv run atlas netbox device-json --id 1202`
+    - By name: `uv run atlas netbox device-json --name edge01`
     - Add `--raw` to print raw JSON without pretty formatting.
 
 - Cross-system search (Search aggregator):
-  - `uv run enreach search run --q "vw746" --json`
+  - `uv run atlas search run --q "vw746" --json`
   - Options:
     - `--zlimit 0` (Zabbix max items; 0 = no limit)
     - `--jlimit 0` (Jira max issues; 0 = no limit; upstream caps may apply)
@@ -381,3 +381,7 @@ Utilities
   - Filters: Search (full‑text), Dataset (All/Devices/VMs), Max (0 = All).
   - Data source: Live NetBox API (`?q=`) — results may include devices, VMs and IP addresses (when Dataset = All).
   - Name links open the exact object in NetBox (no intermediate search). Internal helper fields are hidden.
+
+### Branding
+
+To show a custom logo in the web UI, add an SVG named `logo.svg` to `src/infrastructure_atlas/api/static/`. The login page and top bar load this asset when present; if it is absent, the product name is shown without a logo.

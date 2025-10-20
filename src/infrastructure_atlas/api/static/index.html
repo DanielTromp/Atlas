@@ -1,0 +1,1321 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Infrastructure Atlas</title>
+    <link rel="stylesheet" href="styles.css?v=7" />
+    <link rel="icon" href="/favicon.ico" type="image/png" />
+  </head>
+  <body class="theme-nebula-light">
+    <script>
+      (function () {
+        try {
+          var storageKey = 'atlas_theme_v1';
+          var stored = localStorage.getItem(storageKey);
+          var allowed = ['nebula-light', 'nebula-dark', 'default'];
+          if (stored === 'atlas-light') {
+            stored = 'nebula-light';
+          } else if (stored === 'nebula') {
+            stored = 'nebula-dark';
+          }
+          var theme = allowed.includes(stored) ? stored : 'nebula-light';
+          var prefix = 'theme-';
+          document.body.classList.remove(
+            prefix + 'atlas-light',
+            prefix + 'nebula',
+            prefix + 'nebula-light',
+            prefix + 'nebula-dark',
+            prefix + 'default'
+          );
+          document.body.classList.add(prefix + theme);
+        } catch (err) {
+          /* ignore bootstrap theme errors */
+        }
+      })();
+    </script>
+    <header class="topbar">
+      <div class="topbar-primary">
+        <div class="brand-group">
+          <div class="brand-logo" id="app-brand-logo" hidden></div>
+          <h1 class="brand">Infrastructure Atlas</h1>
+        </div>
+        <div class="topbar-actions">
+          <button id="open-suggestions" class="btn ghost topbar-suggestions" type="button">Suggestions</button>
+          <div id="theme-toggle-root" class="topbar-theme"></div>
+          <div class="topbar-user">
+            <button id="user-menu-toggle" class="user-menu-toggle" type="button" aria-haspopup="true" aria-expanded="false">
+              <span class="user-menu-text">
+                <span id="user-menu-name" class="user-menu-name">Loading…</span>
+              </span>
+              <span class="user-menu-caret" aria-hidden="true">▾</span>
+            </button>
+            <div id="user-menu" class="user-menu" hidden>
+              <div class="user-menu-header">
+                <div id="user-menu-name-alt" class="user-menu-name">User</div>
+                <div id="user-menu-role-alt" class="user-menu-role-text"></div>
+              </div>
+              <button class="user-menu-item" type="button" data-user-action="profile">
+                <span class="user-menu-icon">👤</span>
+                <span>Profile</span>
+              </button>
+              <button class="user-menu-item" type="button" data-user-action="preferences">
+                <span class="user-menu-icon">⚙️</span>
+                <span>Preferences</span>
+              </button>
+              <button class="user-menu-item" type="button" data-user-action="tokens">
+                <span class="user-menu-icon">🔑</span>
+                <span>API Tokens</span>
+              </button>
+              <div class="user-menu-separator" role="separator"></div>
+              <a class="user-menu-item logout" href="/auth/logout">
+                <span class="user-menu-icon">↩</span>
+                <span>Log Out</span>
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- Top-level pages navigation -->
+      <nav class="tabs" id="pages" aria-label="Pages">
+        <button class="tab" data-page="search">Search</button>
+        <button class="tab" data-page="zabbix">Zabbix</button>
+        <button class="tab" data-page="netbox">NetBox</button>
+        <button class="tab" data-page="jira">Jira</button>
+        <button class="tab" data-page="confluence">Confluence</button>
+        <button class="tab" data-page="export">Export</button>
+        <button class="tab" data-page="commvault">Commvault</button>
+        <button class="tab" data-page="vcenter">vCenter</button>
+        <button class="tab" data-page="chat">Chat</button>
+        <button class="tab" data-page="tools">Tools</button>
+        <button class="tab" data-page="tasks">Tasks</button>
+        <button class="tab" data-page="admin">Admin</button>
+      </nav>
+    <script>
+  (function () {
+    const logo = document.getElementById('app-brand-logo');
+    if (!logo) return;
+    const img = document.createElement('img');
+    img.src = 'logo.svg';
+    img.alt = 'Atlas logo';
+    img.addEventListener('error', () => {
+      logo.hidden = true;
+      logo.replaceChildren();
+    });
+    img.addEventListener('load', () => {
+      logo.hidden = false;
+    });
+    logo.appendChild(img);
+  })();
+</script>
+</header>
+
+    <main class="main"></main>
+      <!-- Search Page -->
+      <section class="page" id="page-search" hidden>
+        <div class="panel">
+          <h2>Search</h2>
+          <div class="toolbar" style="margin: 8px 0 12px">
+            <label class="field grow">
+              <span>Search</span>
+              <input id="search-q" type="text" placeholder="Object name (e.g., device, vm, IP, keyword)" />
+            </label>
+            <button id="search-run" class="btn">Search</button>
+            <div class="spacer"></div>
+            <label class="field">
+              <span>Zabbix</span>
+              <input id="search-zlimit" type="number" min="0" value="10" style="width:80px" />
+            </label>
+            <label class="field">
+              <span>Jira</span>
+              <input id="search-jlimit" type="number" min="0" value="10" style="width:80px" />
+            </label>
+            <label class="field">
+              <span>Confluence</span>
+              <input id="search-climit" type="number" min="0" value="10" style="width:100px" />
+            </label>
+            <label class="field">
+              <span>vCenter</span>
+              <input id="search-vlimit" type="number" min="0" value="10" style="width:90px" />
+            </label>
+          </div>
+          <div id="search-results" class="feed empty">Enter a search term and press Search.</div>
+        </div>
+      </section>
+
+      <!-- Export Page -->
+      <section class="page" id="page-export">
+        <div class="panel panel-export">
+          <nav class="tabs" id="ds-tabs" aria-label="Datasets">
+            <button class="tab active" data-ds="all">All</button>
+            <button class="tab" data-ds="devices">Devices</button>
+            <button class="tab" data-ds="vms">VMs</button>
+          </nav>
+          <div class="toolbar">
+            <label class="field grow">
+              <span>Search</span>
+              <input id="q" type="text" placeholder="Search all columns" />
+            </label>
+            <button id="hideBtn" class="btn" title="Hide fields">👁️‍🗨️ Hide fields</button>
+            <button id="resetFilters" class="btn ghost" title="Reset all column filters">Reset filters</button>
+            <button id="updateBtn" class="btn" title="Run export and refresh">Update dataset</button>
+            <button id="viewLogs" class="btn" title="View recent export logs">View logs</button>
+            <button id="downloadCsv" class="btn" title="Download filtered CSV">Download CSV</button>
+            <label class="field">
+              <span>Density</span>
+              <select id="density">
+                <option value="comfortable" selected>Comfortable</option>
+                <option value="compact">Compact</option>
+              </select>
+            </label>
+            <button id="reload" class="btn">Refresh</button>
+            <span id="summary" class="summary"></span>
+          </div>
+          <div class="grid root" id="grid-root">
+            <div class="grid header">
+              <div class="header-scroll" id="header-scroll">
+                <div class="header-rows">
+                  <div class="header-row" id="header-row"></div>
+                  <div class="filter-row" id="filter-row"></div>
+                </div>
+              </div>
+            </div>
+            <div class="grid body" id="body">
+              <div class="body-scroll" id="body-scroll">
+                <div class="canvas" id="canvas"></div>
+                <div class="rows" id="rows"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Commvault Page -->
+      <section class="page" id="page-commvault" hidden>
+        <div class="panel panel-commvault">
+          <nav class="tabs" id="commvault-tabs" aria-label="Commvault datasets">
+            <button class="tab active" data-commvault-tab="backups">Backups</button>
+            <button class="tab" data-commvault-tab="plans">Plans</button>
+            <button class="tab" data-commvault-tab="storage">Storage</button>
+            <button class="tab" data-commvault-tab="servers">Servers</button>
+          </nav>
+          <div class="commvault-panel-group">
+            <div class="commvault-panel active" data-commvault-panel="backups">
+              <div class="commvault-toolbar">
+                <div class="commvault-toolbar-overview">
+                  <h2 class="commvault-title">Backup Jobs</h2>
+                  <span id="commvault-summary" class="commvault-summary">No data loaded.</span>
+                </div>
+                <div class="commvault-actions">
+                  <button id="commvault-refresh" class="btn" type="button">Update data</button>
+                </div>
+              </div>
+              <div class="commvault-filters">
+                <label class="field column">
+                  <span>Look back</span>
+                  <select id="commvault-since">
+                    <option value="1">1 hour</option>
+                    <option value="3">3 hours</option>
+                    <option value="6">6 hours</option>
+                    <option value="12">12 hours</option>
+                    <option value="24" selected>24 hours</option>
+                    <option value="36">36 hours</option>
+                    <option value="48">48 hours</option>
+                  </select>
+                </label>
+                <label class="field column commvault-search-field">
+                  <span>Search</span>
+                  <input id="commvault-search" type="text" placeholder="Filter by job, client, plan…" />
+                </label>
+              </div>
+              <div class="commvault-status-filter" id="commvault-status-filter"></div>
+              <div id="commvault-status" class="commvault-status" hidden></div>
+              <div class="commvault-table-wrapper">
+                <table class="commvault-table compact">
+                  <thead>
+                    <tr>
+                      <th scope="col">Job</th>
+                      <th scope="col">Status</th>
+                      <th scope="col">Client</th>
+                      <th scope="col">Subclient</th>
+                      <th scope="col">Plan</th>
+                      <th scope="col">Policy</th>
+                      <th scope="col">Start</th>
+                      <th scope="col">End</th>
+                      <th scope="col">Duration</th>
+                      <th scope="col">App Size</th>
+                      <th scope="col">Media Size</th>
+                      <th scope="col">Throughput</th>
+                      <th scope="col">Files</th>
+                      <th scope="col">Savings</th>
+                    </tr>
+                  </thead>
+                  <tbody id="commvault-table-body">
+                    <tr class="empty">
+                      <td colspan="14">Commvault backups have not been loaded yet.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="commvault-panel" data-commvault-panel="plans" hidden>
+              <div class="commvault-toolbar">
+                <div class="commvault-toolbar-overview">
+                  <h2 class="commvault-title">Plans</h2>
+                  <span id="commvault-plans-summary" class="commvault-summary">No plan data loaded.</span>
+                </div>
+                <div class="commvault-actions">
+                  <button id="commvault-plans-refresh" class="btn" type="button">Refresh plans</button>
+                </div>
+              </div>
+              <div class="commvault-filters">
+                <label class="field column">
+                  <span>Plan type</span>
+                  <select id="commvault-plans-type">
+                    <option value="all" selected>All plan types</option>
+                  </select>
+                </label>
+              </div>
+              <div id="commvault-plans-status" class="commvault-status" hidden></div>
+              <div class="commvault-table-wrapper">
+                <table class="commvault-table compact commvault-plan-table">
+                  <thead>
+                    <tr>
+                      <th class="plan-name">Plan</th>
+                      <th>Type</th>
+                      <th>Entities</th>
+                      <th>RPO</th>
+                      <th>Copies</th>
+                      <th>Status</th>
+                      <th>Tags</th>
+                    </tr>
+                  </thead>
+                  <tbody id="commvault-plans-table-body">
+                    <tr class="empty">
+                      <td colspan="7">Commvault plan data not loaded yet.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="commvault-panel" data-commvault-panel="storage" hidden>
+              <div class="commvault-toolbar">
+                <div class="commvault-toolbar-overview">
+                  <h2 class="commvault-title">Storage Pools</h2>
+                  <span id="commvault-storage-summary" class="commvault-summary">No storage data loaded.</span>
+                </div>
+                <div class="commvault-actions">
+                  <button id="commvault-storage-refresh" class="btn" type="button">Refresh storage</button>
+                </div>
+              </div>
+              <div id="commvault-storage-status" class="commvault-status" hidden></div>
+              <div class="commvault-storage-layout">
+                <div class="commvault-table-wrapper">
+                  <table class="commvault-table compact commvault-storage-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">Pool</th>
+                        <th scope="col">Status</th>
+                        <th scope="col">Policy</th>
+                        <th scope="col">Region</th>
+                        <th scope="col">Capacity</th>
+                        <th scope="col">Used</th>
+                        <th scope="col">Free</th>
+                        <th scope="col">Usage</th>
+                        <th scope="col">Dedupe</th>
+                        <th scope="col">Nodes</th>
+                      </tr>
+                    </thead>
+                    <tbody id="commvault-storage-table-body">
+                      <tr class="empty"><td colspan="10">Storage metrics not loaded yet.</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div class="commvault-storage-detail" id="commvault-storage-detail">
+                  <p class="commvault-placeholder">Select a storage pool to see detailed metrics.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="commvault-panel" data-commvault-panel="servers" hidden>
+              <div class="commvault-panel-header">
+                <div class="commvault-toolbar">
+                  <div class="commvault-toolbar-overview">
+                    <h2 class="commvault-title">Servers</h2>
+                    <span id="commvault-server-summary" class="commvault-summary">Search for a server to view restore points, retention and data reduction metrics.</span>
+                  </div>
+                  <div class="commvault-actions commvault-server-actions">
+                    <button id="commvault-server-refresh" class="btn ghost" type="button">Refresh</button>
+                    <div class="commvault-server-export-buttons" id="commvault-server-export-buttons">
+                      <button class="btn ghost" data-format="text" type="button">Text</button>
+                      <button class="btn ghost" data-format="markdown" type="button">Markdown</button>
+                      <button class="btn ghost" data-format="html" type="button">HTML</button>
+                      <button class="btn ghost" data-format="docx" type="button">DOCX</button>
+                      <button class="btn ghost" data-format="xlsx" type="button">XLSX</button>
+                      <button class="btn ghost" data-format="csv" type="button">CSV</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="commvault-server-search">
+                <label class="field column commvault-server-query-field">
+                  <span>Server</span>
+                  <input id="commvault-server-query" type="text" placeholder="Search by client name or ID" autocomplete="off" />
+                </label>
+                <button id="commvault-server-search" class="btn" type="button">Search</button>
+                <label class="commvault-server-option commvault-server-checkbox">
+                  <input id="commvault-server-retained" type="checkbox" checked />
+                  <span>Retained only</span>
+                </label>
+                <label class="field column commvault-server-option">
+                  <span>Since</span>
+                  <select id="commvault-server-since">
+                    <option value="0">All time</option>
+                    <option value="24" selected>24 hours</option>
+                    <option value="72">72 hours</option>
+                    <option value="168">7 days</option>
+                    <option value="720">30 days</option>
+                  </select>
+                </label>
+                <label class="field column commvault-server-option">
+                  <span>Job limit</span>
+                  <input id="commvault-server-limit" type="number" min="0" step="50" value="500" />
+                </label>
+              </div>
+              <div id="commvault-server-suggestions" class="commvault-server-suggestions" hidden></div>
+              <div id="commvault-server-status" class="commvault-status" hidden></div>
+              <div class="commvault-server-metrics" id="commvault-server-metrics">
+                <div class="commvault-server-card">
+                  <span class="label">Restore points</span>
+                  <span id="commvault-server-metric-count" class="value">—</span>
+                  <span id="commvault-server-metric-window" class="meta"></span>
+                </div>
+                <div class="commvault-server-card">
+                  <span class="label">Application size</span>
+                  <span id="commvault-server-metric-app" class="value">—</span>
+                  <span id="commvault-server-metric-app-extra" class="meta"></span>
+                </div>
+                <div class="commvault-server-card">
+                  <span class="label">Media size</span>
+                  <span id="commvault-server-metric-media" class="value">—</span>
+                  <span id="commvault-server-metric-media-extra" class="meta"></span>
+                </div>
+                <div class="commvault-server-card">
+                  <span class="label">Average reduction</span>
+                  <span id="commvault-server-metric-reduction" class="value">—</span>
+                  <span id="commvault-server-metric-reduction-ratio" class="meta"></span>
+                </div>
+              </div>
+              <div class="commvault-server-secondary">
+                <div class="commvault-server-breakdown">
+                  <h3>Plans</h3>
+                  <ul id="commvault-server-plan" class="commvault-server-breakdown-list">
+                    <li class="empty">No data yet.</li>
+                  </ul>
+                </div>
+                <div class="commvault-server-breakdown">
+                  <h3>Subclients</h3>
+                  <ul id="commvault-server-subclient" class="commvault-server-breakdown-list">
+                    <li class="empty">No data yet.</li>
+                  </ul>
+                </div>
+                <div class="commvault-server-breakdown">
+                  <h3>Policies</h3>
+                  <ul id="commvault-server-policy" class="commvault-server-breakdown-list">
+                    <li class="empty">No data yet.</li>
+                  </ul>
+                </div>
+              </div>
+              <div class="commvault-server-charts">
+                <div class="commvault-server-chart">
+                  <div class="commvault-server-chart-header">
+                    <h3>Backup size trend</h3>
+                    <span id="commvault-server-chart-size-unit" class="meta"></span>
+                  </div>
+                  <canvas id="commvault-server-chart-size" width="640" height="200"></canvas>
+                  <div class="commvault-server-chart-legend">
+                    <span class="legend app">Application</span>
+                    <span class="legend media">Media</span>
+                  </div>
+                </div>
+                <div class="commvault-server-chart">
+                  <div class="commvault-server-chart-header">
+                    <h3>Data reduction %</h3>
+                  </div>
+                  <canvas id="commvault-server-chart-savings" width="640" height="200"></canvas>
+                </div>
+              </div>
+              <div class="commvault-table-wrapper commvault-server-table-wrapper">
+                <table class="commvault-table compact commvault-server-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Job</th>
+                      <th scope="col">Status</th>
+                      <th scope="col">Plan</th>
+                      <th scope="col">Subclient</th>
+                      <th scope="col">Start</th>
+                      <th scope="col">Retain until</th>
+                      <th scope="col">App size</th>
+                      <th scope="col">Media size</th>
+                      <th scope="col">Savings</th>
+                    </tr>
+                  </thead>
+                  <tbody id="commvault-server-table-body">
+                    <tr class="empty"><td colspan="9">Search for a server to see recent restore points.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Suggestions List Page -->
+      <section class="page" id="page-suggestions" hidden>
+        <div class="panel panel-suggestions">
+          <div class="suggestions-toolbar">
+            <h2>Suggestions</h2>
+            <div class="spacer"></div>
+            <button id="suggestion-new" class="btn" type="button">New Suggestion</button>
+          </div>
+          <div id="suggestion-list" class="suggestion-list empty"></div>
+        </div>
+      </section>
+
+      <!-- Suggestion Detail Page -->
+      <section class="page" id="page-suggestion-detail" hidden>
+        <div class="panel panel-suggestion-detail">
+          <div class="suggestion-detail-header">
+            <button id="suggestion-back" class="btn ghost" type="button">← Back to Suggestions</button>
+            <div id="suggestion-detail-meta" class="suggestion-detail-meta"></div>
+          </div>
+          <div class="suggestion-form-grid">
+            <div class="suggestion-form-main">
+              <label class="field column">
+                <span>Title</span>
+                <input id="suggestion-title" type="text" placeholder="Title" />
+              </label>
+              <label class="field column">
+                <span>Summary</span>
+                <textarea id="suggestion-summary" rows="4" placeholder="Summary"></textarea>
+              </label>
+              <div class="suggestion-form-row">
+                <label class="field column">
+                  <span>Classification</span>
+                  <select id="suggestion-classification"></select>
+                </label>
+                <label class="field column">
+                  <span>Status</span>
+                  <select id="suggestion-status"></select>
+                </label>
+              </div>
+              <div class="suggestion-actions">
+                <button id="suggestion-delete" class="btn danger" type="button" hidden>Delete</button>
+                <button id="suggestion-save" class="btn" type="button">Save</button>
+              </div>
+            </div>
+            <div id="suggestion-comments-wrapper" class="suggestion-comments">
+              <h3>Comments</h3>
+              <div class="suggestion-comment-compose">
+                <textarea id="suggestion-comment-text" rows="3" placeholder="Add a comment..."></textarea>
+                <button id="suggestion-comment-add" class="btn" type="button">Comment</button>
+              </div>
+              <div id="suggestion-comments" class="suggestion-comment-list empty"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Account Page -->
+      <section class="page" id="page-account" hidden>
+        <div class="panel panel-account">
+          <div class="account-header">
+            <div>
+              <h2>My Account</h2>
+              <p id="account-subtitle" class="account-subtitle"></p>
+            </div>
+          </div>
+          <nav class="account-tabs" id="account-tabs">
+            <button class="account-tab active" data-account-tab="profile">Profile</button>
+            <button class="account-tab" data-account-tab="preferences">Preferences</button>
+            <button class="account-tab" data-account-tab="password">Password</button>
+            <button class="account-tab" data-account-tab="tokens">API Tokens</button>
+          </nav>
+          <div class="account-panels">
+            <section class="account-panel active" data-account-panel="profile">
+              <form id="account-profile-form" class="account-form">
+                <div class="field column">
+                  <span>Display name</span>
+                  <input id="account-profile-display" type="text" placeholder="Your name" />
+                </div>
+                <div class="field column">
+                  <span>Email</span>
+                  <input id="account-profile-email" type="email" placeholder="you@example.com" />
+                </div>
+                <div class="account-actions">
+                  <button id="account-profile-save" type="submit" class="btn">Save changes</button>
+                  <span id="account-profile-status" class="form-status" role="status"></span>
+                </div>
+              </form>
+            </section>
+            <section class="account-panel" data-account-panel="preferences">
+              <div class="account-preferences">
+                <div class="account-preference-item">
+                  <h3>Theme</h3>
+                  <p>Use the theme selector in the header to switch between available themes. Your choice is remembered per browser.</p>
+                  <div id="account-theme-mount"></div>
+                </div>
+                <div class="account-preference-item">
+                  <h3>Export page defaults</h3>
+                  <label class="field column">
+                    <span>Default dataset tab</span>
+                    <select id="account-pref-dataset">
+                      <option value="all">All</option>
+                      <option value="devices">Devices</option>
+                      <option value="vms">VMs</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+            </section>
+            <section class="account-panel" data-account-panel="password">
+              <form id="account-password-form" class="account-form">
+                <div class="field column">
+                  <span>Current password</span>
+                  <input id="account-password-current" type="password" autocomplete="current-password" placeholder="Current password" />
+                </div>
+                <div class="field column">
+                  <span>New password</span>
+                  <input id="account-password-new" type="password" autocomplete="new-password" placeholder="New password" required />
+                  <small>Minimum 8 characters.</small>
+                </div>
+                <div class="account-actions">
+                  <button id="account-password-save" type="submit" class="btn">Update password</button>
+                  <span id="account-password-status" class="form-status" role="status"></span>
+                </div>
+              </form>
+            </section>
+            <section class="account-panel" data-account-panel="tokens">
+              <div class="account-token-panel">
+                <div class="account-token-list" id="account-api-list"></div>
+                <form id="account-api-form" class="account-form account-token-form">
+                  <h3>Override provider key</h3>
+                  <div class="account-token-grid">
+                    <label class="field column">
+                      <span>Provider</span>
+                      <select id="account-api-provider"></select>
+                    </label>
+                    <label class="field column">
+                      <span>Label (optional)</span>
+                      <input id="account-api-label" type="text" placeholder="My dedicated key" />
+                    </label>
+                  </div>
+                  <label class="field column">
+                    <span>API key / token</span>
+                    <textarea id="account-api-secret" rows="3" placeholder="Paste secret..."></textarea>
+                  </label>
+                  <div class="account-actions">
+                    <button id="account-api-save" type="submit" class="btn">Save key</button>
+                    <span id="account-api-status" class="form-status" role="status"></span>
+                  </div>
+                </form>
+              </div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <!-- Admin Page -->
+      <section class="page" id="page-admin" hidden>
+        <div class="panel panel-admin">
+          <div class="admin-header">
+            <h2>Admin Settings</h2>
+            <span id="admin-status" class="admin-status"></span>
+          </div>
+          <nav class="admin-tabs" id="admin-tabs">
+            <button class="admin-tab active" data-admin-tab="zabbix">Zabbix</button>
+            <button class="admin-tab" data-admin-tab="net-atlassian">NetBox &amp; Atlassian</button>
+            <button class="admin-tab" data-admin-tab="chat">AI Chat</button>
+            <button class="admin-tab" data-admin-tab="export">Export</button>
+            <button class="admin-tab" data-admin-tab="api">API &amp; UI</button>
+            <button class="admin-tab" data-admin-tab="vcenter">vCenter</button>
+            <button class="admin-tab" data-admin-tab="users">Users</button>
+            <button class="admin-tab" data-admin-tab="backup">Backup</button>
+          </nav>
+          <div id="admin-settings" class="admin-panels">
+            <section id="admin-panel-zabbix" class="admin-panel active" data-admin-tab="zabbix">
+              <div id="admin-settings-zabbix" class="admin-settings-group"></div>
+            </section>
+            <section id="admin-panel-net" class="admin-panel" data-admin-tab="net-atlassian">
+              <div id="admin-settings-net" class="admin-settings-group"></div>
+            </section>
+            <section id="admin-panel-chat" class="admin-panel" data-admin-tab="chat">
+              <div id="admin-settings-chat" class="admin-settings-group"></div>
+            </section>
+            <section id="admin-panel-export" class="admin-panel" data-admin-tab="export">
+              <div id="admin-settings-export" class="admin-settings-group"></div>
+            </section>
+            <section id="admin-panel-api" class="admin-panel" data-admin-tab="api">
+              <div id="admin-settings-api" class="admin-settings-group"></div>
+            </section>
+            <section id="admin-panel-vcenter" class="admin-panel" data-admin-tab="vcenter">
+              <div class="admin-vcenter-header">
+                <button id="admin-vcenter-add" class="btn" type="button" title="Add vCenter">＋ Add vCenter</button>
+                <span id="admin-vcenter-status" class="form-status"></span>
+              </div>
+              <div id="admin-vcenter-list" class="admin-vcenter-list"></div>
+              <form id="admin-vcenter-form" class="account-form hidden">
+                <input id="admin-vcenter-id" type="hidden" />
+                <h3 id="admin-vcenter-form-title">vCenter</h3>
+                <label class="field column">
+                  <span>Name</span>
+                  <input id="admin-vcenter-name" type="text" placeholder="Production vCenter" required />
+                </label>
+                <label class="field column">
+                  <span>Base URL</span>
+                  <input id="admin-vcenter-base-url" type="url" placeholder="https://vcenter.example.com" required />
+                </label>
+                <label class="field column">
+                  <span>Username</span>
+                  <input id="admin-vcenter-username" type="text" placeholder="svc_vcenter" required />
+                </label>
+                <label class="field column">
+                  <span>Password</span>
+                  <input id="admin-vcenter-password" type="password" placeholder="Enter password" />
+                  <small id="admin-vcenter-password-help">Leave blank to keep the current password.</small>
+                </label>
+                <label class="field">
+                  <input id="admin-vcenter-verify-ssl" type="checkbox" checked />
+                  <span>Verify TLS certificates</span>
+                </label>
+                <div class="account-actions">
+                  <button id="admin-vcenter-save" type="submit" class="btn">Save vCenter</button>
+                  <button id="admin-vcenter-cancel" type="button" class="btn ghost">Cancel</button>
+                  <span id="admin-vcenter-form-status" class="form-status"></span>
+                </div>
+              </form>
+            </section>
+            <section id="admin-panel-users" class="admin-panel" data-admin-tab="users">
+              <div class="admin-users-header">
+                <div class="admin-users-actions">
+                  <button id="admin-user-refresh" class="btn ghost" type="button">Refresh</button>
+                  <label class="field">
+                    <input id="admin-user-include-inactive" type="checkbox" />
+                    <span>Show inactive</span>
+                  </label>
+                  <span id="admin-user-status" class="form-status"></span>
+                </div>
+                <button id="admin-user-create" class="btn" type="button">New user</button>
+              </div>
+              <div class="admin-users-layout">
+                <div class="admin-user-list" id="admin-user-list"></div>
+                <div class="admin-user-detail" id="admin-user-detail">
+                  <div id="admin-user-empty" class="account-empty">Select a user to view details.</div>
+                  <form id="admin-user-form" class="account-form hidden">
+                    <h3 id="admin-user-form-title">User</h3>
+                    <div class="field column">
+                      <span>Username</span>
+                      <input id="admin-user-username" type="text" readonly />
+                    </div>
+                  <div class="field column">
+                    <span>Display name</span>
+                    <input id="admin-user-display" type="text" placeholder="Name" />
+                  </div>
+                  <div class="field column">
+                    <span>Email</span>
+                    <input id="admin-user-email" type="email" placeholder="user@example.com" />
+                  </div>
+                  <div class="field column create-only" id="admin-user-new-password-row">
+                    <span>Initial password</span>
+                    <input id="admin-user-new-password" type="password" placeholder="Set a password" />
+                  </div>
+                    <label class="field column">
+                      <span>Role</span>
+                      <select id="admin-user-role">
+                        <option value="member">Member</option>
+                        <option value="admin">Admin</option>
+                      </select>
+                    </label>
+                    <label class="field">
+                      <input id="admin-user-active" type="checkbox" />
+                      <span>Active</span>
+                    </label>
+                    <div class="account-actions">
+                      <button id="admin-user-save" type="submit" class="btn">Save user</button>
+                      <span id="admin-user-form-status" class="form-status"></span>
+                    </div>
+                  </form>
+                  <form id="admin-user-password-form" class="account-form hidden">
+                    <h3>Reset password</h3>
+                    <div class="field column">
+                      <span>New password</span>
+                      <input id="admin-user-password" type="password" placeholder="New password" />
+                    </div>
+                    <div class="account-actions">
+                      <button id="admin-user-password-save" type="submit" class="btn ghost">Set password</button>
+                      <span id="admin-user-password-status" class="form-status"></span>
+                    </div>
+                  </form>
+                  <button id="admin-user-delete" class="btn danger hidden" type="button">Delete user</button>
+                </div>
+              </div>
+              <div class="admin-global-keys">
+                <div class="admin-users-header">
+                  <h3>Global API Keys</h3>
+                  <div class="admin-users-actions">
+                    <button id="admin-global-add" class="btn ghost" type="button">Add key</button>
+                    <span id="admin-global-status" class="form-status"></span>
+                  </div>
+                </div>
+                <div id="admin-global-list" class="account-token-list"></div>
+                <form id="admin-global-form" class="account-form hidden">
+                  <div class="account-token-grid">
+                    <label class="field column">
+                      <span>Provider</span>
+                      <select id="admin-global-provider"></select>
+                    </label>
+                    <label class="field column">
+                      <span>Label (optional)</span>
+                      <input id="admin-global-label" type="text" placeholder="Default key" />
+                    </label>
+                  </div>
+                  <label class="field column">
+                    <span>Secret</span>
+                    <textarea id="admin-global-secret" rows="3" placeholder="Paste API key"></textarea>
+                  </label>
+                  <div class="account-actions">
+                    <button id="admin-global-save" type="submit" class="btn">Save global key</button>
+                    <button id="admin-global-cancel" type="button" class="btn ghost">Cancel</button>
+                  </div>
+                </form>
+              </div>
+              <div class="admin-role-manager">
+                <div class="admin-users-header">
+                  <h3>Role Permissions</h3>
+                  <span id="admin-role-status" class="form-status"></span>
+                </div>
+                <div id="admin-role-list" class="admin-role-list"></div>
+              </div>
+            </section>
+            <section id="admin-panel-backup" class="admin-panel" data-admin-tab="backup">
+              <div id="admin-settings-backup" class="admin-settings-group"></div>
+              <div class="admin-backup-config">
+                <h3>Backup Configuration</h3>
+                <div class="admin-backup-status" id="admin-backup-status"></div>
+                <div class="admin-backup-controls">
+                  <label class="field">
+                    <span>Backup Type</span>
+                    <select id="admin-backup-type">
+                      <option value="local">Local Directory</option>
+                      <option value="sftp">SFTP</option>
+                      <option value="scp">SCP</option>
+                    </select>
+                  </label>
+                  <div id="admin-backup-local-config" class="admin-backup-type-config">
+                    <label class="field column">
+                      <span>Local Backup Path</span>
+                      <input id="admin-backup-local-path" type="text" placeholder="backups" />
+                    </label>
+                  </div>
+                  <div id="admin-backup-remote-config" class="admin-backup-type-config" hidden>
+                    <label class="field column">
+                      <span>Host</span>
+                      <input id="admin-backup-host" type="text" placeholder="backup.example.com" />
+                    </label>
+                    <div class="field-row">
+                      <label class="field">
+                        <span>Port</span>
+                        <input id="admin-backup-port" type="number" value="22" min="1" max="65535" />
+                      </label>
+                      <label class="field">
+                        <span>Username</span>
+                        <input id="admin-backup-username" type="text" placeholder="backup_user" />
+                      </label>
+                    </div>
+                    <label class="field column">
+                      <span>Password</span>
+                      <input id="admin-backup-password" type="password" placeholder="Leave empty to use private key" />
+                    </label>
+                    <label class="field column">
+                      <span>Private Key Path (alternative to password)</span>
+                      <input id="admin-backup-key-path" type="text" placeholder="~/.ssh/id_rsa" />
+                    </label>
+                    <label class="field column">
+                      <span>Remote Path</span>
+                      <input id="admin-backup-remote-path" type="text" placeholder="/backups/infrastructure-atlas" />
+                    </label>
+                  </div>
+                  <div class="admin-backup-options">
+                    <label class="field">
+                      <input id="admin-backup-timestamped" type="checkbox" />
+                      <span>Create timestamped directories</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+              <details class="admin-advanced">
+                <summary>Manual Backup</summary>
+                <p class="muted">Run a backup to save the latest exports immediately.</p>
+                <button id="admin-backup-run" class="btn ghost" type="button">Run Backup</button>
+              </details>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <!-- NetBox Search Page -->
+      <section class="page" id="page-netbox" hidden>
+        <div class="panel">
+          <h2>NetBox Search</h2>
+          <div class="toolbar" style="margin: 8px 0 12px">
+            <label class="field grow">
+              <span>Search</span>
+              <input id="nb-q" type="text" placeholder="Full‑text query" />
+            </label>
+            <button id="nb-search" class="btn">Search</button>
+            <div class="spacer"></div>
+            <label class="field">
+              <span>Max</span>
+              <select id="nb-max">
+                <option value="0">All</option>
+                <option value="25">25</option>
+                <option value="50" selected>50</option>
+                <option value="100">100</option>
+                <option value="200">200</option>
+              </select>
+            </label>
+            <button id="nb-reset" class="btn ghost">Reset</button>
+          </div>
+          <div id="nb-results" class="feed empty">Not searched yet.</div>
+        </div>
+      </section>
+
+      <!-- vCenter Page -->
+      <section class="page" id="page-vcenter" hidden>
+        <div class="panel panel-vcenter">
+          <div class="vcenter-header">
+            <div class="vcenter-title">
+              <h2>vCenter Inventory</h2>
+              <span id="vcenter-status" class="form-status"></span>
+            </div>
+            <div class="vcenter-actions">
+              <label class="field vcenter-search-field">
+                <span>Search</span>
+                <input id="vcenter-search" type="text" placeholder="Filter by name, host, IP…" />
+              </label>
+              <button id="vcenter-refresh" class="btn" type="button">Refresh</button>
+            </div>
+          </div>
+          <nav class="tabs vcenter-tabs" id="vcenter-tabs" aria-label="vCenter instances"></nav>
+          <div class="vcenter-body">
+            <div id="vcenter-loading" class="panel-state" hidden>Loading inventory…</div>
+            <div id="vcenter-error" class="panel-state error" hidden></div>
+            <div id="vcenter-empty" class="panel-state" hidden>No vCenters configured yet.</div>
+            <div id="vcenter-table-wrapper" class="vcenter-table-wrapper" hidden>
+              <table class="vcenter-table">
+                <thead id="vcenter-thead"></thead>
+                <tbody id="vcenter-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tasks Page -->
+      <section class="page" id="page-tasks" hidden>
+        <div class="panel panel-tasks">
+          <div class="tasks-header">
+            <h2>Tasks</h2>
+            <div class="tasks-actions">
+              <button id="tasks-update-all" class="btn" type="button">Update all</button>
+              <button id="tasks-refresh" class="btn ghost" type="button">Reload</button>
+              <div class="tasks-layout" role="group" aria-label="Layout">
+                <button type="button" class="tasks-layout-btn active" data-tasks-layout="cards">Cards</button>
+                <button type="button" class="tasks-layout-btn" data-tasks-layout="rows">Rows</button>
+              </div>
+            </div>
+          </div>
+          <div id="tasks-status" class="tasks-status">Loading…</div>
+          <div id="tasks-list" class="tasks-list"></div>
+        </div>
+      </section>
+
+      <!-- Tools Page -->
+      <section class="page" id="page-tools" hidden>
+        <div class="panel panel-tools">
+          <div class="tools-header">
+            <div class="tools-header-text">
+              <h2>Tools</h2>
+              <p class="tools-lead">
+                Discover which API tools are available to the web app and AI agents. Filter to find the right integration and run a sample
+                request to inspect the response.
+              </p>
+            </div>
+            <div class="tools-actions">
+              <label class="field grow">
+                <span>Search</span>
+                <input id="tools-search" type="text" placeholder="Filter by name, tag or description" />
+              </label>
+              <button id="tools-refresh" class="btn ghost" type="button">Refresh</button>
+            </div>
+          </div>
+          <div id="tools-tags" class="tools-tags"></div>
+          <div id="tools-list" class="tools-grid empty">
+            <div class="tools-empty">No tools loaded yet.</div>
+          </div>
+          <div id="tools-preview" class="tools-preview" hidden>
+            <div class="tools-preview-header">
+              <h3 id="tools-preview-title">Tool result</h3>
+              <button id="tools-preview-collapse" class="btn ghost" type="button">Hide</button>
+            </div>
+            <pre id="tools-preview-body" class="tools-preview-body"></pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- Chat Page -->
+      <section class="page" id="page-chat" hidden>
+        <div class="chat-container">
+          <!-- Enhanced Sidebar with Dual Tabs -->
+          <div class="chat-sidebar">
+            <div class="chat-sidebar-header">
+              <button id="chat-new" class="btn btn-new-chat">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="12" y1="5" x2="12" y2="19"></line>
+                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+                New chat
+              </button>
+            </div>
+            
+            <!-- Dual Tab Navigation -->
+            <div class="chat-sidebar-tabs" role="tablist" aria-label="Chat sections">
+              <button id="chat-tab-sessions" class="chat-sidebar-tab active" data-tab="sessions" type="button" role="tab" aria-selected="true" aria-controls="chat-sessions-panel" tabindex="0">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                </svg>
+                Sessions
+              </button>
+              <button id="chat-tab-tools" class="chat-sidebar-tab" data-tab="tools" type="button" role="tab" aria-selected="false" aria-controls="chat-tools-panel" tabindex="-1">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path>
+                </svg>
+                Tools
+              </button>
+            </div>
+            
+            <!-- Sessions Panel -->
+            <div id="chat-sessions-panel" class="chat-sidebar-panel active" data-tab="sessions" role="tabpanel" aria-labelledby="chat-tab-sessions" aria-hidden="false" tabindex="0">
+              <div class="chat-sessions" id="chat-sessions">
+                <div class="chat-sessions-empty">No chats yet</div>
+              </div>
+            </div>
+
+            <!-- Tools Panel -->
+            <div id="chat-tools-panel" class="chat-sidebar-panel" data-tab="tools" role="tabpanel" aria-labelledby="chat-tab-tools" aria-hidden="true" hidden tabindex="-1">
+              <div class="chat-tools-header">
+                <h3>Available Tools</h3>
+                <button id="chat-tools-open" class="btn ghost" type="button">Open catalogue</button>
+              </div>
+              <div id="chat-tools-list" class="chat-tools-list empty">Tools will load automatically.</div>
+            </div>
+          </div>
+          
+          <!-- Main chat area -->
+          <div class="chat-main">
+            <div class="chat-header">
+              <h2>AI Chat</h2>
+              <div class="chat-header-controls">
+                <label class="field">
+                  <span>Provider</span>
+                  <select id="chat-provider">
+                    <option value="openai">OpenAI</option>
+                    <option value="openrouter">OpenRouter</option>
+                    <option value="claude">Claude</option>
+                    <option value="gemini">Gemini</option>
+                    <option value="other">Other</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Model</span>
+                  <input id="chat-model" type="text" placeholder="e.g. gpt-4o, claude-3-5, gemini-1.5" />
+                </label>
+                <label class="field">
+                  <span>Data source</span>
+                  <select id="chat-dataset">
+                    <option value="merged" selected>NetBox merged export (CSV)</option>
+                    <option value="devices">Devices export (CSV)</option>
+                    <option value="vms">VMs export (CSV)</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+            
+            <!-- Token Usage Dashboard -->
+            <div id="token-usage-dashboard" class="token-usage-dashboard" style="display: none;">
+              <!-- Content will be populated by JavaScript -->
+            </div>
+            
+            <!-- Queue Status -->
+            <div id="queue-status" class="queue-status-container" style="display: none;">
+              <!-- Content will be populated by JavaScript -->
+            </div>
+            
+            <div class="chat-messages" id="chat-messages">
+              <div class="chat-empty-state">
+                <div class="chat-empty-icon">💬</div>
+                <h3>Welcome to AI Chat</h3>
+                <p>Ask me anything about your data. I'll help you analyze and provide insights.</p>
+                <div id="chat-examples" class="chat-suggestions"></div>
+              </div>
+            </div>
+            
+            <div class="chat-input-container">
+              <div class="chat-input-wrapper">
+                <textarea
+                  id="chat-input"
+                  class="chat-input-textarea"
+                  placeholder="Message AI Chat..."
+                  rows="1"
+                ></textarea>
+                <button id="chat-send" class="chat-send-btn">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="22" y1="2" x2="11" y2="13"></line>
+                    <polygon points="22,2 15,22 11,13 2,9"></polygon>
+                  </svg>
+                </button>
+              </div>
+              <div class="chat-input-footer">
+                <label class="chat-checkbox">
+                  <input id="chat-include-data" type="checkbox" checked />
+                  <span>Use data context</span>
+                </label>
+                <label class="chat-checkbox">
+                  <input id="chat-stream" type="checkbox" checked />
+                  <span>Stream responses</span>
+                </label>
+                <label class="chat-checkbox">
+                  <input id="chat-show-monitoring" type="checkbox" />
+                  <span>Show monitoring</span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Zabbix Page -->
+      <section class="page" id="page-zabbix" hidden>
+        <div class="panel panel-zbx">
+          <h2 class="panel-title">Zabbix</h2>
+          <div class="toolbar" style="margin: 4px 0 8px">
+            <button id="zbx-refresh" class="btn-icon btn-refresh" title="Refresh" aria-label="Refresh">
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                <!-- Dual-arrow refresh icon (simple) -->
+                <path d="M8 6a8 8 0 0 1 11 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <path d="M18 4v6h-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <path d="M16 18a8 8 0 0 1-11-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <path d="M6 20v-6h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+            </button>
+            <button id="zbx-ack" class="btn" title="Acknowledge selected problems">Ack</button>
+            <button id="zbx-search" class="btn" title="Deep search for the selected item">Deep Search</button>
+            <a class="btn" href="https://zabbix.atlas.tech/zabbix.php" target="_blank" rel="noopener">Open Zabbix</a>
+            <div class="spacer"></div>
+            <label class="field">
+              <input id="zbx-unack" type="checkbox" />
+              <span>Show unacknowledged only</span>
+            </label>
+            <label class="field">
+              <input id="zbx-systems" type="checkbox" checked />
+              <span>Only System (+ subgroups)</span>
+            </label>
+            <label class="field">
+              <span>Auto refresh</span>
+              <select id="zbx-refresh-interval">
+                <option value="0" selected>Off</option>
+                <option value="30000">30s</option>
+                <option value="60000">1m</option>
+                <option value="120000">2m</option>
+                <option value="300000">5m</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Density</span>
+              <select id="zbx-density">
+                <option value="comfortable" selected>Comfortable</option>
+                <option value="compact">Compact</option>
+              </select>
+            </label>
+            <span id="zbx-stats" class="summary"></span>
+          </div>
+          <div id="zbx-feed" class="feed empty">No Zabbix connection configured yet.</div>
+        </div>
+      </section>
+
+      <!-- Zabbix Host Details Page -->
+      <section class="page" id="page-zhost" hidden>
+        <div class="panel">
+          <h2 id="zhost-title">Host</h2>
+          <div class="toolbar" style="margin: 8px 0 12px">
+            <button id="zhost-back" class="btn">⬅ Back to Zabbix</button>
+            <a id="zhost-open-zbx" class="btn" href="#" target="_blank" rel="noopener">Open in Zabbix</a>
+            <div class="spacer"></div>
+            <button id="zhost-ack" class="btn" title="Acknowledge selected problems">Ack</button>
+            <span id="zhost-stats" class="summary" style="margin-left: 8px;"></span>
+          </div>
+          <div id="zhost-info" class="feed empty">Loading…</div>
+          <hr />
+          <h3>Problems (no filters)</h3>
+          <div id="zhost-problems" class="feed empty">Loading…</div>
+        </div>
+      </section>
+
+      <!-- Jira Page -->
+      <section class="page" id="page-jira" hidden>
+        <div class="panel">
+          <h2>Jira</h2>
+          <div class="toolbar" style="margin: 8px 0 12px">
+            <label class="field grow">
+              <span>Search</span>
+              <input id="jira-q" type="text" placeholder="Full‑text (text ~ ...)" />
+            </label>
+            <label class="field">
+              <span>Project</span>
+              <input id="jira-project" type="text" placeholder="e.g. ABC" />
+            </label>
+            <label class="field">
+              <span>Status</span>
+              <input id="jira-status" type="text" placeholder="e.g. To Do, In Progress" />
+            </label>
+            <label class="field">
+              <span>Assignee</span>
+              <input id="jira-assignee" type="text" placeholder="name/email" />
+            </label>
+            <label class="field">
+              <span>Priority</span>
+              <input id="jira-priority" type="text" placeholder="e.g. High" />
+            </label>
+            <label class="field">
+              <span>Type</span>
+              <input id="jira-type" type="text" placeholder="e.g. Bug, Task" />
+            </label>
+            <label class="field">
+              <span>Team (Service Desk)</span>
+              <input id="jira-team" type="text" value="Systems Infrastructure" placeholder="e.g. Systems Infrastructure" />
+            </label>
+            <label class="field">
+              <span>Updated</span>
+              <select id="jira-updated">
+                <option value="-7d">7d</option>
+                <option value="-14d">14d</option>
+                <option value="-30d" selected>30d</option>
+                <option value="">All</option>
+              </select>
+            </label>
+            <label class="field">
+              <input id="jira-open" type="checkbox" checked />
+              <span>Open only</span>
+            </label>
+            <label class="field">
+              <span>Max</span>
+              <select id="jira-max">
+                <option value="25">25</option>
+                <option value="50" selected>50</option>
+                <option value="100">100</option>
+              </select>
+            </label>
+            <button id="jira-search" class="btn">Search</button>
+            <button id="jira-reset" class="btn ghost">Reset</button>
+          </div>
+          <div id="jira-results" class="feed empty">Not searched yet or configuration missing.</div>
+        </div>
+      </section>
+
+      <!-- Confluence Page -->
+      <section class="page" id="page-confluence" hidden>
+        <div class="panel">
+          <h2>Confluence</h2>
+          <div class="toolbar" style="margin: 8px 0 12px">
+            <label class="field grow">
+              <span>Search</span>
+              <input id="conf-q" type="text" placeholder="Full‑text (text ~ …)" />
+            </label>
+            <label class="field">
+              <span>Space</span>
+              <input id="conf-space" type="text" placeholder="e.g. DOCS or exact name" />
+            </label>
+            <label class="field">
+              <span>Type</span>
+              <select id="conf-type">
+                <option value="page" selected>Page</option>
+                <option value="blogpost">Blog post</option>
+                <option value="attachment">Attachment</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Labels</span>
+              <input id="conf-labels" type="text" placeholder="comma‑separated" />
+            </label>
+            <label class="field">
+              <span>Updated</span>
+              <select id="conf-updated">
+                <option value="" selected>All</option>
+                <option value="-7d">7d</option>
+                <option value="-30d">30d</option>
+                <option value="-90d">90d</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Max</span>
+              <select id="conf-max">
+                <option value="25">25</option>
+                <option value="50" selected>50</option>
+                <option value="100">100</option>
+              </select>
+            </label>
+            <button id="conf-search" class="btn">Search</button>
+            <button id="conf-reset" class="btn ghost">Reset</button>
+          </div>
+          <div id="conf-results" class="feed empty">Not searched yet.</div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Hide fields panel -->
+    <div id="fields-panel" class="fields-panel" hidden>
+      <div class="fields-head">
+        <div class="fields-title">
+          <strong>Hide fields</strong>
+          <div class="spacer"></div>
+          <button id="fields-collapse" class="btn-icon" title="Close">✕</button>
+        </div>
+        <input id="fields-search" class="fields-search" type="text" placeholder="Find a field" />
+      </div>
+      <div id="fields-list" class="fields-list" role="listbox" aria-label="Columns"></div>
+      <div class="fields-actions">
+        <button id="hide-all" class="btn ghost">Hide all</button>
+        <button id="show-all" class="btn ghost">Show all</button>
+      </div>
+    </div>
+
+    <!-- Progress panel -->
+    <div id="progress-panel" class="progress-panel" hidden>
+      <div class="progress-head">
+        <strong>Updating dataset…</strong>
+        <div class="spacer"></div>
+        <button id="progress-close" class="btn-icon" title="Close">✕</button>
+      </div>
+      <pre id="progress-log" class="progress-log"></pre>
+      <!-- Manual resize handles for both corners -->
+      <div id="resize-se" class="resize-handle se" title="Resize"></div>
+      <div id="resize-sw" class="resize-handle sw" title="Resize"></div>
+    </div>
+
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="app.js?v=9"></script>
+  </body>
+  </html>

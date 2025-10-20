@@ -9,6 +9,7 @@ __pycache__/
 .venv/
 .benchmarks
 .python-version
+.claude
 
 # OS/editor
 .DS_Store
@@ -37,4 +38,4 @@ personal/
 certs/
 logs/
 backups/
-reports/
+reports/src/infrastructure_atlas/api/static/logo.svg
