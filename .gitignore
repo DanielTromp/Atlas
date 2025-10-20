@@ -39,3 +39,4 @@ certs/
 logs/
 backups/
 reports/src/infrastructure_atlas/api/static/logo.svg
+export.log

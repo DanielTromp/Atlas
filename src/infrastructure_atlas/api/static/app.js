@@ -6,6 +6,14 @@
   const THEMES = [
     { id: 'nebula-light', label: 'Nebula Light' },
     { id: 'nebula-dark', label: 'Nebula Dark' },
+    { id: 'forest-light', label: 'Forest Atlas Light' },
+    { id: 'forest-dark', label: 'Forest Atlas Dark' },
+    { id: 'jade-light', label: 'Jade Atlas Light' },
+    { id: 'jade-dark', label: 'Jade Atlas Dark' },
+    { id: 'coral-light', label: 'Coral Warmth Light' },
+    { id: 'coral-dark', label: 'Coral Warmth Dark' },
+    { id: 'midnight-light', label: 'Midnight Blue Light' },
+    { id: 'midnight-dark', label: 'Midnight Blue Dark' },
     { id: 'default', label: 'Neutral Light' },
   ];
   const THEME_STORAGE_KEY = 'atlas_theme_v1';

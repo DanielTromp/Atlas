@@ -13,7 +13,14 @@
         try {
           var storageKey = 'atlas_theme_v1';
           var stored = localStorage.getItem(storageKey);
-          var allowed = ['nebula-light', 'nebula-dark', 'default'];
+          var allowed = [
+            'nebula-light', 'nebula-dark',
+            'forest-light', 'forest-dark',
+            'jade-light', 'jade-dark',
+            'coral-light', 'coral-dark',
+            'midnight-light', 'midnight-dark',
+            'default'
+          ];
           if (stored === 'atlas-light') {
             stored = 'nebula-light';
           } else if (stored === 'nebula') {
@@ -26,6 +33,14 @@
             prefix + 'nebula',
             prefix + 'nebula-light',
             prefix + 'nebula-dark',
+            prefix + 'forest-light',
+            prefix + 'forest-dark',
+            prefix + 'jade-light',
+            prefix + 'jade-dark',
+            prefix + 'coral-light',
+            prefix + 'coral-dark',
+            prefix + 'midnight-light',
+            prefix + 'midnight-dark',
             prefix + 'default'
           );
           document.body.classList.add(prefix + theme);
