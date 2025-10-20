@@ -575,7 +575,7 @@ def _login_html(next_url: str, error: str | None = None) -> HTMLResponse:
                 logo_svg = raw_logo
         except OSError:
             logo_svg = ""
-    logo_html = logo_svg or '<span class="brand-logo__fallback">Atlas</span>'
+    logo_html = logo_svg or '<span class="brand-logo__fallback" aria-hidden="true"></span>'
     return HTMLResponse(
         f"""
         <!doctype html>
@@ -593,7 +593,7 @@ def _login_html(next_url: str, error: str | None = None) -> HTMLResponse:
         .brand {{ display: flex; align-items: center; gap: 12px; }}
         .brand-logo {{ display: flex; align-items: center; justify-content: center; width: 42px; height: 42px; }}
         .brand-logo svg {{ width: 100%; height: auto; filter: brightness(0) invert(1); opacity: 0.92; display: block; }}
-        .brand-logo__fallback {{ color: #f5f3ff; font-weight: 700; }}
+        .brand-logo__fallback {{ display: block; width: 34px; height: 34px; }}
         .brand h1 {{ font-size: 20px; margin: 0; letter-spacing: 0.28px; font-weight: 680; }}
         label {{ display: block; }}
         input[type=text], input[type=password] {{ width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid rgba(170, 111, 255, 0.55);
