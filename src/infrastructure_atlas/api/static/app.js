@@ -14,6 +14,8 @@
     { id: 'coral-dark', label: 'Coral Warmth Dark' },
     { id: 'midnight-light', label: 'Midnight Blue Light' },
     { id: 'midnight-dark', label: 'Midnight Blue Dark' },
+    { id: 'silver-light', label: 'Silver Shadow Light' },
+    { id: 'silver-dark', label: 'Silver Shadow Dark' },
     { id: 'default', label: 'Neutral Light' },
   ];
   const THEME_STORAGE_KEY = 'atlas_theme_v1';

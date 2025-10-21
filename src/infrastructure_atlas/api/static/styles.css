@@ -437,6 +437,128 @@ body.theme-midnight-dark {
   --topbar-border: rgba(59, 130, 246, 0.3);
 }
 
+/* Silver Shadow Theme - Premium Black & Silver */
+body.theme-silver-light {
+  color-scheme: light;
+
+  /* Clean white with subtle silver */
+  --bg: #fafafa;
+  --bg-gradient: linear-gradient(180deg, #ffffff 0%, #f5f5f5 100%);
+
+  /* Panels */
+  --panel: #ffffff;
+  --panel-elevated: #fafafa;
+  --panel-translucent: rgba(255, 255, 255, 0.92);
+
+  /* Text */
+  --text: #0f172a;
+  --muted: #64748b;
+
+  /* Silver accents work well on light too */
+  --accent: #64748b;
+  --accent-rgb: 100, 116, 139;
+  --accent-soft: rgba(100, 116, 139, 0.12);
+  --accent-strong: #475569;
+
+  --btn-text: var(--text);
+
+  /* Borders */
+  --grid-border: #e2e8f0;
+  --row-alt: #f8fafc;
+  --hover: #f1f5f9;
+
+  /* Headers */
+  --header-gradient: linear-gradient(180deg, #ffffff, #f8fafc);
+
+  /* Interactive elements */
+  --filter-bg: #ffffff;
+  --tab-bg: #fafafa;
+  --tab-active-bg: #f1f5f9;
+  --tab-hover: #f8fafc;
+  --input-bg: #ffffff;
+  --input-border: #cbd5e1;
+  --input-placeholder: rgba(100, 116, 139, 0.65);
+
+  /* Components */
+  --feed-bg: #fafafa;
+  --chat-log-bg: #ffffff;
+  --progress-bg: #ffffff;
+  --progress-log-bg: #f8fafc;
+
+  --success: #22c55e;
+  --focus-ring: rgba(100, 116, 139, 0.2);
+  --shadow: 0 10px 32px rgba(15, 23, 42, 0.08);
+  --panel-shadow: 0 8px 28px rgba(15, 23, 42, 0.06);
+  --btn-gradient: linear-gradient(180deg, #ffffff, #f8fafc);
+  --btn-hover-shadow: 0 12px 28px rgba(100, 116, 139, 0.15);
+  --topbar-bg: rgba(255, 255, 255, 0.9);
+  --topbar-border: rgba(203, 213, 225, 0.8);
+}
+
+body.theme-silver-dark {
+  color-scheme: dark;
+
+  /* Deep black with subtle silver highlights */
+  --bg: #0a0a0a;
+  --bg-gradient: radial-gradient(140% 180% at 50% 0%, rgba(148, 163, 184, 0.12) 0%, rgba(71, 85, 105, 0.18) 25%, #0f0f0f 60%, #000000 100%);
+
+  /* Panels with silver tint */
+  --panel: rgba(23, 23, 23, 0.92);
+  --panel-elevated: rgba(30, 30, 30, 0.95);
+  --panel-translucent: rgba(20, 20, 20, 0.85);
+
+  /* Text in silver tones */
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+
+  /* Silver as accent color */
+  --accent: #94a3b8;
+  --accent-rgb: 148, 163, 184;
+  --accent-soft: rgba(148, 163, 184, 0.15);
+  --accent-strong: #cbd5e1;
+
+  --btn-text: #f8fafc;
+
+  /* Borders and grid with silver */
+  --grid-border: rgba(148, 163, 184, 0.22);
+  --row-alt: rgba(71, 85, 105, 0.25);
+  --hover: rgba(148, 163, 184, 0.18);
+
+  /* Headers with silver gradient */
+  --header-gradient: linear-gradient(180deg, rgba(148, 163, 184, 0.2), rgba(51, 65, 85, 0.35));
+
+  /* Inputs and interactive elements */
+  --filter-bg: rgba(23, 23, 23, 0.95);
+  --tab-bg: rgba(30, 30, 30, 0.7);
+  --tab-active-bg: rgba(148, 163, 184, 0.25);
+  --tab-hover: rgba(100, 116, 139, 0.22);
+  --input-bg: rgba(30, 30, 30, 0.92);
+  --input-border: rgba(148, 163, 184, 0.35);
+  --input-placeholder: rgba(148, 163, 184, 0.5);
+
+  /* Specific components */
+  --feed-bg: rgba(20, 20, 20, 0.8);
+  --chat-log-bg: rgba(23, 23, 23, 0.88);
+  --progress-bg: rgba(30, 30, 30, 0.94);
+  --progress-log-bg: rgba(15, 15, 15, 0.92);
+
+  /* Status colors remain the same */
+  --success: #22c55e;
+
+  /* Focus and shadows with silver tint */
+  --focus-ring: rgba(148, 163, 184, 0.35);
+  --shadow: 0 24px 56px rgba(0, 0, 0, 0.7);
+  --panel-shadow: 0 20px 48px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(148, 163, 184, 0.08);
+
+  /* Button styling with metallic effect */
+  --btn-gradient: linear-gradient(180deg, rgba(148, 163, 184, 0.22), rgba(100, 116, 139, 0.18));
+  --btn-hover-shadow: 0 16px 40px rgba(148, 163, 184, 0.25);
+
+  /* Topbar with silver accent */
+  --topbar-bg: rgba(15, 15, 15, 0.88);
+  --topbar-border: rgba(148, 163, 184, 0.25);
+}
+
 body.theme-default {
   color-scheme: light;
 }
@@ -619,7 +741,8 @@ body.theme-nebula-dark .brand-logo,
 body.theme-forest-dark .brand-logo,
 body.theme-jade-dark .brand-logo,
 body.theme-coral-dark .brand-logo,
-body.theme-midnight-dark .brand-logo {
+body.theme-midnight-dark .brand-logo,
+body.theme-silver-dark .brand-logo {
   filter: brightness(0) invert(1);
   opacity: 0.92;
 }
@@ -630,7 +753,8 @@ body.theme-nebula-light .brand-logo,
 body.theme-forest-light .brand-logo,
 body.theme-jade-light .brand-logo,
 body.theme-coral-light .brand-logo,
-body.theme-midnight-light .brand-logo {
+body.theme-midnight-light .brand-logo,
+body.theme-silver-light .brand-logo {
   filter: none;
   opacity: 1;
 }
@@ -964,6 +1088,158 @@ body.theme-midnight-light .account-token-card-actions .btn.ghost:hover,
 body.theme-midnight-light .admin-global-card-actions .btn.ghost:hover {
   background: rgba(var(--accent-rgb), 0.16);
   border-color: rgba(var(--accent-rgb), 0.28);
+}
+
+/* Silver Shadow Theme Overrides */
+body.theme-silver-dark .theme-toggle__select { border-color: var(--input-border); }
+body.theme-silver-light .theme-toggle__select { border-color: var(--grid-border); }
+
+/* Silver Shadow Dark - Premium metallic styling */
+body.theme-silver-dark .brand-logo {
+  filter: brightness(0) invert(1) grayscale(0.3);
+  opacity: 0.95;
+}
+
+body.theme-silver-dark .user-menu-toggle {
+  background: rgba(148, 163, 184, 0.12);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+body.theme-silver-dark .user-menu-toggle:hover {
+  background: rgba(148, 163, 184, 0.18);
+  border-color: rgba(203, 213, 225, 0.35);
+}
+
+body.theme-silver-dark .user-menu-toggle:focus-visible {
+  box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.35);
+}
+
+body.theme-silver-dark .user-menu {
+  background: rgba(15, 15, 15, 0.98);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  box-shadow: 0 28px 64px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(148, 163, 184, 0.15);
+}
+
+body.theme-silver-dark .user-menu::before {
+  border-left-color: rgba(148, 163, 184, 0.3);
+  border-top-color: rgba(148, 163, 184, 0.3);
+}
+
+body.theme-silver-dark .user-menu-separator {
+  background: rgba(148, 163, 184, 0.15);
+}
+
+body.theme-silver-dark .user-menu-item {
+  color: var(--text);
+}
+
+body.theme-silver-dark .user-menu-item:hover {
+  background: rgba(148, 163, 184, 0.15);
+}
+
+body.theme-silver-dark .user-menu-item.logout {
+  color: var(--accent-strong);
+}
+
+body.theme-silver-dark .user-menu-item.logout:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+body.theme-silver-dark .account-token-card,
+body.theme-silver-dark .admin-global-card {
+  background: rgba(23, 23, 23, 0.95);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  box-shadow: 0 20px 42px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+body.theme-silver-dark .admin-role-card {
+  background: rgba(23, 23, 23, 0.92);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+body.theme-silver-dark .admin-role-desc {
+  color: rgba(148, 163, 184, 0.85);
+}
+
+body.theme-silver-dark .admin-role-capability {
+  color: rgba(226, 232, 240, 0.92);
+}
+
+body.theme-silver-dark .badge.role-key {
+  background: rgba(148, 163, 184, 0.18);
+  color: rgba(203, 213, 225, 0.95);
+}
+
+body.theme-silver-dark .account-token-card-actions .btn.ghost,
+body.theme-silver-dark .admin-global-card-actions .btn.ghost {
+  background: rgba(148, 163, 184, 0.08);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  color: var(--text);
+}
+
+body.theme-silver-dark .account-token-card-actions .btn.ghost:hover,
+body.theme-silver-dark .admin-global-card-actions .btn.ghost:hover {
+  background: rgba(148, 163, 184, 0.15);
+  border-color: rgba(203, 213, 225, 0.3);
+  box-shadow: 0 8px 20px rgba(148, 163, 184, 0.15);
+}
+
+body.theme-silver-dark .account-token-card-actions .btn.ghost:focus-visible,
+body.theme-silver-dark .admin-global-card-actions .btn.ghost:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.35);
+}
+
+/* Silver Shadow Light - Clean and professional */
+body.theme-silver-light .user-menu-toggle {
+  background: rgba(100, 116, 139, 0.08);
+  border: 1px solid rgba(100, 116, 139, 0.2);
+  color: var(--text);
+}
+
+body.theme-silver-light .user-menu-toggle:hover {
+  background: rgba(100, 116, 139, 0.12);
+  border-color: rgba(100, 116, 139, 0.3);
+}
+
+body.theme-silver-light .user-menu {
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid rgba(100, 116, 139, 0.25);
+  box-shadow: 0 24px 48px rgba(15, 23, 42, 0.15);
+}
+
+body.theme-silver-light .user-menu::before {
+  border-left-color: rgba(100, 116, 139, 0.25);
+  border-top-color: rgba(100, 116, 139, 0.25);
+}
+
+body.theme-silver-light .user-menu-separator {
+  background: rgba(100, 116, 139, 0.15);
+}
+
+body.theme-silver-light .user-menu-item:hover {
+  background: rgba(100, 116, 139, 0.1);
+}
+
+body.theme-silver-light .user-menu-item.logout {
+  color: var(--accent-strong);
+}
+
+body.theme-silver-light .user-menu-item.logout:hover {
+  background: rgba(239, 68, 68, 0.12);
+}
+
+body.theme-silver-light .account-token-card,
+body.theme-silver-light .admin-global-card {
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid rgba(100, 116, 139, 0.2);
+  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.08);
+}
+
+body.theme-silver-light .admin-role-card {
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid rgba(100, 116, 139, 0.18);
 }
 
 .main { padding: 16px; }
