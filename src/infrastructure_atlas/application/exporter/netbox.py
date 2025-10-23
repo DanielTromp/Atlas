@@ -226,6 +226,7 @@ class NativeNetboxExporter(NetboxExporter):
         if records is None:
             records = self._client.list_vms(force_refresh=force)
         records = list(records)
+        record_lookup = {int(record.id): record for record in records}
         metadata = {int(record.id): _to_iso(record.last_updated) for record in records}
         existing = _load_existing_vm_csv(self._paths.vms_csv)
         to_add, to_update, to_delete = _identify_vm_changes(
@@ -255,9 +256,22 @@ class NativeNetboxExporter(NetboxExporter):
             )
 
         updated_rows: dict[int, dict[str, str]] = {}
+        contact_assignments = _prefetch_contact_assignments(
+            self._api,
+            "virtualization.virtualmachine",
+            (record_lookup.get(vm_id) for vm_id in to_add + to_update),
+            logger=self._logger,
+            verbose=self._verbose,
+        )
         for vm_id in to_add + to_update:
             try:
-                row = _build_vm_row(self._client, vm_id)
+                record = record_lookup.get(vm_id)
+                row = _build_vm_row(
+                    self._client,
+                    vm_id,
+                    record=record,
+                    assignments=contact_assignments.get(str(vm_id)),
+                )
                 updated_rows[int(vm_id)] = row
             except Exception as exc:  # pragma: no cover - defensive
                 self._logger.warning(
@@ -594,8 +608,14 @@ def _stringify(value) -> str:
     return str(value)
 
 
-def _build_vm_row(client, vm_id: int) -> dict[str, str]:
-    record: NetboxVMRecord = client.get_vm(vm_id)
+def _build_vm_row(
+    client,
+    vm_id: int,
+    *,
+    record: NetboxVMRecord | None = None,
+    assignments: Sequence[object] | None = None,
+) -> dict[str, str]:
+    record = record or client.get_vm(vm_id)
     vm = record.source or _AttrProxy(record.raw)
     custom_fields = record.custom_fields or {}
     base = {
@@ -623,7 +643,7 @@ def _build_vm_row(client, vm_id: int) -> dict[str, str]:
         "Created": _to_iso(getattr(vm, "created", "")),
         "Last updated": _to_iso(record.last_updated) or _to_iso(getattr(vm, "last_updated", "")),
         "Platform": record.platform or "",
-        "Interfaces": _stringify(getattr(vm, "interface_count", "")),
+        "Interfaces": _vm_interface_count(vm),
         "Virtual Disks": _stringify(custom_fields.get("Virtual_Disks", "")),
         "Backup": _stringify(custom_fields.get("Backup", "")),
         "DTAP state": _stringify(custom_fields.get("DTAP_state", "")),
@@ -631,6 +651,20 @@ def _build_vm_row(client, vm_id: int) -> dict[str, str]:
         "open actions": _stringify(custom_fields.get("open_actions", "")),
         "Server Group": _stringify(custom_fields.get("Server Group", "")),
     }
+    contacts_str = _render_vm_contacts(client.api, assignments, vm)
+    base["Contacts"] = contacts_str
+    # Debug logging
+    if hasattr(vm, "id") and getattr(vm, "id", None) == 229:  # api-prod4
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(
+            "DEBUG api-prod4 contacts",
+            extra={
+                "vm_id": 229,
+                "assignments": assignments if assignments else "None/Empty",
+                "contacts_str": contacts_str,
+            },
+        )
     return {k: _stringify(v) for k, v in base.items()}
 
 
@@ -718,24 +752,19 @@ def _get_vm_contacts(nb, vm) -> str:
             assignments = result
             break
 
-    contacts = []
-    for assignment in assignments:
-        contact = getattr(assignment, "contact", None)
-        role = getattr(assignment, "role", None)
-        c_name = getattr(contact, "name", None)
-        if not c_name and isinstance(contact, dict):
-            c_name = contact.get("name") or contact.get("display")
-        r_name = getattr(role, "name", None) if role else None
-        if not r_name and isinstance(role, dict):
-            r_name = role.get("name") or role.get("display")
-        if c_name:
-            contacts.append(f"{c_name} ({r_name})" if r_name else c_name)
-    return ", ".join(contacts)
-
+    return _render_assignments(nb, assignments)
 
 def _render_contacts(nb, assignments: Sequence[object] | None, device) -> str:
     if assignments is None:
         return _get_device_contacts(nb, device)
+    if not assignments:
+        return ""
+    return _render_assignments(nb, assignments)
+
+
+def _render_vm_contacts(nb, assignments: Sequence[object] | None, vm) -> str:
+    if assignments is None:
+        return _get_vm_contacts(nb, vm)
     if not assignments:
         return ""
     return _render_assignments(nb, assignments)
@@ -792,7 +821,7 @@ def _assign_contact_results(assignments: dict[str, list[object]], result_iter: I
 def _prefetch_contact_assignments(
     nb,
     object_type: str,
-    records: Iterable[NetboxDeviceRecord | None],
+    records: Iterable[NetboxDeviceRecord | NetboxVMRecord | None],
     *,
     batch_size: int = 1000,
     logger: logging.Logger | None = None,
@@ -838,98 +867,72 @@ def _prefetch_contact_assignments(
     else:
         total_chunks = None
 
-    if len(unique_ids) > chunk_size:
-        try:
-            if verbose and logger:
-                logger.info(
-                    "Attempting bulk contact fetch",
-                    extra={
-                        "object_type": object_type,
-                        "filter_only": True,
-                    },
-                )
-            bulk_iter = ca_ep.filter(object_type=object_type, limit=0)
-            total_assignments = 0
-            for item in bulk_iter:
-                object_id = getattr(item, "object_id", None)
-                if object_id is None:
-                    obj = getattr(item, "object", None)
-                    object_id = getattr(obj, "id", None)
-                key = str(object_id) if object_id is not None else None
-                if key and key in assignments:
-                    assignments[key].append(item)
-                    total_assignments += 1
-            if verbose and logger:
-                logger.info(
-                    "Bulk contact fetch completed",
-                    extra={
-                        "object_type": object_type,
-                        "targets": len(unique_ids),
-                        "assignments": total_assignments,
-                    },
-                )
-            return assignments
-        except Exception as exc:
-            if verbose and logger:
-                logger.warning(
-                    "Bulk contact fetch failed; falling back to chunked requests",
-                    extra={
-                        "object_type": object_type,
-                        "error": str(exc),
-                    },
-                )
-
-    for index, chunk in enumerate(_chunked(unique_ids, chunk_size), start=1):
+    # Always use bulk fetch - it's more efficient and avoids 414 errors with object_id__in
+    try:
         if verbose and logger:
             logger.info(
-                "Fetching contact chunk",
+                "Bulk fetching contact assignments",
                 extra={
                     "object_type": object_type,
-                    "chunk_index": index,
-                    "chunks": total_chunks,
-                    "chunk_size": len(chunk),
+                    "targets": len(unique_ids),
                 },
             )
-        params = {"object_type": object_type, "limit": 0}
-        if len(chunk) == 1:
-            params["object_id"] = chunk[0]
-        else:
-            params["object_id__in"] = chunk
+        bulk_iter = ca_ep.filter(object_type=object_type, limit=0)
+        total_assignments = 0
+        for item in bulk_iter:
+            object_id = getattr(item, "object_id", None)
+            if object_id is None:
+                obj = getattr(item, "object", None)
+                object_id = getattr(obj, "id", None)
+            key = str(object_id) if object_id is not None else None
+            if key and key in assignments:
+                assignments[key].append(item)
+                total_assignments += 1
+        if verbose and logger:
+            logger.info(
+                "Bulk contact fetch completed",
+                extra={
+                    "object_type": object_type,
+                    "targets": len(unique_ids),
+                    "assignments": total_assignments,
+                },
+            )
+        return assignments
+    except Exception as exc:
+        if verbose and logger:
+            logger.warning(
+                "Bulk contact fetch failed; falling back to individual requests",
+                extra={
+                    "object_type": object_type,
+                    "error": str(exc),
+                },
+            )
 
+    # Fallback: fetch individually (slower but more reliable)
+    for index, identifier in enumerate(unique_ids, start=1):
+        if verbose and logger and index % 100 == 0:
+            logger.info(
+                "Fetching contacts individually",
+                extra={
+                    "object_type": object_type,
+                    "progress": f"{index}/{len(unique_ids)}",
+                },
+            )
+        params = {"object_type": object_type, "limit": 0, "object_id": identifier}
         try:
             result_iter = ca_ep.filter(**params)
+            _assign_contact_results(assignments, result_iter)
         except Exception as exc:
             if verbose and logger:
                 logger.warning(
-                    "Contact chunk request failed; retrying individually",
+                    "Contact fetch failed for individual item",
                     extra={
                         "object_type": object_type,
-                        "chunk_index": index,
-                        "chunk_size": len(chunk),
+                        "object_id": identifier,
                         "error": str(exc),
                     },
                 )
-            if len(chunk) == 1:
-                continue
-            for item_id in chunk:
-                single_params = {"object_type": object_type, "limit": 0, "object_id": item_id}
-                try:
-                    result_iter = ca_ep.filter(**single_params)
-                except Exception as item_exc:
-                    if verbose and logger:
-                        logger.warning(
-                            "Contact request failed",
-                            extra={
-                                "object_type": object_type,
-                                "object_id": item_id,
-                                "error": str(item_exc),
-                            },
-                        )
-                    continue
-                _assign_contact_results(assignments, result_iter)
             continue
-
-        _assign_contact_results(assignments, result_iter)
     if verbose and logger:
         logger.info(
             "Contact prefetch completed",

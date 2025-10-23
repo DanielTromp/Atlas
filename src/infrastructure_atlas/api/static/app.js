@@ -55,10 +55,21 @@
     return applyThemeClass(stored, { skipPersist: true });
   })();
 
+  let themeToggleIdCounter = 0;
+
+  const nextThemeToggleId = (root) => {
+    if (!root) return `theme-toggle-select-${++themeToggleIdCounter}`;
+    const existing = root.getAttribute('data-theme-toggle-id');
+    if (existing) return existing;
+    const generated = `theme-toggle-select-${++themeToggleIdCounter}`;
+    root.setAttribute('data-theme-toggle-id', generated);
+    return generated;
+  };
+
   const mountThemeToggle = (root) => {
     if (!root) return;
 
-    const fallbackSelectId = 'theme-toggle-select';
+    const selectId = nextThemeToggleId(root);
 
     if (window.React && window.ReactDOM && typeof window.ReactDOM.createRoot === 'function') {
       const { useEffect, useState } = window.React;
@@ -83,9 +94,9 @@
 
         return e('div', { className: 'theme-toggle' },
           e('div', { className: 'theme-toggle__meta' },
-            e('label', { className: 'theme-toggle__label', htmlFor: fallbackSelectId }, 'Theme'),
+            e('label', { className: 'theme-toggle__label', htmlFor: selectId }, 'Theme'),
             e('select', {
-              id: fallbackSelectId,
+              id: selectId,
               className: 'theme-toggle__select',
               value,
               onChange: (event) => setValue(normaliseTheme(event.target.value)),
@@ -100,11 +111,11 @@
 
     const label = document.createElement('label');
     label.className = 'theme-toggle__label';
-    label.setAttribute('for', fallbackSelectId);
+    label.setAttribute('for', selectId);
     label.textContent = 'Theme';
 
     const select = document.createElement('select');
-    select.id = fallbackSelectId;
+    select.id = selectId;
     select.className = 'theme-toggle__select';
     for (const theme of THEMES) {
       const option = document.createElement('option');
@@ -139,6 +150,13 @@
   // Page router
   const $themeRoot = document.getElementById('theme-toggle-root');
   const $pages = document.getElementById("pages");
+  const $appShell = document.getElementById('app-shell');
+  const $sidebar = document.getElementById('sidebar');
+  const $sidebarCollapse = document.getElementById('sidebar-collapse');
+  const $sidebarDrawerToggle = document.getElementById('sidebar-drawer-toggle');
+  const $sidebarOverlay = document.getElementById('sidebar-overlay');
+  const $topbarTitle = document.getElementById('topbar-title');
+  const $adminTabsContainer = document.getElementById('admin-tabs');
   const $navChat = document.querySelector('button[data-page="chat"]');
   const $navVCenter = document.querySelector('button[data-page="vcenter"]');
   const $navTools = document.querySelector('button[data-page="tools"]');
@@ -207,6 +225,387 @@
   const $progressLog = document.getElementById("progress-log");
   const $resizeSE = document.getElementById("resize-se");
   const $resizeSW = document.getElementById("resize-sw");
+  const SIDEBAR_PREF_KEY = 'atlas_sidebar_pref_v1';
+  const SIDEBAR_COLLAPSE_BREAKPOINT = 1280;
+  const SIDEBAR_DRAWER_BREAKPOINT = 1024;
+  const mediaDrawer = window.matchMedia(`(max-width: ${SIDEBAR_DRAWER_BREAKPOINT - 1}px)`);
+  let sidebarResizeTimer = 0;
+  const sidebarGroups = Array.from(document.querySelectorAll('.sidebar-group'));
+  let page = 'export';
+  let sidebarFocusCollapsed = false;
+
+  // Add chevron indicators to menu items with submenus
+  sidebarGroups.forEach((group) => {
+    const parentButton = group.querySelector('button.sidebar-item[aria-controls]');
+    if (parentButton && !parentButton.querySelector('.sidebar-item-chevron')) {
+      const chevron = document.createElement('span');
+      chevron.className = 'sidebar-item-chevron';
+      chevron.setAttribute('aria-hidden', 'true');
+      chevron.innerHTML = '›';
+      parentButton.appendChild(chevron);
+    }
+  });
+  const SIDEBAR_SUBNAV_CONFIG = {
+    export: {
+      container: document.querySelector('[data-subnav-container="export"]'),
+      source: () => $dsTabs,
+      selector: 'button[data-ds]',
+    },
+    commvault: {
+      container: document.querySelector('[data-subnav-container="commvault"]'),
+      source: () => $commvaultTabs,
+      selector: 'button[data-commvault-tab]',
+    },
+    vcenter: {
+      container: document.querySelector('[data-subnav-container="vcenter"]'),
+      source: () => $vcenterTabs,
+      selector: 'button[data-vcenter-id]',
+    },
+    admin: {
+      container: document.querySelector('[data-subnav-container="admin"]'),
+      source: () => $adminTabsContainer,
+      selector: 'button[data-admin-tab]',
+    },
+  };
+
+  const readSidebarPref = () => {
+    try {
+      const stored = localStorage.getItem(SIDEBAR_PREF_KEY);
+      return stored === 'collapsed' ? 'collapsed' : 'expanded';
+    } catch { return 'expanded'; }
+  };
+
+  const persistSidebarPref = (value) => {
+    try { localStorage.setItem(SIDEBAR_PREF_KEY, value); } catch {}
+  };
+
+  const isDrawerMode = () => mediaDrawer.matches;
+
+  function applySidebarCollapsed(nextCollapsed, options = {}) {
+    if (!$appShell || !$sidebar) return;
+    const { persist = true } = options;
+    let collapsed = !!nextCollapsed;
+    if (collapsed && window.innerWidth < SIDEBAR_COLLAPSE_BREAKPOINT) {
+      collapsed = false;
+    }
+    $appShell.classList.toggle('is-collapsed', collapsed);
+    $sidebar.setAttribute('data-collapsed', collapsed ? 'true' : 'false');
+    if ($sidebarCollapse) {
+      $sidebarCollapse.setAttribute('aria-expanded', (!collapsed).toString());
+      $sidebarCollapse.setAttribute('aria-label', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
+    }
+    if (persist) {
+      persistSidebarPref(collapsed ? 'collapsed' : 'expanded');
+    }
+    if (collapsed) {
+      sidebarFocusCollapsed = false;
+      sidebarGroups.forEach((group) => {
+        const subitems = group.querySelector('.sidebar-subitems');
+        const parentButton = group.querySelector('button.sidebar-item');
+        if (!subitems) return;
+        subitems.dataset.restoreVisibility = subitems.hidden ? 'hidden' : 'visible';
+        subitems.setAttribute('hidden', '');
+        if (parentButton && parentButton.hasAttribute('aria-expanded')) {
+          parentButton.dataset.restoreExpanded = parentButton.getAttribute('aria-expanded') || '';
+          parentButton.setAttribute('aria-expanded', 'false');
+        }
+      });
+    } else {
+      sidebarGroups.forEach((group) => {
+        const subitems = group.querySelector('.sidebar-subitems');
+        const parentButton = group.querySelector('button.sidebar-item');
+        if (!subitems) return;
+        const restore = subitems.dataset.restoreVisibility;
+        delete subitems.dataset.restoreVisibility;
+        if (restore === 'visible') {
+          subitems.removeAttribute('hidden');
+        } else if (restore === 'hidden') {
+          subitems.setAttribute('hidden', '');
+        }
+        if (parentButton) {
+          const restoreExpanded = parentButton.dataset.restoreExpanded;
+          delete parentButton.dataset.restoreExpanded;
+          if (restoreExpanded === 'true') {
+            parentButton.setAttribute('aria-expanded', 'true');
+          } else if (restoreExpanded === 'false') {
+            parentButton.setAttribute('aria-expanded', 'false');
+          } else if (restoreExpanded === '') {
+            parentButton.removeAttribute('aria-expanded');
+          }
+        }
+      });
+      updateSidebarGroups(page);
+    }
+  }
+
+  function openSidebarDrawer() {
+    if (!$appShell || !$sidebar || !isDrawerMode()) return;
+    $appShell.classList.add('drawer-open');
+    $sidebar.setAttribute('aria-hidden', 'false');
+    if ($sidebarDrawerToggle) {
+      $sidebarDrawerToggle.setAttribute('aria-expanded', 'true');
+      $sidebarDrawerToggle.setAttribute('aria-label', 'Close navigation');
+    }
+    if ($sidebarOverlay) {
+      $sidebarOverlay.removeAttribute('hidden');
+      requestAnimationFrame(() => {
+        $sidebarOverlay.classList.add('is-visible');
+      });
+    }
+    document.body.classList.add('sidebar-drawer-open');
+  }
+
+  function closeSidebarDrawer(options = {}) {
+    if (!$appShell || !$sidebar) return;
+    const { immediate = false } = options;
+    const drawerMode = isDrawerMode();
+    const activeEl = document.activeElement;
+    const sidebarHadFocus = activeEl instanceof HTMLElement && $sidebar.contains(activeEl);
+    $appShell.classList.remove('drawer-open');
+    if ($sidebarDrawerToggle) {
+      $sidebarDrawerToggle.setAttribute('aria-expanded', 'false');
+      $sidebarDrawerToggle.setAttribute('aria-label', 'Open navigation');
+    }
+    if (sidebarHadFocus && drawerMode) {
+      const focusReturnTarget = ($sidebarDrawerToggle instanceof HTMLElement && $sidebarDrawerToggle) ||
+        ($sidebarCollapse instanceof HTMLElement && $sidebarCollapse) ||
+        null;
+      if (focusReturnTarget) {
+        try { focusReturnTarget.focus({ preventScroll: true }); } catch { focusReturnTarget.focus(); }
+      } else if (activeEl && typeof activeEl.blur === 'function') {
+        activeEl.blur();
+      }
+    }
+    if (drawerMode) {
+      $sidebar.setAttribute('aria-hidden', 'true');
+    } else {
+      $sidebar.setAttribute('aria-hidden', 'false');
+    }
+    if ($sidebarOverlay) {
+      const finish = () => {
+        $sidebarOverlay.classList.remove('is-visible');
+        $sidebarOverlay.setAttribute('hidden', '');
+      };
+      if (immediate) {
+        finish();
+      } else {
+        $sidebarOverlay.classList.remove('is-visible');
+        if ('ontransitionend' in $sidebarOverlay) {
+          $sidebarOverlay.addEventListener('transitionend', finish, { once: true });
+          setTimeout(finish, 220);
+        } else {
+          setTimeout(finish, 160);
+        }
+      }
+    }
+    document.body.classList.remove('sidebar-drawer-open');
+  }
+
+  function updateSidebarGroups(activePage) {
+    if ($appShell?.classList.contains('is-collapsed')) {
+      sidebarGroups.forEach((group) => {
+        const subitems = group.querySelector('.sidebar-subitems');
+        const parentButton = group.querySelector('button.sidebar-item');
+        if (subitems) subitems.setAttribute('hidden', '');
+        if (parentButton) parentButton.setAttribute('aria-expanded', 'false');
+      });
+      return;
+    }
+    const respectFocusCollapse = sidebarFocusCollapsed;
+    sidebarGroups.forEach((group) => {
+      const pageKey = group.dataset.page;
+      const parentButton = group.querySelector('button.sidebar-item');
+      const subitems = group.querySelector('.sidebar-subitems');
+      const isActiveGroup = pageKey === activePage || (activePage === 'suggestion-detail' && pageKey === 'suggestions');
+      const shouldExpand = isActiveGroup && !respectFocusCollapse;
+      group.classList.toggle('is-active', isActiveGroup);
+      if (parentButton && subitems) {
+        parentButton.setAttribute('aria-expanded', shouldExpand ? 'true' : 'false');
+      } else if (parentButton) {
+        parentButton.removeAttribute('aria-expanded');
+      }
+      if (subitems) {
+        if (isActiveGroup) {
+          buildSidebarSubnav(pageKey);
+          if (shouldExpand) {
+            subitems.removeAttribute('hidden');
+          } else {
+            subitems.setAttribute('hidden', '');
+          }
+        } else {
+          subitems.setAttribute('hidden', '');
+          delete subitems.dataset.restoreVisibility;
+        }
+      }
+    });
+  }
+
+  function collapseSidebarFocus() {
+    if (!$sidebar || $appShell?.classList.contains('is-collapsed')) return;
+    sidebarFocusCollapsed = true;
+    sidebarGroups.forEach((group) => {
+      const subitems = group.querySelector('.sidebar-subitems');
+      const parentButton = group.querySelector('button.sidebar-item');
+      if (!subitems) return;
+      subitems.setAttribute('hidden', '');
+      if (parentButton) parentButton.setAttribute('aria-expanded', 'false');
+    });
+  }
+
+  function buildSidebarSubnav(page) {
+    const config = SIDEBAR_SUBNAV_CONFIG[page];
+    if (!config?.container) return;
+    const container = config.container;
+    const sourceRoot = typeof config.source === 'function' ? config.source() : config.source;
+    if (!sourceRoot) {
+      container.replaceChildren();
+      return;
+    }
+    const sourceButtons = Array.from(sourceRoot.querySelectorAll(config.selector));
+    if (!sourceButtons.length) {
+      container.replaceChildren();
+      if (typeof sourceRoot.removeAttribute === 'function') {
+        sourceRoot.removeAttribute('data-sidebar-hidden');
+      }
+      return;
+    }
+    if (typeof sourceRoot.setAttribute === 'function') {
+      sourceRoot.setAttribute('data-sidebar-hidden', 'true');
+    }
+    const fragment = document.createDocumentFragment();
+    sourceButtons.forEach((srcBtn, idx) => {
+      const clone = document.createElement('button');
+      clone.type = 'button';
+      clone.className = 'sidebar-subitem';
+      clone.textContent = srcBtn.textContent.trim();
+      clone.dataset.subnavIndex = String(idx);
+      clone.addEventListener('click', (event) => {
+        event.preventDefault();
+        if (srcBtn.disabled) return;
+        srcBtn.click();
+        syncSidebarSubnavActive(page);
+        if (isDrawerMode()) closeSidebarDrawer();
+      });
+      fragment.appendChild(clone);
+    });
+    container.replaceChildren(fragment);
+    syncSidebarSubnavActive(page);
+  }
+
+  function syncSidebarSubnavActive(page) {
+    const config = SIDEBAR_SUBNAV_CONFIG[page];
+    if (!config?.container) return;
+    const container = config.container;
+    const clones = Array.from(container.querySelectorAll('.sidebar-subitem'));
+    if (!clones.length) return;
+    const sourceRoot = typeof config.source === 'function' ? config.source() : config.source;
+    if (!sourceRoot) return;
+    const sourceButtons = Array.from(sourceRoot.querySelectorAll(config.selector));
+    const activeIndex = sourceButtons.findIndex((btn) => btn.classList.contains('active') || btn.getAttribute('aria-selected') === 'true');
+    const resolvedIndex = activeIndex >= 0 ? activeIndex : 0;
+    clones.forEach((clone, idx) => {
+      const isActive = idx === resolvedIndex;
+      clone.classList.toggle('active', isActive);
+      clone.setAttribute('aria-current', isActive ? 'true' : 'false');
+    });
+  }
+
+
+  function syncSidebarForViewport() {
+    if (!$appShell || !$sidebar) return;
+    const drawer = isDrawerMode();
+    if (drawer) {
+      applySidebarCollapsed(false, { persist: false });
+      closeSidebarDrawer({ immediate: true });
+      $sidebar.setAttribute('aria-hidden', $appShell.classList.contains('drawer-open') ? 'false' : 'true');
+      return;
+    }
+    $sidebar.setAttribute('aria-hidden', 'false');
+    const stored = readSidebarPref();
+    const shouldCollapse = stored === 'collapsed' && window.innerWidth >= SIDEBAR_COLLAPSE_BREAKPOINT;
+    applySidebarCollapsed(shouldCollapse, { persist: false });
+    closeSidebarDrawer({ immediate: true });
+    try { updateSidebarGroups(page); } catch (_) {}
+  }
+
+  if ($sidebar) {
+    syncSidebarForViewport();
+  }
+
+  if ($sidebarCollapse) {
+    $sidebarCollapse.addEventListener('click', () => {
+      if (isDrawerMode()) {
+        if ($appShell?.classList.contains('drawer-open')) {
+          closeSidebarDrawer();
+        } else {
+          openSidebarDrawer();
+        }
+        return;
+      }
+      const currentlyCollapsed = $appShell?.classList.contains('is-collapsed');
+      applySidebarCollapsed(!currentlyCollapsed);
+      try { updateSidebarGroups(page); } catch (_) {}
+    });
+  }
+
+  if ($sidebarDrawerToggle) {
+    $sidebarDrawerToggle.addEventListener('click', () => {
+      if (isDrawerMode()) {
+        if ($appShell?.classList.contains('drawer-open')) {
+          closeSidebarDrawer();
+        } else {
+          openSidebarDrawer();
+        }
+      } else {
+        const currentlyCollapsed = $appShell?.classList.contains('is-collapsed');
+        applySidebarCollapsed(!currentlyCollapsed);
+        try { updateSidebarGroups(page); } catch (_) {}
+      }
+    });
+  }
+
+  $sidebarOverlay?.addEventListener('click', () => closeSidebarDrawer());
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      closeSidebarDrawer();
+    }
+  });
+
+  if ($sidebar) {
+    $sidebar.addEventListener('focusin', () => {
+      if (sidebarFocusCollapsed && !$appShell?.classList.contains('is-collapsed')) {
+        sidebarFocusCollapsed = false;
+        updateSidebarGroups(page);
+      }
+    });
+    $sidebar.addEventListener('focusout', (event) => {
+      const nextTarget = event.relatedTarget;
+      if (!nextTarget || !$sidebar.contains(nextTarget)) {
+        collapseSidebarFocus();
+      }
+    });
+  }
+
+  document.addEventListener('pointerdown', (event) => {
+    if (!$sidebar || $appShell?.classList.contains('is-collapsed')) return;
+    if (!$sidebar.contains(event.target)) {
+      collapseSidebarFocus();
+    }
+  });
+
+  window.addEventListener('resize', () => {
+    clearTimeout(sidebarResizeTimer);
+    sidebarResizeTimer = window.setTimeout(() => {
+      syncSidebarForViewport();
+    }, 160);
+  });
+
+  if (typeof mediaDrawer.addEventListener === 'function') {
+    mediaDrawer.addEventListener('change', syncSidebarForViewport);
+  } else if (typeof mediaDrawer.addListener === 'function') {
+    mediaDrawer.addListener(syncSidebarForViewport);
+  }
+
   // Log autoscroll behavior: follow bottom unless user scrolls up
   let followTail = true;
   function atBottom(el, threshold = 24) {
@@ -1332,7 +1731,7 @@
   })();
   let dataset = savedDatasetPref || 'all';
   accountState.prefDataset = dataset;
-  let page = 'export';
+  page = 'export';
   const PAGE_PERSIST_KEY = 'atlas_active_page_v1';
   const ROUTABLE_PAGE_KEYS = [
     'search',
@@ -3066,6 +3465,20 @@
 
   function renderFilters() {
     $filterRow.innerHTML = "";
+    const usedIds = new Set();
+    const ensureId = (col, index) => {
+      const base = String(col || `col-${index}`)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "") || `col-${index}`;
+      let candidate = `filter-${base}`;
+      let suffix = 2;
+      while (usedIds.has(candidate)) {
+        candidate = `filter-${base}-${suffix++}`;
+      }
+      usedIds.add(candidate);
+      return candidate;
+    };
     const vis = getVisibleColumns();
     vis.forEach((col, i) => {
       const wrap = document.createElement("div");
@@ -3075,6 +3488,10 @@
       input.className = "filter";
       input.type = "text";
       input.placeholder = "filter";
+      const inputId = ensureId(col, i);
+      input.id = inputId;
+      input.name = inputId;
+      input.setAttribute('aria-label', `${col} column filter`);
       input.value = colFilters[col] || "";
       input.addEventListener("input", debounce(() => {
         colFilters[col] = input.value;
@@ -3744,6 +4161,27 @@
       const suggestionsTab = $pages?.querySelector('button.tab[data-page="suggestions"]');
       suggestionsTab?.classList.add('active');
     }
+    if ($pages) {
+      const navButtons = Array.from($pages.querySelectorAll('button.tab'));
+      navButtons.forEach((btn) => {
+        const navPage = btn.getAttribute('data-page');
+        const isActive = navPage === p || (p === 'suggestion-detail' && navPage === 'suggestions');
+        btn.setAttribute('aria-current', isActive ? 'page' : 'false');
+      });
+    }
+    if ($topbarTitle) {
+      let label = 'Infrastructure Atlas';
+      if (p === 'suggestion-detail' || p === 'suggestions') {
+        label = 'Suggestions';
+      } else if (p === 'account') {
+        label = 'Account';
+      } else {
+        const activeBtn = $pages?.querySelector(`button.tab[data-page="${p}"]`);
+        if (activeBtn) label = activeBtn.textContent.trim() || label;
+      }
+      $topbarTitle.textContent = label || 'Infrastructure Atlas';
+    }
+    updateSidebarGroups(p);
     // Update hash
     try {
       const url = new URL(window.location.href);
@@ -3827,6 +4265,7 @@
       hideToolPreview();
     }
     applyRoleRestrictions();
+    syncSidebarSubnavActive(p);
   }
   function parseHashPage() {
     try {
@@ -3877,6 +4316,44 @@
     const nextPage = parseHashPage();
     showPage(nextPage);
   });
+  // Helper function to toggle sidebar submenu with accordion behavior
+  function toggleSidebarSubmenu(clickedGroup, clickedButton) {
+    if ($appShell?.classList.contains('is-collapsed')) return;
+
+    const clickedSubitems = clickedGroup.querySelector('.sidebar-subitems');
+    if (!clickedSubitems) return;
+
+    const isCurrentlyExpanded = clickedButton.getAttribute('aria-expanded') === 'true';
+    const pageKey = clickedGroup.dataset.page;
+
+    // Reset focus-collapse flag when manually toggling
+    sidebarFocusCollapsed = false;
+
+    // Collapse all other submenus (accordion behavior)
+    sidebarGroups.forEach((group) => {
+      if (group === clickedGroup) return;
+      const subitems = group.querySelector('.sidebar-subitems');
+      const parentButton = group.querySelector('button.sidebar-item');
+      if (subitems) {
+        subitems.setAttribute('hidden', '');
+      }
+      if (parentButton) {
+        parentButton.setAttribute('aria-expanded', 'false');
+      }
+    });
+
+    // Toggle the clicked submenu
+    if (isCurrentlyExpanded) {
+      clickedSubitems.setAttribute('hidden', '');
+      clickedButton.setAttribute('aria-expanded', 'false');
+    } else {
+      // Build submenu content if needed
+      buildSidebarSubnav(pageKey);
+      clickedSubitems.removeAttribute('hidden');
+      clickedButton.setAttribute('aria-expanded', 'true');
+    }
+  }
+
   // Attach click handlers to each top-level page button (robust against text-node targets)
   if ($pages) {
     const pgBtns = Array.from($pages.querySelectorAll('button.tab'));
@@ -3888,7 +4365,20 @@
           alert('You do not have access to that page.');
           return;
         }
+
+        // Handle accordion behavior for items with submenus
+        const parentGroup = btn.closest('.sidebar-group');
+        const hasSubmenu = btn.hasAttribute('aria-controls');
+
+        if (hasSubmenu && parentGroup && !isDrawerMode()) {
+          // Toggle submenu visibility with accordion behavior
+          toggleSidebarSubmenu(parentGroup, btn);
+        }
+
         showPage(p);
+        if (isDrawerMode()) {
+          closeSidebarDrawer();
+        }
       });
     });
   }
@@ -3908,6 +4398,8 @@
         if ($accountPrefDataset) $accountPrefDataset.value = ds;
         fetchData();
         updateURLDebounced();
+        buildSidebarSubnav('export');
+        syncSidebarSubnavActive('export');
       });
     });
   }
@@ -4129,6 +4621,8 @@
         btn.classList.toggle('active', btnTab === tab);
       });
     }
+    buildSidebarSubnav('commvault');
+    syncSidebarSubnavActive('commvault');
     commvaultPanels.forEach((panel) => {
       if (!panel) return;
       const isActive = panel.dataset.commvaultPanel === tab;
@@ -5745,6 +6239,7 @@
       frag.appendChild(btn);
     });
     $vcenterTabs.appendChild(frag);
+    buildSidebarSubnav('vcenter');
   }
 
   function vcenterVmMatches(vm, token) {
@@ -7181,6 +7676,8 @@
       const isActive = btn.dataset.adminTab === tab;
       btn.classList.toggle('active', isActive);
     });
+    buildSidebarSubnav('admin');
+    syncSidebarSubnavActive('admin');
     Object.entries(adminPanels).forEach(([key, panel]) => {
       if (!panel) return;
       panel.classList.toggle('active', key === tab);
