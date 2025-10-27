@@ -252,7 +252,6 @@ Frontend (UI)
   - NetBox: read‑only search across exported datasets (All/Devices/VMs).
   - Jira: read‑only search (full‑text + filters). Clicking the key opens the issue in Jira.
   - Confluence: read‑only CQL search. Clicking the title opens the page in Confluence.
-  - Chat: AI chat (suggestions only; no automatic actions). Provider selection (OpenAI/OpenRouter/Claude/Gemini/Other).
   - Export: dataset viewer with Devices, VMs and All (merged)
 - Export grid features:
   - Virtual scrolling (smooth with large datasets)
@@ -316,26 +315,6 @@ CLI (Jira/Confluence/Zabbix)
 
 Notes:
 - `-h` is available as an alias for `--help` on all commands and groups.
-
-Chat configuration
-------------------
-
-- Set one or more API keys in `.env`:
-  - `OPENAI_API_KEY`
-  - `OPENROUTER_API_KEY`
-  - `ANTHROPIC_API_KEY` (Claude)
-  - `GOOGLE_API_KEY` (Gemini)
--- Optional defaults:
-  - `CHAT_DEFAULT_PROVIDER` (openai|openrouter|claude|gemini)
-  - `CHAT_DEFAULT_MODEL_OPENAI` (e.g. `gpt-4o-mini`)
-  - `CHAT_DEFAULT_MODEL_OPENROUTER` (e.g. `openrouter/auto` or a specific model)
-  - `CHAT_DEFAULT_MODEL_CLAUDE` (e.g. `claude-3-5-sonnet-20240620`)
-  - `CHAT_DEFAULT_MODEL_GEMINI` (e.g. `gemini-1.5-flash`)
-
-Behavior:
-- Chat opens with your last used provider/model (stored in localStorage) or the defaults from `.env`.
-- The chat session is preserved while navigating (session_id in localStorage, server keeps history in memory).
-- Answers are suggestions/example text only; no automatic actions toward Jira/Confluence or other systems.
 
 Data Flow
 ---------
