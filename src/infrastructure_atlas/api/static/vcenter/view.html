@@ -1,0 +1,524 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Virtual Machine Details</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #0f1729;
+        color: #f8fafc;
+      }
+      body {
+        margin: 0;
+        padding: 32px;
+      }
+      .vm-details {
+        max-width: 900px;
+        margin: 0 auto;
+        background: rgba(30, 41, 59, 0.85);
+        border-radius: 16px;
+        padding: 32px;
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        box-shadow: 0 24px 48px rgba(15, 23, 42, 0.4);
+      }
+      .vm-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 24px;
+      }
+      .vm-name {
+        font-size: 1.6rem;
+        font-weight: 600;
+        margin: 0;
+      }
+      .vm-meta {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 18px;
+        margin-bottom: 24px;
+      }
+      .info-card {
+        background: rgba(15, 23, 42, 0.75);
+        border-radius: 12px;
+        padding: 14px 16px;
+        border: 1px solid rgba(148, 163, 184, 0.15);
+      }
+      .info-card h3 {
+        margin: 0 0 6px;
+        font-size: 0.75rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: rgba(148, 163, 184, 0.75);
+      }
+      .info-card p {
+        margin: 0;
+        font-size: 1rem;
+        font-weight: 600;
+        color: #e2e8f0;
+        word-break: break-all;
+      }
+      .section {
+        margin-top: 32px;
+      }
+      .section h2 {
+        margin: 0 0 16px;
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: #cbd5f5;
+      }
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 6px 12px;
+        font-size: 0.85rem;
+        background: rgba(59, 130, 246, 0.15);
+        color: #90cdf4;
+        border: 1px solid rgba(59, 130, 246, 0.35);
+      }
+      .chip.alt {
+        background: rgba(34, 197, 94, 0.15);
+        color: #86efac;
+        border-color: rgba(34, 197, 94, 0.35);
+      }
+      .data-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 12px;
+      }
+      .data-table th,
+      .data-table td {
+        padding: 10px 12px;
+        text-align: left;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+      }
+      .data-table th {
+        font-size: 0.75rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: rgba(148, 163, 184, 0.75);
+      }
+      .data-table td {
+        font-size: 0.95rem;
+        color: #e2e8f0;
+      }
+      .data-table tbody tr:hover {
+        background: rgba(59, 130, 246, 0.08);
+      }
+      .link-button {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 16px;
+        border-radius: 10px;
+        background: rgba(59, 130, 246, 0.18);
+        color: #93c5fd;
+        border: 1px solid rgba(59, 130, 246, 0.35);
+        text-decoration: none;
+        font-weight: 600;
+      }
+      .link-button:hover {
+        background: rgba(59, 130, 246, 0.28);
+      }
+      .status-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        border-radius: 999px;
+        font-weight: 600;
+        font-size: 0.85rem;
+      }
+      .status-chip.on {
+        background: rgba(34, 197, 94, 0.18);
+        color: #86efac;
+        border: 1px solid rgba(34, 197, 94, 0.35);
+      }
+      .status-chip.off {
+        background: rgba(248, 113, 113, 0.15);
+        color: #fca5a5;
+        border: 1px solid rgba(248, 113, 113, 0.35);
+      }
+      .tools-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
+        border-radius: 999px;
+        font-weight: 500;
+        font-size: 0.85rem;
+        background: rgba(34, 197, 94, 0.15);
+        color: #4ade80;
+        border: 1px solid rgba(34, 197, 94, 0.35);
+      }
+      .tools-chip.stale {
+        background: rgba(249, 115, 22, 0.15);
+        color: #fb923c;
+        border-color: rgba(249, 115, 22, 0.35);
+      }
+      .tools-chip.missing {
+        background: rgba(148, 163, 184, 0.18);
+        color: #cbd5f5;
+        border-color: rgba(148, 163, 184, 0.35);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="vm-details" id="vm-details">
+      <div class="vm-header">
+        <div>
+          <p class="status-chip" id="vm-power"></p>
+          <h1 class="vm-name" id="vm-name">Loading…</h1>
+          <a id="vm-vcenter-link" class="link-button" href="#" target="_blank" rel="noreferrer noopener">
+            <img src="../icons/vcenter.ico" alt="" width="18" height="18" />
+            <span>Open in vCenter</span>
+          </a>
+        </div>
+        <div class="info-card">
+          <h3>Updated</h3>
+          <p id="vm-updated">—</p>
+        </div>
+      </div>
+      <div class="vm-meta" id="vm-meta"></div>
+      <div class="section" id="vm-tags" hidden>
+        <h2>Tags</h2>
+        <div class="chips" id="vm-tags-list"></div>
+      </div>
+      <div class="section" id="vm-networks" hidden>
+        <h2>Networks</h2>
+        <div class="chips" id="vm-networks-list"></div>
+      </div>
+      <div class="section">
+        <h2>Network Interfaces</h2>
+        <table class="data-table" id="vm-interfaces">
+          <thead>
+            <tr>
+              <th>MAC Address</th>
+              <th>IP Addresses</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="section">
+        <h2>Identifiers</h2>
+        <table class="data-table" id="vm-identifiers">
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="section">
+        <h2>Guest Tools</h2>
+        <table class="data-table" id="vm-tools">
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="section" id="vm-disks" hidden>
+        <h2>Disks</h2>
+        <table class="data-table" id="vm-disks-table">
+          <thead>
+            <tr>
+              <th>Label</th>
+              <th>Capacity</th>
+              <th>Type</th>
+              <th>Datastore</th>
+              <th>Thin Provisioned</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="section" id="vm-snapshots" hidden>
+        <h2>Snapshots</h2>
+        <table class="data-table" id="vm-snapshots-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Description</th>
+              <th>Created</th>
+              <th>Size</th>
+              <th>State</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="section" id="vm-attributes" hidden>
+        <h2>Custom Attributes</h2>
+        <table class="data-table" id="vm-attributes-table">
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="section">
+        <h2>Raw Data</h2>
+        <pre id="vm-raw" style="overflow: auto; background: rgba(15, 23, 42, 0.85); padding: 16px; border-radius: 12px; border: 1px solid rgba(148, 163, 184, 0.15);"></pre>
+      </div>
+    </div>
+    <script>
+      (function () {
+        const params = new URLSearchParams(window.location.search);
+        const configId = params.get('config');
+        const vmId = params.get('vm');
+        if (!configId || !vmId) {
+          document.getElementById('vm-name').textContent = 'Missing VM parameters';
+          return;
+        }
+        function getVmIdentifier(vm) {
+          if (!vm || typeof vm !== 'object') return '';
+          const candidates = [
+            vm.id,
+            vm.vm_id,
+            vm.vmId,
+            vm.vmID,
+            vm.instance_uuid,
+            vm.instanceUuid,
+            vm.instanceUUID,
+          ];
+          for (let i = 0; i < candidates.length; i += 1) {
+            const raw = candidates[i];
+            if (raw == null) continue;
+            const value = String(raw).trim();
+            if (value) return value;
+          }
+          return '';
+        }
+
+        const apiBase = window.API_BASE || '';
+        const endpoint = `${apiBase}/vcenter/${encodeURIComponent(configId)}/vms`;
+        fetch(endpoint)
+          .then((response) => {
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return response.json();
+          })
+          .then((data) => {
+            const match = Array.isArray(data?.vms)
+              ? data.vms.find((vm) => getVmIdentifier(vm) === vmId)
+              : null;
+            if (!match) {
+              document.getElementById('vm-name').textContent = 'VM not found';
+              return;
+            }
+            const normalized = match && typeof match === 'object' ? { ...match } : match;
+            if (normalized && typeof normalized === 'object') {
+              const identifier = getVmIdentifier(normalized);
+              if (identifier && (!normalized.id || String(normalized.id).trim() !== identifier)) {
+                normalized.id = identifier;
+              }
+            }
+            render(normalized, data.meta || {});
+          })
+          .catch((error) => {
+            document.getElementById('vm-name').textContent = 'Failed to load VM details';
+            document.getElementById('vm-raw').textContent = String(error);
+          });
+
+        function render(vm, meta) {
+          const identifier = getVmIdentifier(vm);
+          const name = vm.name && String(vm.name).trim() ? vm.name : identifier || 'Virtual Machine';
+          document.getElementById('vm-name').textContent = name;
+          const powerChip = document.getElementById('vm-power');
+          const powerState = (vm.power_state || '').toUpperCase();
+          powerChip.textContent = powerState.includes('ON') ? `● ${powerState}` : powerState || 'Unknown';
+          powerChip.className = `status-chip ${powerState.includes('ON') ? 'on' : 'off'}`;
+
+          const updated = meta.generated_at || meta.last_refresh || new Date().toISOString();
+          try {
+            const dt = new Date(updated);
+            document.getElementById('vm-updated').textContent = dt.toLocaleString();
+          } catch {
+            document.getElementById('vm-updated').textContent = updated;
+          }
+
+          const link = document.getElementById('vm-vcenter-link');
+          if (vm.vcenter_url) {
+            link.href = vm.vcenter_url;
+          } else {
+            link.style.display = 'none';
+          }
+
+          const metaGrid = document.getElementById('vm-meta');
+          metaGrid.innerHTML = '';
+          const memoryText = (() => {
+            const mib = Number(vm.memory_mib);
+            if (!Number.isFinite(mib) || mib <= 0) return '—';
+            if (mib >= 1024) {
+              const gib = mib / 1024;
+              const formatted = gib >= 10 ? Math.round(gib).toString() : gib.toFixed(1).replace(/\.0$/, '');
+              return `${formatted} GiB`;
+            }
+            return `${mib.toLocaleString()} MiB`;
+          })();
+
+          const metaEntries = [
+            ['Guest OS', vm.guest_os || 'Unknown'],
+            ['Hardware', vm.hardware_version || '—'],
+            ['Datacenter', vm.datacenter || '—'],
+            ['Cluster', vm.cluster || '—'],
+            ['Folder', vm.folder || '—'],
+            ['Host', vm.host || '—'],
+            ['Resource Pool', vm.resource_pool || '—'],
+            ['vCPU', vm.cpu_count != null ? `${vm.cpu_count}` : '—'],
+            ['Memory', memoryText],
+            ['DNS Name', vm.guest_host_name || vm.guest_ip_address || '—'],
+          ];
+          metaEntries.forEach(([label, value]) => {
+            const card = document.createElement('div');
+            card.className = 'info-card';
+            card.innerHTML = `<h3>${label}</h3><p>${value}</p>`;
+            metaGrid.appendChild(card);
+          });
+
+          const toolsChip = document.getElementById('vm-tools-chip');
+
+          const toolsBody = document.getElementById('vm-tools').querySelector('tbody');
+          toolsBody.innerHTML = '';
+          const toolsRows = [
+            ['Status', vm.tools_status || 'Unknown'],
+            ['Run State', vm.tools_run_state || '—'],
+            ['Version', vm.tools_version || '—'],
+            ['Install Type', vm.tools_install_type || '—'],
+          ];
+          toolsRows.forEach(([label, value]) => {
+            const row = document.createElement('tr');
+            row.innerHTML = `<th>${label}</th><td>${value}</td>`;
+            toolsBody.appendChild(row);
+          });
+
+          const identifiersBody = document.getElementById('vm-identifiers').querySelector('tbody');
+          identifiersBody.innerHTML = '';
+          const identifierRows = [
+            ['VM ID', identifier || '—'],
+            ['Instance UUID', vm.instance_uuid || '—'],
+            ['BIOS UUID', vm.bios_uuid || '—'],
+          ];
+          identifierRows.forEach(([label, value]) => {
+            const row = document.createElement('tr');
+            row.innerHTML = `<th>${label}</th><td>${value}</td>`;
+            identifiersBody.appendChild(row);
+          });
+
+          const tagsSection = document.getElementById('vm-tags');
+          const tagsList = document.getElementById('vm-tags-list');
+          tagsList.innerHTML = '';
+          if (Array.isArray(vm.tags) && vm.tags.length) {
+            vm.tags.forEach((tag) => {
+              const chip = document.createElement('span');
+              chip.className = 'chip alt';
+              chip.textContent = tag;
+              tagsList.appendChild(chip);
+            });
+            tagsSection.hidden = false;
+          } else {
+            tagsSection.hidden = true;
+          }
+
+          const networksSection = document.getElementById('vm-networks');
+          const networksList = document.getElementById('vm-networks-list');
+          networksList.innerHTML = '';
+          if (Array.isArray(vm.network_names) && vm.network_names.length) {
+            vm.network_names.forEach((net) => {
+              const chip = document.createElement('span');
+              chip.className = 'chip';
+              chip.textContent = net;
+              networksList.appendChild(chip);
+            });
+            networksSection.hidden = false;
+          } else {
+            networksSection.hidden = true;
+          }
+
+          const interfacesBody = document.getElementById('vm-interfaces').querySelector('tbody');
+          interfacesBody.innerHTML = '';
+          const macs = Array.isArray(vm.mac_addresses) ? vm.mac_addresses : [];
+          const ips = Array.isArray(vm.ip_addresses) ? vm.ip_addresses : [];
+          if (!macs.length && !ips.length) {
+            const row = document.createElement('tr');
+            row.innerHTML = '<td colspan="2">No network data available.</td>';
+            interfacesBody.appendChild(row);
+          } else {
+            const max = Math.max(macs.length, ips.length);
+            for (let i = 0; i < max; i += 1) {
+              const row = document.createElement('tr');
+              row.innerHTML = `<td>${macs[i] || ''}</td><td>${ips[i] || ''}</td>`;
+              interfacesBody.appendChild(row);
+            }
+          }
+
+          const disksSection = document.getElementById('vm-disks');
+          const disksBody = document.getElementById('vm-disks-table').querySelector('tbody');
+          disksBody.innerHTML = '';
+          const disks = Array.isArray(vm.disks) ? vm.disks : [];
+          if (disks.length) {
+            disks.forEach((disk) => {
+              const row = document.createElement('tr');
+              const label = disk.label || disk.summary || '—';
+              const capacityBytes = Number(disk.capacity_bytes);
+              const capacity = Number.isFinite(capacityBytes) && capacityBytes > 0
+                ? (capacityBytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB'
+                : '—';
+              const type = disk.type || '—';
+              const datastore = disk.datastore || '—';
+              const thinProvisioned = disk.thin_provisioned === true ? 'Yes' : disk.thin_provisioned === false ? 'No' : '—';
+              row.innerHTML = `<td>${label}</td><td>${capacity}</td><td>${type}</td><td>${datastore}</td><td>${thinProvisioned}</td>`;
+              disksBody.appendChild(row);
+            });
+            disksSection.hidden = false;
+          } else {
+            disksSection.hidden = true;
+          }
+
+          const snapshotsSection = document.getElementById('vm-snapshots');
+          const snapshotsBody = document.getElementById('vm-snapshots-table').querySelector('tbody');
+          snapshotsBody.innerHTML = '';
+          const snapshots = Array.isArray(vm.snapshots) ? vm.snapshots : [];
+          if (snapshots.length) {
+            snapshots.forEach((snap) => {
+              const row = document.createElement('tr');
+              const name = snap.name || '—';
+              const description = snap.description || '—';
+              const created = snap.create_time ? new Date(snap.create_time).toLocaleString() : '—';
+              const sizeBytes = Number(snap.size_bytes);
+              const size = Number.isFinite(sizeBytes) && sizeBytes > 0
+                ? (sizeBytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB'
+                : '—';
+              const state = snap.state || '—';
+              row.innerHTML = `<td>${name}</td><td>${description}</td><td>${created}</td><td>${size}</td><td>${state}</td>`;
+              snapshotsBody.appendChild(row);
+            });
+            snapshotsSection.hidden = false;
+          } else {
+            snapshotsSection.hidden = true;
+          }
+
+          const attributesSection = document.getElementById('vm-attributes');
+          const attributesBody = document.getElementById('vm-attributes-table').querySelector('tbody');
+          attributesBody.innerHTML = '';
+          const attrEntries = vm.custom_attributes && typeof vm.custom_attributes === 'object'
+            ? Object.entries(vm.custom_attributes)
+            : [];
+          if (attrEntries.length) {
+            attrEntries.forEach(([key, value]) => {
+              const row = document.createElement('tr');
+              row.innerHTML = `<th>${key}</th><td>${value ?? ''}</td>`;
+              attributesBody.appendChild(row);
+            });
+            attributesSection.hidden = false;
+          } else {
+            attributesSection.hidden = true;
+          }
+
+          document.getElementById('vm-raw').textContent = JSON.stringify(vm, null, 2);
+        }
+      })();
+    </script>
+  </body>
+</html>

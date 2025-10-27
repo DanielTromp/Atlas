@@ -1,0 +1,135 @@
+# ═══════════════════════════════════════════════════════════
+# Environment & Secrets
+# ═══════════════════════════════════════════════════════════
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.pub
+id_rsa*
+*.ppk
+
+# ═══════════════════════════════════════════════════════════
+# Database Files
+# ═══════════════════════════════════════════════════════════
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-shm
+*.db-wal
+
+# ═══════════════════════════════════════════════════════════
+# Python / Tooling
+# ═══════════════════════════════════════════════════════════
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+ENV/
+.benchmarks
+.python-version
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.hypothesis/
+
+# ═══════════════════════════════════════════════════════════
+# IDE / Editor
+# ═══════════════════════════════════════════════════════════
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.code-workspace
+.vs/
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# ═══════════════════════════════════════════════════════════
+# Project-specific (Infrastructure Atlas)
+# ═══════════════════════════════════════════════════════════
+# AI assistant files
+.claude/
+AGENTS.md
+CLAUDE.md
+todo.md
+
+# Data & exports (may contain real infrastructure info)
+data/
+exports/
+netbox-export/data/
+netbox-export/exports/
+
+# Logs & monitoring
+logs/
+*.log
+export.log
+
+# Backups (may contain sensitive data)
+backups/
+*.backup
+*.bak
+
+# SSL/TLS certificates
+certs/
+
+# Reports (may contain sensitive infrastructure details)
+reports/
+
+# Personal/local files
+personal/
+local/
+scratch/
+
+# Tests & docs (add back when ready for public)
+tests/
+docs/
+
+# Static assets (personal branding)
+src/infrastructure_atlas/api/static/logo.svg
+
+# ═══════════════════════════════════════════════════════════
+# Python Packaging
+# ═══════════════════════════════════════════════════════════
+*.egg-info/
+*.dist-info/
+build/
+dist/
+wheels/
+*.egg
+MANIFEST
+
+# ═══════════════════════════════════════════════════════════
+# Dependency Management
+# ═══════════════════════════════════════════════════════════
+uv.lock
+
+# ═══════════════════════════════════════════════════════════
+# Node.js (if any frontend tooling exists)
+# ═══════════════════════════════════════════════════════════
+node_modules/
+package-lock.json
+package.json
+yarn.lock
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
