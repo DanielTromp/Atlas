@@ -1392,12 +1392,13 @@ def search_run(
     zlimit: int = typer.Option(0, "--zlimit", help="Zabbix max items (0 = no limit)"),
     jlimit: int = typer.Option(0, "--jlimit", help="Jira max issues (0 = no limit)"),
     climit: int = typer.Option(0, "--climit", help="Confluence max results (0 = no limit)"),
+    vlimit: int = typer.Option(0, "--vlimit", help="vCenter max VMs (0 = no limit)"),
     json_out: bool = typer.Option(False, "--json", help="Output full JSON with all available fields"),
     out: str = typer.Option("", "--out", help="Save full JSON to file (pretty-printed)"),
 ):
-    """Run the Search aggregator across Zabbix, Jira, Confluence, and NetBox.
+    """Run the Search aggregator across Zabbix, Jira, Confluence, vCenter, and NetBox.
 
-    Defaults: unlimited (zlimit/jlimit/climit = 0). Use --json for full details.
+    Defaults: unlimited (zlimit/jlimit/climit/vlimit = 0). Use --json for full details.
     """
     load_env()
     logger.info(
@@ -1407,12 +1408,32 @@ def search_run(
             "zlimit": zlimit,
             "jlimit": jlimit,
             "climit": climit,
+            "vlimit": vlimit,
             "json": json_out,
             "out": out or None,
         },
     )
     from infrastructure_atlas.api.app import search_aggregate as _agg
-    res = _agg(q=q, zlimit=zlimit, jlimit=jlimit, climit=climit)
+
+    # Create a mock request object for CLI usage
+    from unittest.mock import MagicMock
+    from fastapi import Request
+
+    mock_request = MagicMock(spec=Request)
+    mock_request.state.permissions = frozenset(["vcenter.view"])  # Grant all permissions for CLI
+
+    # Create a mock admin user for CLI
+    from infrastructure_atlas.db.models import User
+    mock_user = User(
+        id="cli-user",
+        username="cli",
+        display_name="CLI User",
+        role="admin",
+        is_active=True,
+    )
+    mock_request.state.user = mock_user
+
+    res = _agg(request=mock_request, q=q, zlimit=zlimit, jlimit=jlimit, climit=climit, vlimit=vlimit)
     # Save to file when requested (pretty JSON)
     if out:
         import json as _json
@@ -1452,3 +1473,13 @@ def search_run(
         typ = it.get('Type') or ''
         upd = it.get('Updated') or ''
         _print(f"  - {nm} {f'({typ})' if typ else ''} [dim]{upd}[/dim]")
+    # vCenter
+    v = res.get("vcenter") or {}
+    _print(f"[bold]vCenter[/bold] — {v.get('total', 0)} VMs")
+    for it in (v.get("items") or [])[:10]:
+        vm_name = it.get('name', '')
+        config_name = it.get('config_name', '')
+        power_state = it.get('power_state', '')
+        guest_os = it.get('guest_os', '')
+        ip_addr = it.get('guest_ip_address', '')
+        _print(f"  - {vm_name} [dim]({config_name})[/dim] {power_state} {guest_os or ''} {f'IP: {ip_addr}' if ip_addr else ''}")
