@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from infrastructure_atlas.db.models import ChatMessage, ChatSession, User
+from infrastructure_atlas.db.models import ChatMessage, ChatSession, GlobalAPIKey, User, UserAPIKey
 from infrastructure_atlas.env import project_root
 from infrastructure_atlas.infrastructure.logging import get_logger
 
@@ -43,6 +43,19 @@ from infrastructure_atlas.api.app import (
     _safe_json_loads,
     require_permission,
 )
+
+
+def _get_user_api_key(db: Session, user_id: str, provider: str) -> UserAPIKey | None:
+    stmt = select(UserAPIKey).where(
+        UserAPIKey.user_id == user_id,
+        UserAPIKey.provider == provider,
+    )
+    return db.execute(stmt).scalar_one_or_none()
+
+
+def _get_global_api_key(db: Session, provider: str) -> GlobalAPIKey | None:
+    stmt = select(GlobalAPIKey).where(GlobalAPIKey.provider == provider)
+    return db.execute(stmt).scalar_one_or_none()
 
 
 @dataclass(slots=True)
