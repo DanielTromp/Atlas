@@ -209,3 +209,161 @@ def update_role(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return admin_role_to_dto(entity).dict_clean()
+
+
+# ============================================================================
+# Module Management Endpoints
+# ============================================================================
+
+
+@router.get("/modules")
+def list_modules(admin: AdminUserDep):
+    """List all registered modules with their metadata and enabled status."""
+    from infrastructure_atlas.infrastructure.modules import get_module_registry
+
+    registry = get_module_registry()
+    modules = []
+
+    for metadata in registry.list_modules():
+        try:
+            is_enabled = registry.is_enabled(metadata.name)
+            health = registry.health_check(metadata.name) if is_enabled else None
+
+            modules.append({
+                "name": metadata.name,
+                "display_name": metadata.display_name,
+                "description": metadata.description,
+                "version": metadata.version,
+                "category": metadata.category,
+                "dependencies": list(metadata.dependencies),
+                "required_env_vars": list(metadata.required_env_vars),
+                "optional_env_vars": list(metadata.optional_env_vars),
+                "enabled": is_enabled,
+                "health": {
+                    "status": health.status.value,
+                    "message": health.message,
+                    "details": health.details,
+                } if health else None,
+            })
+        except Exception as e:
+            modules.append({
+                "name": metadata.name,
+                "display_name": metadata.display_name,
+                "description": metadata.description,
+                "enabled": False,
+                "error": str(e),
+            })
+
+    return {"modules": modules}
+
+
+@router.get("/modules/{module_name}")
+def get_module(module_name: str, admin: AdminUserDep):
+    """Get detailed information about a specific module."""
+    from infrastructure_atlas.infrastructure.modules import (
+        ModuleNotFoundError,
+        get_module_registry,
+    )
+
+    registry = get_module_registry()
+
+    try:
+        module = registry.get_module(module_name)
+        metadata = module.metadata
+        is_enabled = registry.is_enabled(module_name)
+        health = registry.health_check(module_name) if is_enabled else None
+
+        # Find dependent modules
+        dependent_modules = []
+        for m in registry.list_modules():
+            if module_name in m.dependencies and registry.is_enabled(m.name):
+                dependent_modules.append(m.name)
+
+        return {
+            "name": metadata.name,
+            "display_name": metadata.display_name,
+            "description": metadata.description,
+            "version": metadata.version,
+            "category": metadata.category,
+            "dependencies": list(metadata.dependencies),
+            "dependent_modules": dependent_modules,
+            "required_env_vars": list(metadata.required_env_vars),
+            "optional_env_vars": list(metadata.optional_env_vars),
+            "enabled": is_enabled,
+            "health": {
+                "status": health.status.value,
+                "message": health.message,
+                "details": health.details,
+            } if health else None,
+        }
+    except ModuleNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/modules/{module_name}/enable")
+def enable_module(module_name: str, admin: AdminUserDep):
+    """Enable a module."""
+    from infrastructure_atlas.infrastructure.modules import (
+        ModuleDependencyError,
+        ModuleNotFoundError,
+        get_module_registry,
+    )
+
+    registry = get_module_registry()
+
+    try:
+        registry.enable(module_name, persist=True)
+        return {"status": "enabled", "module": module_name}
+    except ModuleNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ModuleDependencyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to enable module: {exc}") from exc
+
+
+@router.post("/modules/{module_name}/disable")
+def disable_module(module_name: str, admin: AdminUserDep, force: bool = False):
+    """Disable a module.
+
+    Args:
+        module_name: Name of the module to disable.
+        force: If True, disable even if other modules depend on it.
+    """
+    from infrastructure_atlas.infrastructure.modules import (
+        ModuleDependencyError,
+        ModuleNotFoundError,
+        get_module_registry,
+    )
+
+    registry = get_module_registry()
+
+    try:
+        registry.disable(module_name, persist=True, force=force)
+        return {"status": "disabled", "module": module_name}
+    except ModuleNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ModuleDependencyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to disable module: {exc}") from exc
+
+
+@router.get("/modules/health/all")
+def health_check_all_modules(admin: AdminUserDep):
+    """Check the health of all enabled modules."""
+    from infrastructure_atlas.infrastructure.modules import get_module_registry
+
+    registry = get_module_registry()
+    health_results = registry.health_check_all()
+
+    return {
+        "results": {
+            name: {
+                "status": status.status.value,
+                "message": status.message,
+                "details": status.details,
+            }
+            for name, status in health_results.items()
+        }
+    }

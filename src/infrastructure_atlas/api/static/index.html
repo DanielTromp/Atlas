@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Infrastructure Atlas</title>
     <link rel="stylesheet" href="styles.css?v=7" />
-    <link rel="icon" href="/favicon.ico" type="image/png" />
+    <link rel="icon" href="/favicon.png" type="image/png" />
   </head>
-  <body class="theme-nebula-light">
+  <body class="theme-silver-dark">
     <script>
       (function () {
         try {
@@ -19,6 +19,7 @@
             'jade-light', 'jade-dark',
             'coral-light', 'coral-dark',
             'midnight-light', 'midnight-dark',
+            'silver-light', 'silver-dark',
             'default'
           ];
           if (stored === 'atlas-light') {
@@ -26,7 +27,7 @@
           } else if (stored === 'nebula') {
             stored = 'nebula-dark';
           }
-          var theme = allowed.includes(stored) ? stored : 'nebula-light';
+          var theme = allowed.includes(stored) ? stored : 'silver-dark';
           var prefix = 'theme-';
           document.body.classList.remove(
             prefix + 'atlas-light',
@@ -41,6 +42,8 @@
             prefix + 'coral-dark',
             prefix + 'midnight-light',
             prefix + 'midnight-dark',
+            prefix + 'silver-light',
+            prefix + 'silver-dark',
             prefix + 'default'
           );
           document.body.classList.add(prefix + theme);
