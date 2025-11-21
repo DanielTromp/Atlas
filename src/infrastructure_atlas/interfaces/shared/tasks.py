@@ -271,6 +271,7 @@ def _serialize_dataset(defn: DatasetDefinition, meta: DatasetMetadata, command: 
         "last_updated": meta.last_updated.isoformat() if meta.last_updated else None,
         "last_updated_epoch": int(meta.last_updated.timestamp()) if meta.last_updated else None,
         "command": command_display,
+        "can_refresh": command is not None,
         "context": defn.context,
     }
     return payload
