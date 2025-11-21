@@ -1965,6 +1965,13 @@ _static_dir = Path(__file__).parent / "static"
 app.mount("/app", StaticFiles(directory=_static_dir, html=True), name="app")
 
 
+@app.get("/favicon.png")
+def favicon():
+    """Serve favicon at root level."""
+    favicon_path = _static_dir / "favicon.png"
+    return FileResponse(favicon_path, media_type="image/png")
+
+
 @app.get("/logs/tail")
 def logs_tail(n: int = Query(200, ge=1, le=5000)) -> dict:
     """
