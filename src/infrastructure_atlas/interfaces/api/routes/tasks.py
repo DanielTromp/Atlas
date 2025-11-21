@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import shlex
 import time
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
 
@@ -41,6 +42,7 @@ class _TaskLogger:
 # Helper functions
 
 
+@contextmanager
 def task_logging(task: str, **context: Any):
     """Log lifecycle events around long-running UI-triggered tasks."""
     start = time.perf_counter()
