@@ -1962,14 +1962,18 @@ def root_redirect():
 
 # Mount static frontend
 _static_dir = Path(__file__).parent / "static"
-app.mount("/app", StaticFiles(directory=_static_dir, html=True), name="app")
 
 
 @app.get("/favicon.png")
 def favicon():
     """Serve favicon at root level."""
     favicon_path = _static_dir / "favicon.png"
+    if not favicon_path.exists():
+        raise HTTPException(status_code=404, detail="favicon not found")
     return FileResponse(favicon_path, media_type="image/png")
+
+
+app.mount("/app", StaticFiles(directory=_static_dir, html=True), name="app")
 
 
 @app.get("/logs/tail")
