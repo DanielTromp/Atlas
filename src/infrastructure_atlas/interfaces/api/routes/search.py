@@ -108,14 +108,14 @@ def _zabbix_client() -> ZabbixClient:
     """Return configured Zabbix client."""
     import os
 
-    url = os.getenv("ZABBIX_URL", "").strip()
-    token = os.getenv("ZABBIX_TOKEN", "").strip()
+    url = os.getenv("ZABBIX_API_URL", "").strip()
+    token = os.getenv("ZABBIX_API_TOKEN", "").strip()
     user = os.getenv("ZABBIX_USER", "").strip()
     pw = os.getenv("ZABBIX_PASSWORD", "").strip()
-    web_base = os.getenv("ZABBIX_WEB_BASE", "").strip() or None
+    web_base = os.getenv("ZABBIX_WEB_URL", "").strip() or None
 
     if not url:
-        raise HTTPException(status_code=400, detail="Zabbix not configured: ZABBIX_URL is missing in .env")
+        raise HTTPException(status_code=400, detail="Zabbix not configured: ZABBIX_API_URL is missing in .env")
 
     from infrastructure_atlas.infrastructure.external import ZabbixAuthMethod, ZabbixClientConfig
 
@@ -125,7 +125,7 @@ def _zabbix_client() -> ZabbixClient:
         cfg = ZabbixClientConfig(api_url=url, auth_method=ZabbixAuthMethod.USER_PASSWORD, user=user, password=pw, web_base=web_base)
     else:
         raise HTTPException(
-            status_code=400, detail="Zabbix not configured: set ZABBIX_TOKEN or (ZABBIX_USER + ZABBIX_PASSWORD) in .env"
+            status_code=400, detail="Zabbix not configured: set ZABBIX_API_TOKEN or (ZABBIX_USER + ZABBIX_PASSWORD) in .env"
         )
 
     client = ZabbixClient(cfg)
@@ -135,7 +135,7 @@ def _zabbix_client() -> ZabbixClient:
 def _zbx_web_base() -> str:
     """Return Zabbix web base URL."""
     import os
-    return os.getenv("ZABBIX_WEB_BASE", "").strip() or ""
+    return os.getenv("ZABBIX_WEB_URL", "").strip() or ""
 
 
 def _zbx_rpc(method: str, params: dict[str, Any], client: ZabbixClient | None = None) -> Any:
