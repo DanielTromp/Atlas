@@ -48,7 +48,7 @@ def root_redirect():
     return RedirectResponse(url="/app/")
 
 
-@router.get("/favicon.ico")
+@router.get("/favicon.png")
 def favicon_ico():
     """Serve favicon from project package location."""
     # Prefer png present at src/infrastructure_atlas/api/favicon.png
