@@ -116,6 +116,11 @@ def _make_vcenter_command_builder(config_id: str) -> CommandBuilder:
     return _builder
 
 
+def _build_commvault_backups_command(defn: DatasetDefinition, meta: DatasetMetadata) -> list[str]:
+    """Build command to refresh Commvault backups cache."""
+    return _command_with_uv(["atlas", "commvault", "backups", "--refresh-cache", "--json"])
+
+
 def _collect_task_dataset_definitions() -> list[DatasetDefinition]:
     """Collect all dataset task definitions."""
     definitions: list[DatasetDefinition] = [
@@ -125,6 +130,13 @@ def _collect_task_dataset_definitions() -> list[DatasetDefinition]:
             path_globs=("netbox_cache.json",),
             description="Cached NetBox snapshot used for export diffing.",
             command_builder=_build_netbox_cache_command,
+        ),
+        DatasetDefinition(
+            id="commvault-backups",
+            label="Commvault Backups",
+            path_globs=("commvault_backups.json",),
+            description="Cached Commvault backup jobs and retention data.",
+            command_builder=_build_commvault_backups_command,
         ),
     ]
     definitions.extend(_discover_vcenter_task_definitions())
