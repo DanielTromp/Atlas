@@ -79,6 +79,7 @@ def _login_html(next_url: str, error: str | None = None) -> HTMLResponse:
         <html><head>
         <meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
         <title>Login — Infrastructure Atlas</title>
+        <link rel=\"icon\" href=\"/favicon.png\" type=\"image/png\" />
         <style>
         * {{ box-sizing: border-box; }}
 
