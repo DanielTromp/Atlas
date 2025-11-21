@@ -394,7 +394,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     request.state.permissions = frozenset()
 
         # Public endpoints
-        if path in ("/favicon.ico", "/health"):
+        if path in ("/favicon.ico", "/favicon.png", "/health"):
             return await call_next(request)
 
         if path == "/":
