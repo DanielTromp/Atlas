@@ -864,6 +864,25 @@ def backups(  # noqa: PLR0913
         jobs = list(job_list.jobs)
         total_available = job_list.total_available or len(jobs)
 
+        # Write to cache when --refresh-cache is used
+        if refresh_cache and jobs:
+            from datetime import UTC, datetime
+            from infrastructure_atlas.env import project_root
+            cache_payload = {
+                "jobs": [_serialise_commvault_job(job) for job in jobs],
+                "generated_at": datetime.now(tz=UTC).isoformat(),
+                "total_cached": len(jobs),
+                "version": 2,
+            }
+            root = project_root()
+            data_dir = root / "data"
+            data_dir.mkdir(parents=True, exist_ok=True)
+            cache_path = data_dir / "commvault_backups.json"
+            cache_tmp = cache_path.with_suffix(".json.tmp")
+            with cache_tmp.open("w", encoding="utf-8") as f:
+                json.dump(cache_payload, f, indent=2)
+            cache_tmp.replace(cache_path)
+
         if client_filter:
             try:
                 ref = _resolve_client(client, client_filter)
