@@ -116,20 +116,9 @@ def _make_vcenter_command_builder(config_id: str) -> CommandBuilder:
     return _builder
 
 
-def _build_commvault_backups_command(defn: DatasetDefinition, meta: DatasetMetadata) -> list[str]:
-    """Build command to refresh Commvault backups cache."""
-    return _command_with_uv(["atlas", "commvault", "backups", "--refresh-cache", "--json"])
-
-
-def _build_commvault_plans_command(defn: DatasetDefinition, meta: DatasetMetadata) -> list[str]:
-    """Build command to refresh Commvault plans cache."""
-    script = str(project_root() / "scripts" / "refresh_commvault_plans.py")
-    return _command_with_uv_python(script, [])
-
-
-def _build_commvault_storage_command(defn: DatasetDefinition, meta: DatasetMetadata) -> list[str]:
-    """Build command to refresh Commvault storage cache."""
-    script = str(project_root() / "scripts" / "refresh_commvault_storage.py")
+def _build_commvault_command(defn: DatasetDefinition, meta: DatasetMetadata) -> list[str]:
+    """Build command to refresh all Commvault caches (backups, plans, storage)."""
+    script = str(project_root() / "scripts" / "refresh_commvault.py")
     return _command_with_uv_python(script, [])
 
 
@@ -144,25 +133,11 @@ def _collect_task_dataset_definitions() -> list[DatasetDefinition]:
             command_builder=_build_netbox_cache_command,
         ),
         DatasetDefinition(
-            id="commvault-backups",
-            label="Commvault Backups",
-            path_globs=("commvault_backups.json",),
-            description="Cached Commvault backup jobs and retention data.",
-            command_builder=_build_commvault_backups_command,
-        ),
-        DatasetDefinition(
-            id="commvault-plans",
-            label="Commvault Plans",
-            path_globs=("commvault_plans.json",),
-            description="Cached Commvault plans configuration.",
-            command_builder=_build_commvault_plans_command,
-        ),
-        DatasetDefinition(
-            id="commvault-storage",
-            label="Commvault Storage",
-            path_globs=("commvault_storage.json",),
-            description="Cached Commvault storage pools information.",
-            command_builder=_build_commvault_storage_command,
+            id="commvault",
+            label="Commvault",
+            path_globs=("commvault_backups.json", "commvault_plans.json", "commvault_storage.json"),
+            description="Cached Commvault data (backups, plans, and storage pools).",
+            command_builder=_build_commvault_command,
         ),
     ]
     definitions.extend(_discover_vcenter_task_definitions())
