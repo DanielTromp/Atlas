@@ -18,6 +18,7 @@ from infrastructure_atlas.env import project_root
 
 # Type aliases
 CommandBuilder = Callable[["DatasetDefinition", "DatasetMetadata"], list[str] | None]
+MetadataBuilder = Callable[["DatasetDefinition"], "DatasetMetadata"]
 
 # Constants
 TASK_OUTPUT_LINE_LIMIT = 500
@@ -39,6 +40,7 @@ class DatasetDefinition:
     since_source: str | None = None
     context: dict[str, Any] = field(default_factory=dict)
     command_builder: CommandBuilder | None = None
+    metadata_builder: MetadataBuilder | None = None
 
 
 @dataclass(slots=True)
@@ -116,9 +118,48 @@ def _make_vcenter_command_builder(config_id: str) -> CommandBuilder:
     return _builder
 
 
-def _build_commvault_backups_command(defn: DatasetDefinition, meta: DatasetMetadata) -> list[str]:
-    """Build command to refresh Commvault backups cache."""
-    return _command_with_uv(["atlas", "commvault", "backups", "--refresh-cache", "--json"])
+def _build_commvault_metadata(defn: DatasetDefinition) -> DatasetMetadata:
+    """Build metadata for Commvault dataset, reading generated_at from JSON."""
+    import json
+    from datetime import datetime, UTC
+
+    base = _data_dir()
+    files: list[DatasetFileRecord] = []
+    last_updated: datetime | None = None
+
+    # Build file records
+    for pattern in defn.path_globs:
+        pattern_norm = (pattern or "").strip()
+        if not pattern_norm:
+            continue
+        path = base / pattern_norm
+        files.append(_dataset_file_record(base, path))
+
+    # Read generated_at from the backups JSON (primary cache file)
+    backups_path = base / "commvault_backups.json"
+    if backups_path.exists():
+        try:
+            with backups_path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+                generated_at_str = data.get("generated_at")
+                if generated_at_str:
+                    last_updated = datetime.fromisoformat(generated_at_str.replace("Z", "+00:00"))
+        except Exception:
+            pass
+
+    # Fallback to file modification time if no generated_at
+    if last_updated is None:
+        for record in files:
+            if record.modified and (last_updated is None or record.modified > last_updated):
+                last_updated = record.modified
+
+    return DatasetMetadata(definition=defn, files=files, last_updated=last_updated)
+
+
+def _build_commvault_command(defn: DatasetDefinition, meta: DatasetMetadata) -> list[str]:
+    """Build command to refresh all Commvault caches (backups, plans, storage)."""
+    script = str(project_root() / "scripts" / "refresh_commvault.py")
+    return _command_with_uv_python(script, [])
 
 
 def _collect_task_dataset_definitions() -> list[DatasetDefinition]:
@@ -132,11 +173,12 @@ def _collect_task_dataset_definitions() -> list[DatasetDefinition]:
             command_builder=_build_netbox_cache_command,
         ),
         DatasetDefinition(
-            id="commvault-backups",
-            label="Commvault Backups",
-            path_globs=("commvault_backups.json",),
-            description="Cached Commvault backup jobs and retention data.",
-            command_builder=_build_commvault_backups_command,
+            id="commvault",
+            label="Commvault",
+            path_globs=("commvault_backups.json", "commvault_plans.json", "commvault_storage.json"),
+            description="Cached Commvault data (backups, plans, and storage pools).",
+            command_builder=_build_commvault_command,
+            metadata_builder=_build_commvault_metadata,
         ),
     ]
     definitions.extend(_discover_vcenter_task_definitions())
@@ -224,6 +266,11 @@ def _dataset_file_record(base: Path, path: Path) -> DatasetFileRecord:
 
 def _build_dataset_metadata(defn: DatasetDefinition) -> DatasetMetadata:
     """Build metadata for a dataset definition."""
+    # Use custom metadata builder if provided
+    if defn.metadata_builder is not None:
+        return defn.metadata_builder(defn)
+
+    # Default metadata building logic
     base = _data_dir()
     files: list[DatasetFileRecord] = []
     for pattern in defn.path_globs:

@@ -108,26 +108,21 @@ def _zabbix_client() -> ZabbixClient:
     """Return configured Zabbix client."""
     import os
 
-    url = os.getenv("ZABBIX_URL", "").strip()
-    token = os.getenv("ZABBIX_TOKEN", "").strip()
-    user = os.getenv("ZABBIX_USER", "").strip()
-    pw = os.getenv("ZABBIX_PASSWORD", "").strip()
-    web_base = os.getenv("ZABBIX_WEB_BASE", "").strip() or None
+    from infrastructure_atlas.infrastructure.external import ZabbixClientConfig
 
+    url = os.getenv("ZABBIX_API_URL", "").strip()
     if not url:
-        raise HTTPException(status_code=400, detail="Zabbix not configured: ZABBIX_URL is missing in .env")
+        raise HTTPException(status_code=400, detail="Zabbix not configured: ZABBIX_API_URL is missing in .env")
 
-    from infrastructure_atlas.infrastructure.external import ZabbixAuthMethod, ZabbixClientConfig
+    token = os.getenv("ZABBIX_API_TOKEN", "").strip() or None
+    web_base = os.getenv("ZABBIX_WEB_URL", "").strip() or None
 
-    if token:
-        cfg = ZabbixClientConfig(api_url=url, auth_method=ZabbixAuthMethod.API_TOKEN, api_token=token, web_base=web_base)
-    elif user and pw:
-        cfg = ZabbixClientConfig(api_url=url, auth_method=ZabbixAuthMethod.USER_PASSWORD, user=user, password=pw, web_base=web_base)
-    else:
-        raise HTTPException(
-            status_code=400, detail="Zabbix not configured: set ZABBIX_TOKEN or (ZABBIX_USER + ZABBIX_PASSWORD) in .env"
-        )
-
+    cfg = ZabbixClientConfig(
+        api_url=url,
+        api_token=token,
+        web_url=web_base,
+        timeout=30.0,
+    )
     client = ZabbixClient(cfg)
     return client
 
@@ -135,21 +130,22 @@ def _zabbix_client() -> ZabbixClient:
 def _zbx_web_base() -> str:
     """Return Zabbix web base URL."""
     import os
-    return os.getenv("ZABBIX_WEB_BASE", "").strip() or ""
+    return os.getenv("ZABBIX_WEB_URL", "").strip() or ""
 
 
 def _zbx_rpc(method: str, params: dict[str, Any], client: ZabbixClient | None = None) -> Any:
     """Execute Zabbix RPC method."""
+    from infrastructure_atlas.infrastructure.external import ZabbixAuthError, ZabbixError
+
     if client is None:
         client = _zabbix_client()
     try:
-        return client.call(method, params)
-    except Exception as ex:
-        from infrastructure_atlas.infrastructure.external import ZabbixAuthError
-
-        if isinstance(ex, ZabbixAuthError):
-            raise HTTPException(status_code=401, detail=f"Zabbix auth error: {ex}")
-        raise HTTPException(status_code=502, detail=f"Zabbix RPC error: {ex}")
+        result = client.rpc(method, params)
+    except ZabbixAuthError as err:
+        raise HTTPException(status_code=401, detail=f"Zabbix error: {err}") from err
+    except ZabbixError as err:
+        raise HTTPException(status_code=502, detail=f"Zabbix error: {err}") from err
+    return result
 
 
 # API Routes
