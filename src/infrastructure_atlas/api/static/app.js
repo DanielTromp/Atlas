@@ -160,6 +160,7 @@
   const $navChat = document.querySelector('button[data-page="chat"]');
   const $navVCenter = document.querySelector('button[data-page="vcenter"]');
   const $navForeman = document.querySelector('button[data-page="foreman"]');
+  const $navPuppet = document.querySelector('button[data-page="puppet"]');
   const $navTools = document.querySelector('button[data-page="tools"]');
   const $navTasks = document.querySelector('button[data-page="tasks"]');
   const $navAdmin = document.querySelector('button[data-page="admin"]');
@@ -167,6 +168,7 @@
   const $pageCommvault = document.getElementById("page-commvault");
   const $pageVCenter = document.getElementById("page-vcenter");
   const $pageForeman = document.getElementById("page-foreman");
+  const $pagePuppet = document.getElementById("page-puppet");
   const $pageNetbox = document.getElementById("page-netbox");
   const $pageSearch = document.getElementById("page-search");
   const $pageTools = document.getElementById("page-tools");
@@ -737,6 +739,7 @@
     'export': document.getElementById('admin-panel-export'),
     'api': document.getElementById('admin-panel-api'),
     'vcenter': document.getElementById('admin-panel-vcenter'),
+    'puppet': document.getElementById('admin-panel-puppet'),
     'users': document.getElementById('admin-panel-users'),
     'backup': document.getElementById('admin-panel-backup'),
   };
@@ -757,6 +760,19 @@
   const $adminBackupRemoteConfig = document.getElementById("admin-backup-remote-config");
   const $adminVCenterList = document.getElementById("admin-vcenter-list");
   const $adminVCenterAdd = document.getElementById("admin-vcenter-add");
+  const $adminPuppetList = document.getElementById("admin-puppet-list");
+  const $adminPuppetAdd = document.getElementById("admin-puppet-add");
+  const $adminPuppetForm = document.getElementById("admin-puppet-form");
+  const $adminPuppetFormTitle = document.getElementById("admin-puppet-form-title");
+  const $adminPuppetId = document.getElementById("admin-puppet-id");
+  const $adminPuppetName = document.getElementById("admin-puppet-name");
+  const $adminPuppetRemoteUrl = document.getElementById("admin-puppet-remote-url");
+  const $adminPuppetBranch = document.getElementById("admin-puppet-branch");
+  const $adminPuppetSshKey = document.getElementById("admin-puppet-ssh-key");
+  const $adminPuppetSave = document.getElementById("admin-puppet-save");
+  const $adminPuppetCancel = document.getElementById("admin-puppet-cancel");
+  const $adminPuppetStatus = document.getElementById("admin-puppet-status");
+  const $adminPuppetFormStatus = document.getElementById("admin-puppet-form-status");
   const $adminVCenterForm = document.getElementById("admin-vcenter-form");
   const $adminVCenterFormTitle = document.getElementById("admin-vcenter-form-title");
   const $adminVCenterId = document.getElementById("admin-vcenter-id");
@@ -1294,6 +1310,9 @@
     if (canAccessPage('foreman') && foremanState.instances.length === 0) {
       loadForemanInstances().catch(() => {});
     }
+    if (canAccessPage('puppet') && puppetState.instances.length === 0) {
+      loadPuppetInstances().catch(() => {});
+    }
   }
 
   function hasPermission(code) {
@@ -1814,6 +1833,9 @@
     vcenters: [],
     vcenterLoading: false,
     editingVCenter: null,
+    puppets: [],
+    puppetLoading: false,
+    editingPuppet: null,
   };
   const chatConfig = {
     systemPrompt: '',
@@ -4089,6 +4111,7 @@
     if (key === 'tasks') return hasPermission('export.run');
     if (key === 'vcenter') return hasPermission('vcenter.view') || (currentUser && currentUser.role === 'admin');
     if (key === 'foreman') return hasPermission('foreman.view') || (currentUser && currentUser.role === 'admin');
+    if (key === 'puppet') return hasPermission('puppet.view') || (currentUser && currentUser.role === 'admin');
     if (key === 'admin') return currentUser && currentUser.role === 'admin';
     return true;
   }
@@ -4109,6 +4132,7 @@
     const canChat = canAccessPage('chat');
     const canVCenter = canAccessPage('vcenter');
     const canForeman = canAccessPage('foreman');
+    const canPuppet = canAccessPage('puppet');
     const canAdmin = canAccessPage('admin');
      const canTasks = canAccessPage('tasks');
     const canRunExport = hasPermission('export.run');
@@ -4118,6 +4142,7 @@
     if ($navChat) $navChat.hidden = !canChat;
     if ($navVCenter) $navVCenter.hidden = !canVCenter;
     if ($navForeman) $navForeman.hidden = !canForeman;
+    if ($navPuppet) $navPuppet.hidden = !canPuppet;
     if ($navTasks) $navTasks.hidden = !canTasks;
     if ($navAdmin) $navAdmin.hidden = !canAdmin;
 
@@ -4163,6 +4188,7 @@
       commvault: $pageCommvault,
       vcenter: $pageVCenter,
       foreman: $pageForeman,
+      puppet: $pagePuppet,
       zhost: $pageZhost,
       tasks: $pageTasks,
       suggestions: $pageSuggestions,
@@ -4235,6 +4261,8 @@
       loadVCenterInstances().catch(() => {});
     } else if (p === 'foreman') {
       loadForemanInstances().catch(() => {});
+    } else if (p === 'puppet') {
+      loadPuppetInstances().catch(() => {});
     } else if (p === 'tools') {
       loadTools();
     } else if (p === 'tasks') {
@@ -7334,6 +7362,529 @@
   }
 
   // ---------------------------
+  // Puppet Users & Groups
+  // ---------------------------
+  const $puppetTabs = document.getElementById("puppet-tabs");
+  const $puppetViewTabs = document.getElementById("puppet-view-tabs");
+  const $puppetRefresh = document.getElementById("puppet-refresh");
+  const $puppetExport = document.getElementById("puppet-export");
+  const $puppetStatus = document.getElementById("puppet-status");
+  const $puppetSearch = document.getElementById("puppet-search");
+  const $puppetLoading = document.getElementById("puppet-loading");
+  const $puppetError = document.getElementById("puppet-error");
+  const $puppetEmpty = document.getElementById("puppet-empty");
+  const $puppetUsersView = document.getElementById("puppet-users-view");
+  const $puppetGroupsView = document.getElementById("puppet-groups-view");
+  const $puppetMatrixView = document.getElementById("puppet-matrix-view");
+  const $puppetUsersTableWrapper = document.getElementById("puppet-users-table-wrapper");
+  const $puppetUsersTableBody = document.getElementById("puppet-users-tbody");
+  const $puppetGroupsTableWrapper = document.getElementById("puppet-groups-table-wrapper");
+  const $puppetGroupsTableBody = document.getElementById("puppet-groups-tbody");
+  const $puppetMatrixWrapper = document.getElementById("puppet-matrix-wrapper");
+  const $puppetMatrixContent = document.getElementById("puppet-matrix-content");
+
+  const puppetState = {
+    instances: [],
+    activeId: null,
+    currentView: 'users',
+    users: [],
+    groups: [],
+    matrix: null,
+    filtered: { users: [], groups: [] },
+    search: '',
+    loading: false,
+    error: null,
+    statusOverride: null,
+  };
+
+  function setPuppetStatus(message = null, tone = 'info') {
+    if (!$puppetStatus) return;
+    const text = message || describePuppetSelection() || '';
+    $puppetStatus.textContent = text;
+    $puppetStatus.classList.remove('error', 'success');
+    if (tone === 'error') {
+      $puppetStatus.classList.add('error');
+    } else if (tone === 'success') {
+      $puppetStatus.classList.add('success');
+    }
+  }
+
+  function describePuppetSelection() {
+    const view = puppetState.currentView;
+    if (view === 'users') {
+      const total = puppetState.users.length;
+      const filtered = puppetState.filtered.users.length;
+      if (total === 0) return 'No users';
+      if (total === filtered) return `${total} user${total !== 1 ? 's' : ''}`;
+      return `${filtered} of ${total} users`;
+    } else if (view === 'groups') {
+      const total = puppetState.groups.length;
+      const filtered = puppetState.filtered.groups.length;
+      if (total === 0) return 'No groups';
+      if (total === filtered) return `${total} group${total !== 1 ? 's' : ''}`;
+      return `${filtered} of ${total} groups`;
+    }
+    return '';
+  }
+
+  function renderPuppetTabs() {
+    if (!$puppetTabs) return;
+    $puppetTabs.innerHTML = '';
+    if (!puppetState.instances.length) {
+      $puppetTabs.classList.add('empty');
+      return;
+    }
+    $puppetTabs.classList.remove('empty');
+    const frag = document.createDocumentFragment();
+    puppetState.instances.forEach((inst) => {
+      const btn = document.createElement('button');
+      btn.className = 'tab';
+      btn.dataset.puppetId = inst.id;
+      btn.textContent = inst.name || 'Puppet';
+      if (inst.id === puppetState.activeId) {
+        btn.classList.add('active');
+      }
+      frag.appendChild(btn);
+    });
+    $puppetTabs.appendChild(frag);
+  }
+
+  function applyPuppetFilter() {
+    const query = (puppetState.search || '').toLowerCase();
+    if (!query) {
+      puppetState.filtered.users = puppetState.users.slice();
+      puppetState.filtered.groups = puppetState.groups.slice();
+      return;
+    }
+    puppetState.filtered.users = puppetState.users.filter((u) => {
+      return (
+        (u.username || '').toLowerCase().includes(query) ||
+        (u.key_name || '').toLowerCase().includes(query) ||
+        (u.groups || []).some((g) => g.toLowerCase().includes(query))
+      );
+    });
+    puppetState.filtered.groups = puppetState.groups.filter((g) => {
+      return (
+        (g.name || '').toLowerCase().includes(query) ||
+        (g.members || []).some((m) => m.toLowerCase().includes(query))
+      );
+    });
+  }
+
+  function renderPuppetUsersTable() {
+    if (!$puppetUsersTableBody) return;
+    $puppetUsersTableBody.innerHTML = '';
+    const users = puppetState.filtered.users || [];
+    if (!users.length) {
+      const tr = document.createElement('tr');
+      tr.className = 'empty';
+      tr.innerHTML = '<td colspan="8">No users found.</td>';
+      $puppetUsersTableBody.appendChild(tr);
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    users.forEach((u) => {
+      const tr = document.createElement('tr');
+
+      // Status: Active, Disabled, Removed, Locked
+      let statusClass = 'active';
+      let statusLabel = 'Active';
+      if (u.account_locked) {
+        statusClass = 'locked';
+        statusLabel = 'Locked';
+      } else if (u.is_removed) {
+        statusClass = 'removed';
+        statusLabel = 'Removed';
+      } else if (!u.enabled) {
+        statusClass = 'disabled';
+        statusLabel = 'Disabled';
+      }
+
+      const sudoClass = u.has_sudo ? 'yes' : 'no';
+      const sudoLabel = u.has_sudo ? 'Yes' : 'No';
+
+      // Build auth info with details
+      const authParts = [];
+      if (u.has_ssh_key) {
+        const keyType = u.key_type ? u.key_type.replace('ssh-', '').toUpperCase() : 'SSH';
+        const keyBits = u.ssh_key_bits ? ` ${u.ssh_key_bits}b` : '';
+        let keyTitle = `SSH Key: ${keyType}${u.ssh_key_bits ? ` ${u.ssh_key_bits}-bit` : ''}`;
+        let keyClass = '';
+
+        // Check for weak SSH keys
+        if (u.ssh_key_bits && u.ssh_key_bits < 2048) {
+          keyClass = 'puppet-auth-weak';
+          keyTitle = `⚠️ WEAK: ${keyType} ${u.ssh_key_bits}-bit key is too short.\nRSA keys should be at least 2048 bits (4096 recommended).\nConsider upgrading to Ed25519 or RSA 4096.`;
+        } else if (u.ssh_key_bits && u.ssh_key_bits === 2048 && keyType === 'RSA') {
+          keyTitle = `SSH Key: RSA 2048-bit (acceptable).\nConsider upgrading to 4096-bit or Ed25519 for better security.`;
+        } else if (keyType === 'ED25519') {
+          keyTitle = `SSH Key: Ed25519 256-bit (modern, recommended).\nFast, secure, and compact.`;
+        } else if (u.ssh_key_bits && u.ssh_key_bits >= 4096) {
+          keyTitle = `SSH Key: ${keyType} ${u.ssh_key_bits}-bit (strong).`;
+        }
+
+        authParts.push(`<span class="puppet-auth-item ${keyClass}" title="${keyTitle}">🔑 ${keyType}${keyBits}</span>`);
+      }
+      if (u.has_password) {
+        const algo = u.password_algorithm || 'unknown';
+        let algoLabel = algo.toUpperCase();
+        let algoClass = '';
+        let algoTitle = `Password Hash: ${algo}`;
+
+        if (algo === 'sha512') {
+          algoLabel = 'SHA-512';
+          algoTitle = 'Password: SHA-512 (strong).\nModern algorithm with high computational cost.';
+        } else if (algo === 'sha256') {
+          algoLabel = 'SHA-256';
+          algoTitle = 'Password: SHA-256 (good).\nSecure but consider SHA-512 for new passwords.';
+        } else if (algo === 'md5') {
+          algoLabel = 'MD5';
+          algoClass = 'puppet-auth-weak';
+          algoTitle = '⚠️ WEAK: MD5 password hash.\nMD5 is cryptographically broken and vulnerable to:\n• Rainbow table attacks\n• Collision attacks\n• Fast brute-force cracking\n\nAction: User should change password to upgrade hash.';
+        } else if (algo === 'bcrypt') {
+          algoLabel = 'bcrypt';
+          algoTitle = 'Password: bcrypt (strong).\nAdaptive algorithm resistant to GPU attacks.';
+        } else if (algo === 'yescrypt') {
+          algoLabel = 'yescrypt';
+          algoTitle = 'Password: yescrypt (very strong).\nModern memory-hard algorithm.';
+        } else if (algo === 'unknown') {
+          algoTitle = 'Password hash algorithm could not be determined.';
+        }
+
+        authParts.push(`<span class="puppet-auth-item ${algoClass}" title="${algoTitle}">🔐 ${algoLabel}</span>`);
+      }
+
+      tr.innerHTML = `
+        <td class="puppet-user-name">${escapeHtml(u.username)}</td>
+        <td>${u.uid ?? '—'}</td>
+        <td class="puppet-email">${escapeHtml(u.key_name || '—')}</td>
+        <td><span class="puppet-status ${statusClass}">${statusLabel}</span></td>
+        <td><span class="puppet-sudo ${sudoClass}">${sudoLabel}</span></td>
+        <td class="puppet-groups">${(u.groups || []).map((g) => `<span class="puppet-group-chip">${escapeHtml(g)}</span>`).join(' ') || '—'}</td>
+        <td class="puppet-auth">${authParts.join(' ') || '—'}</td>
+      `;
+      frag.appendChild(tr);
+    });
+    $puppetUsersTableBody.appendChild(frag);
+  }
+
+  function renderPuppetGroupsTable() {
+    if (!$puppetGroupsTableBody) return;
+    $puppetGroupsTableBody.innerHTML = '';
+    const groups = puppetState.filtered.groups || [];
+    if (!groups.length) {
+      const tr = document.createElement('tr');
+      tr.className = 'empty';
+      tr.innerHTML = '<td colspan="4">No groups found.</td>';
+      $puppetGroupsTableBody.appendChild(tr);
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    groups.forEach((g) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="puppet-group-name">${escapeHtml(g.name)}</td>
+        <td>${g.gid ?? '—'}</td>
+        <td>${g.member_count ?? 0}</td>
+        <td><span class="puppet-sudo ${g.sudo_member_count > 0 ? 'yes' : 'no'}">${g.sudo_member_count ?? 0}</span></td>
+      `;
+      frag.appendChild(tr);
+    });
+    $puppetGroupsTableBody.appendChild(frag);
+  }
+
+  function renderPuppetMatrix() {
+    if (!$puppetMatrixContent || !puppetState.matrix) return;
+    const { users, groups, matrix } = puppetState.matrix;
+    if (!users.length || !groups.length) {
+      $puppetMatrixContent.innerHTML = '<p class="panel-state">No access data available.</p>';
+      return;
+    }
+    
+    let html = '<table class="puppet-matrix-table"><thead><tr><th>User</th>';
+    groups.forEach((g) => {
+      html += `<th class="puppet-matrix-group">${escapeHtml(g)}</th>`;
+    });
+    html += '</tr></thead><tbody>';
+    
+    users.forEach((username) => {
+      const userAccess = matrix[username] || {};
+      const userInfo = userAccess._user || {};
+      const rowClass = userInfo.enabled ? '' : 'disabled';
+      html += `<tr class="${rowClass}"><td class="puppet-matrix-user">${escapeHtml(username)}`;
+      if (userInfo.has_sudo_any) html += ' <span class="puppet-sudo-badge">sudo</span>';
+      html += '</td>';
+      groups.forEach((g) => {
+        const access = userAccess[g];
+        if (access) {
+          const cellClass = access.has_sudo ? 'puppet-matrix-sudo' : 'puppet-matrix-member';
+          const icon = access.has_sudo ? '<span title="Sudo Access">🔐</span>' : '<span title="Member">✓</span>';
+          html += `<td class="${cellClass}">${icon}</td>`;
+        } else {
+          html += '<td class="puppet-matrix-empty">—</td>';
+        }
+      });
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+    $puppetMatrixContent.innerHTML = html;
+  }
+
+  function updatePuppetView() {
+    const hasInstances = puppetState.instances.length > 0;
+    const isLoading = puppetState.loading;
+    const hasError = !!puppetState.error;
+    const view = puppetState.currentView;
+
+    if ($puppetLoading) $puppetLoading.hidden = !isLoading;
+    if ($puppetError) {
+      $puppetError.hidden = !hasError || isLoading;
+      if (hasError) $puppetError.textContent = puppetState.error;
+    }
+    if ($puppetEmpty) $puppetEmpty.hidden = hasInstances || isLoading || hasError;
+
+    const showContent = hasInstances && !isLoading && !hasError;
+    
+    // Show/hide views
+    if ($puppetUsersView) $puppetUsersView.hidden = view !== 'users';
+    if ($puppetGroupsView) $puppetGroupsView.hidden = view !== 'groups';
+    if ($puppetMatrixView) $puppetMatrixView.hidden = view !== 'matrix';
+
+    if ($puppetUsersTableWrapper) $puppetUsersTableWrapper.hidden = !showContent || view !== 'users';
+    if ($puppetGroupsTableWrapper) $puppetGroupsTableWrapper.hidden = !showContent || view !== 'groups';
+    if ($puppetMatrixWrapper) $puppetMatrixWrapper.hidden = !showContent || view !== 'matrix';
+
+    if (showContent) {
+      if (view === 'users') {
+        renderPuppetUsersTable();
+      } else if (view === 'groups') {
+        renderPuppetGroupsTable();
+      } else if (view === 'matrix') {
+        renderPuppetMatrix();
+      }
+    }
+
+    const override = puppetState.statusOverride;
+    if (override) {
+      setPuppetStatus(override.message, override.tone);
+    } else if (!isLoading && !hasError) {
+      setPuppetStatus(describePuppetSelection());
+    }
+  }
+
+  async function loadPuppetData(configId, options = {}) {
+    if (!configId) return;
+    puppetState.loading = true;
+    puppetState.error = null;
+    puppetState.activeId = configId;
+    renderPuppetTabs();
+    updatePuppetView();
+    setPuppetStatus('Loading Puppet data…');
+
+    try {
+      const refreshParam = options.refresh ? '&refresh=true' : '';
+      
+      // Load users
+      const usersRes = await fetch(`${API_BASE}/puppet/users?config_id=${encodeURIComponent(configId)}${refreshParam}`);
+      if (!usersRes.ok) {
+        const payload = await usersRes.json().catch(() => ({}));
+        throw new Error(payload?.detail || `${usersRes.status} ${usersRes.statusText}`);
+      }
+      const usersData = await usersRes.json();
+      puppetState.users = usersData.results || [];
+
+      // Load groups
+      const groupsRes = await fetch(`${API_BASE}/puppet/groups?config_id=${encodeURIComponent(configId)}`);
+      if (groupsRes.ok) {
+        const groupsData = await groupsRes.json();
+        puppetState.groups = groupsData.results || [];
+      }
+
+      // Load matrix
+      const matrixRes = await fetch(`${API_BASE}/puppet/access-matrix?config_id=${encodeURIComponent(configId)}`);
+      if (matrixRes.ok) {
+        puppetState.matrix = await matrixRes.json();
+      }
+
+      puppetState.error = null;
+      applyPuppetFilter();
+    } catch (err) {
+      console.error('Failed to load Puppet data', err);
+      puppetState.error = err?.message || 'Failed to load Puppet data';
+      puppetState.users = [];
+      puppetState.groups = [];
+      puppetState.matrix = null;
+      puppetState.filtered = { users: [], groups: [] };
+      setPuppetStatus(puppetState.error, 'error');
+    } finally {
+      puppetState.loading = false;
+      updatePuppetView();
+    }
+  }
+
+  async function loadPuppetInstances(force = false) {
+    if (!canAccessPage('puppet')) return [];
+    try {
+      setPuppetStatus('Loading Puppet instances…');
+      const res = await fetch(`${API_BASE}/puppet/instances`);
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload?.detail || `${res.status} ${res.statusText}`);
+      }
+      const items = Array.isArray(payload)
+        ? payload
+            .filter((item) => item && item.id)
+            .map((item) => ({
+              id: item.id,
+              name: (item.name || 'Puppet').trim() || 'Puppet',
+              remote_url: item.remote_url || '',
+              branch: item.branch || 'production',
+              has_ssh_key: !!item.has_ssh_key,
+              last_refresh: item.last_refresh || null,
+              user_count: item.user_count || null,
+              group_count: item.group_count || null,
+              commit_hash: item.commit_hash || null,
+            }))
+        : [];
+      items.sort((a, b) => a.name.localeCompare(b.name));
+      puppetState.instances = items;
+      if (!items.length) {
+        puppetState.activeId = null;
+        puppetState.users = [];
+        puppetState.groups = [];
+        puppetState.filtered = { users: [], groups: [] };
+        puppetState.error = null;
+        renderPuppetTabs();
+        updatePuppetView();
+        setPuppetStatus('No Puppet configurations found.', 'error');
+        return items;
+      }
+      const priorId = puppetState.activeId;
+      const preserveSelection = priorId && items.some((inst) => inst.id === priorId) && !force;
+      const targetId = preserveSelection ? priorId : items[0].id;
+      puppetState.activeId = targetId;
+      renderPuppetTabs();
+      await loadPuppetData(targetId);
+      return items;
+    } catch (err) {
+      console.error('Failed to load Puppet instances', err);
+      puppetState.instances = [];
+      puppetState.activeId = null;
+      puppetState.users = [];
+      puppetState.groups = [];
+      puppetState.filtered = { users: [], groups: [] };
+      puppetState.error = err?.message || 'Failed to load Puppet instances';
+      renderPuppetTabs();
+      updatePuppetView();
+      setPuppetStatus(puppetState.error, 'error');
+      return [];
+    }
+  }
+
+  if ($puppetTabs) {
+    $puppetTabs.addEventListener('click', (event) => {
+      const btn = event.target.closest('button[data-puppet-id]');
+      if (!btn) return;
+      const identifier = btn.dataset.puppetId;
+      if (!identifier) return;
+      if (puppetState.loading && identifier === puppetState.activeId) return;
+      loadPuppetData(identifier).catch(() => {});
+    });
+  }
+
+  if ($puppetViewTabs) {
+    $puppetViewTabs.addEventListener('click', (event) => {
+      const btn = event.target.closest('button[data-puppet-view]');
+      if (!btn) return;
+      const view = btn.dataset.puppetView;
+      if (!view || view === puppetState.currentView) return;
+      
+      // Update active tab
+      Array.from($puppetViewTabs.querySelectorAll('.tab')).forEach((tab) => {
+        tab.classList.toggle('active', tab.dataset.puppetView === view);
+      });
+      
+      puppetState.currentView = view;
+      updatePuppetView();
+      setPuppetStatus(describePuppetSelection());
+    });
+  }
+
+  if ($puppetRefresh) {
+    $puppetRefresh.addEventListener('click', async () => {
+      if (puppetState.activeId) {
+        try {
+          setPuppetStatus('Refreshing from Git…');
+          const res = await fetch(`${API_BASE}/puppet/${encodeURIComponent(puppetState.activeId)}/refresh`, {
+            method: 'POST',
+          });
+          if (!res.ok) {
+            const payload = await res.json().catch(() => ({}));
+            throw new Error(payload?.detail || `${res.status} ${res.statusText}`);
+          }
+          await loadPuppetData(puppetState.activeId, { refresh: true });
+        } catch (err) {
+          console.error('Failed to refresh Puppet data', err);
+          setPuppetStatus(err?.message || 'Failed to refresh', 'error');
+        }
+      } else {
+        loadPuppetInstances(true).catch(() => {});
+      }
+    });
+  }
+
+  if ($puppetExport) {
+    $puppetExport.addEventListener('click', async () => {
+      if (!puppetState.activeId) {
+        setPuppetStatus('No Puppet configuration selected', 'error');
+        return;
+      }
+      try {
+        setPuppetStatus('Generating Excel export…');
+        const url = `${API_BASE}/puppet/export?config_id=${encodeURIComponent(puppetState.activeId)}`;
+        const res = await fetch(url);
+        if (!res.ok) {
+          const payload = await res.json().catch(() => ({}));
+          throw new Error(payload?.detail || `${res.status} ${res.statusText}`);
+        }
+        // Get filename from Content-Disposition header or use default
+        const disposition = res.headers.get('Content-Disposition');
+        let filename = 'puppet_export.xlsx';
+        if (disposition) {
+          const match = disposition.match(/filename="?([^"]+)"?/);
+          if (match) filename = match[1];
+        }
+        // Download the file
+        const blob = await res.blob();
+        const downloadUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(downloadUrl);
+        setPuppetStatus('Export downloaded successfully', 'success');
+      } catch (err) {
+        console.error('Failed to export Puppet data', err);
+        setPuppetStatus(err?.message || 'Failed to export', 'error');
+      }
+    });
+  }
+
+  if ($puppetSearch) {
+    const applySearch = debounce(() => {
+      puppetState.search = ($puppetSearch.value || '').trim();
+      applyPuppetFilter();
+      if (!puppetState.loading && !puppetState.error) {
+        setPuppetStatus(describePuppetSelection());
+      }
+      updatePuppetView();
+    }, 180);
+    $puppetSearch.addEventListener('input', applySearch);
+  }
+
+  // ---------------------------
   // Suggestions
   // ---------------------------
   function updateSuggestionMeta(meta) {
@@ -8183,6 +8734,9 @@
     if (tab === 'vcenter') {
       loadAdminVCenters(adminState.vcenters.length === 0).catch(() => {});
     }
+    if (tab === 'puppet') {
+      loadAdminPuppets(adminState.puppets.length === 0).catch(() => {});
+    }
   }
 
   function resetAdminVCenterForm() {
@@ -8461,6 +9015,229 @@
       }
       flashStatus($adminVCenterStatus, `Failed to delete: ${err?.message || err}`, 4000);
     }
+  }
+
+  // ---------------------------
+  // Puppet Admin Functions
+  // ---------------------------
+  function resetAdminPuppetForm() {
+    if ($adminPuppetId) $adminPuppetId.value = '';
+    if ($adminPuppetName) $adminPuppetName.value = '';
+    if ($adminPuppetRemoteUrl) $adminPuppetRemoteUrl.value = '';
+    if ($adminPuppetBranch) $adminPuppetBranch.value = 'production';
+    if ($adminPuppetSshKey) $adminPuppetSshKey.value = '';
+    if ($adminPuppetFormStatus) {
+      $adminPuppetFormStatus.textContent = '';
+      $adminPuppetFormStatus.classList.remove('success', 'error');
+    }
+    adminState.editingPuppet = null;
+  }
+
+  function openAdminPuppetForm(puppet = null) {
+    resetAdminPuppetForm();
+    if (puppet) {
+      adminState.editingPuppet = puppet;
+      if ($adminPuppetId) $adminPuppetId.value = puppet.id || '';
+      if ($adminPuppetName) $adminPuppetName.value = puppet.name || '';
+      if ($adminPuppetRemoteUrl) $adminPuppetRemoteUrl.value = puppet.remote_url || '';
+      if ($adminPuppetBranch) $adminPuppetBranch.value = puppet.branch || 'production';
+      if ($adminPuppetFormTitle) $adminPuppetFormTitle.textContent = 'Edit Puppet Repository';
+    } else {
+      if ($adminPuppetFormTitle) $adminPuppetFormTitle.textContent = 'Add Puppet Repository';
+    }
+    if ($adminPuppetForm) $adminPuppetForm.classList.remove('hidden');
+  }
+
+  function closeAdminPuppetForm() {
+    resetAdminPuppetForm();
+    if ($adminPuppetForm) $adminPuppetForm.classList.add('hidden');
+  }
+
+  function renderAdminPuppetList() {
+    if (!$adminPuppetList) return;
+    $adminPuppetList.innerHTML = '';
+
+    if (adminState.puppetLoading) {
+      const loading = document.createElement('div');
+      loading.className = 'account-empty';
+      loading.textContent = 'Loading Puppet configurations…';
+      $adminPuppetList.appendChild(loading);
+      return;
+    }
+
+    if (!adminState.puppets.length) {
+      const empty = document.createElement('div');
+      empty.className = 'account-empty';
+      empty.textContent = 'No Puppet repositories configured yet.';
+      $adminPuppetList.appendChild(empty);
+      return;
+    }
+
+    const frag = document.createDocumentFragment();
+    adminState.puppets.forEach((puppet) => {
+      const item = document.createElement('div');
+      item.className = 'admin-vcenter-item';
+      
+      const info = document.createElement('div');
+      info.className = 'admin-vcenter-info';
+      
+      const name = document.createElement('div');
+      name.className = 'admin-vcenter-name';
+      name.textContent = puppet.name || 'Puppet';
+      
+      const url = document.createElement('div');
+      url.className = 'admin-vcenter-url';
+      url.textContent = puppet.remote_url || '';
+      
+      const meta = document.createElement('div');
+      meta.className = 'admin-vcenter-meta';
+      const parts = [];
+      parts.push(`Branch: ${puppet.branch || 'production'}`);
+      if (puppet.has_ssh_key) parts.push('SSH key configured');
+      if (puppet.user_count != null) parts.push(`${puppet.user_count} users`);
+      if (puppet.group_count != null) parts.push(`${puppet.group_count} groups`);
+      meta.textContent = parts.join(' • ');
+      
+      info.appendChild(name);
+      info.appendChild(url);
+      info.appendChild(meta);
+      
+      const actions = document.createElement('div');
+      actions.className = 'admin-vcenter-actions';
+      
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'btn ghost';
+      editBtn.textContent = 'Edit';
+      editBtn.addEventListener('click', () => openAdminPuppetForm(puppet));
+      
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className = 'btn ghost danger';
+      deleteBtn.textContent = 'Delete';
+      deleteBtn.addEventListener('click', () => deleteAdminPuppet(puppet));
+      
+      actions.appendChild(editBtn);
+      actions.appendChild(deleteBtn);
+      
+      item.appendChild(info);
+      item.appendChild(actions);
+      frag.appendChild(item);
+    });
+    $adminPuppetList.appendChild(frag);
+  }
+
+  async function loadAdminPuppets(force = false) {
+    if (!$adminPuppetList) return [];
+    if (adminState.puppetLoading && !force) return adminState.puppets;
+    adminState.puppetLoading = true;
+    renderAdminPuppetList();
+    try {
+      const res = await fetch(`${API_BASE}/puppet/configs`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.detail || res.statusText);
+      }
+      const puppets = await res.json();
+      adminState.puppets = Array.isArray(puppets) ? puppets : [];
+      adminState.puppetLoading = false;
+      renderAdminPuppetList();
+      return adminState.puppets;
+    } catch (err) {
+      console.error('Failed to load Puppet configurations', err);
+      adminState.puppetLoading = false;
+      adminState.puppets = [];
+      renderAdminPuppetList();
+      flashStatus($adminPuppetStatus, `Failed to load: ${err?.message || err}`, 4000);
+      return [];
+    }
+  }
+
+  async function saveAdminPuppet() {
+    const id = $adminPuppetId?.value?.trim() || '';
+    const name = $adminPuppetName?.value?.trim() || '';
+    const remote_url = $adminPuppetRemoteUrl?.value?.trim() || '';
+    const branch = $adminPuppetBranch?.value?.trim() || 'production';
+    const ssh_key_path = $adminPuppetSshKey?.value?.trim() || '';
+
+    if (!name) {
+      flashStatus($adminPuppetFormStatus, 'Name is required.', 3000);
+      return;
+    }
+    if (!remote_url) {
+      flashStatus($adminPuppetFormStatus, 'Git remote URL is required.', 3000);
+      return;
+    }
+
+    const payload = { name, remote_url, branch };
+    if (ssh_key_path) payload.ssh_key_path = ssh_key_path;
+
+    try {
+      const method = id ? 'PUT' : 'POST';
+      const url = id ? `${API_BASE}/puppet/configs/${encodeURIComponent(id)}` : `${API_BASE}/puppet/configs`;
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.detail || res.statusText);
+      }
+      if ($adminPuppetStatus) $adminPuppetStatus.classList.add('success');
+      flashStatus($adminPuppetStatus, id ? 'Updated Puppet configuration.' : 'Created Puppet configuration.', 3600);
+      closeAdminPuppetForm();
+      await loadAdminPuppets(true);
+      loadPuppetInstances(true).catch(() => {});
+    } catch (err) {
+      console.error('Failed to save Puppet configuration', err);
+      if ($adminPuppetFormStatus) $adminPuppetFormStatus.classList.add('error');
+      flashStatus($adminPuppetFormStatus, `Failed to save: ${err?.message || err}`, 4000);
+    }
+  }
+
+  async function deleteAdminPuppet(puppet) {
+    if (!puppet?.id) return;
+    if (!confirm(`Delete Puppet configuration "${puppet.name || puppet.id}"? This will also remove the local repository clone.`)) return;
+    try {
+      const res = await fetch(`${API_BASE}/puppet/configs/${encodeURIComponent(puppet.id)}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.detail || res.statusText);
+      }
+      if ($adminPuppetStatus) {
+        $adminPuppetStatus.classList.remove('error');
+        $adminPuppetStatus.classList.add('success');
+      }
+      flashStatus($adminPuppetStatus, 'Deleted Puppet configuration.', 3600);
+      if (adminState.editingPuppet?.id === puppet.id) {
+        closeAdminPuppetForm();
+      }
+      await loadAdminPuppets(true);
+      loadPuppetInstances(true).catch(() => {});
+    } catch (err) {
+      console.error('Failed to delete Puppet configuration', err);
+      if ($adminPuppetStatus) {
+        $adminPuppetStatus.classList.remove('success');
+        $adminPuppetStatus.classList.add('error');
+      }
+      flashStatus($adminPuppetStatus, `Failed to delete: ${err?.message || err}`, 4000);
+    }
+  }
+
+  if ($adminPuppetAdd) {
+    $adminPuppetAdd.addEventListener('click', () => openAdminPuppetForm());
+  }
+
+  if ($adminPuppetCancel) {
+    $adminPuppetCancel.addEventListener('click', closeAdminPuppetForm);
+  }
+
+  if ($adminPuppetForm) {
+    $adminPuppetForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      saveAdminPuppet();
+    });
   }
 
   // ---------------------------

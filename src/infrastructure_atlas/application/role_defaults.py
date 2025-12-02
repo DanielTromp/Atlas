@@ -29,6 +29,16 @@ ROLE_CAPABILITIES: tuple[dict[str, str], ...] = (
         "label": "View vCenter inventory",
         "description": "Allow viewing vCenter data and VM inventory dashboards.",
     },
+    {
+        "id": "foreman.view",
+        "label": "View Foreman inventory",
+        "description": "Allow viewing Foreman host and hypervisor inventory.",
+    },
+    {
+        "id": "puppet.view",
+        "label": "View Puppet users",
+        "description": "Allow viewing Puppet user and group management data.",
+    },
 )
 
 DEFAULT_ROLE_DEFINITIONS: dict[str, dict[str, Any]] = {
@@ -45,12 +55,12 @@ DEFAULT_ROLE_DEFINITIONS: dict[str, dict[str, Any]] = {
     "operator": {
         "label": "Operator",
         "description": "Can run exports and acknowledge Zabbix alerts but cannot access chat or automation tools.",
-        "permissions": ["export.run", "zabbix.ack", "vcenter.view"],
+        "permissions": ["export.run", "zabbix.ack", "vcenter.view", "foreman.view", "puppet.view"],
     },
     "viewer": {
         "label": "Viewer",
         "description": "Read-only access to dashboards, searches, and downloads.",
-        "permissions": ["vcenter.view"],
+        "permissions": ["vcenter.view", "foreman.view", "puppet.view"],
     },
 }
 

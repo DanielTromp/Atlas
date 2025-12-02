@@ -159,6 +159,17 @@
               </button>
               <div class="sidebar-subitems" id="sidebar-subitems-foreman" data-subnav-container="foreman" hidden></div>
             </div>
+            <div class="sidebar-group" data-page="puppet">
+              <button class="tab sidebar-item" data-page="puppet" type="button" aria-controls="sidebar-subitems-puppet" aria-expanded="false">
+                <span class="sidebar-item-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z"></path>
+                  </svg>
+                </span>
+                <span class="sidebar-item-label">Puppet</span>
+              </button>
+              <div class="sidebar-subitems" id="sidebar-subitems-puppet" data-subnav-container="puppet" hidden></div>
+            </div>
             <div class="sidebar-group" data-page="tools">
               <button class="tab sidebar-item" data-page="tools" type="button">
                 <span class="sidebar-item-icon" aria-hidden="true">
@@ -794,6 +805,7 @@
             <button class="admin-tab" data-admin-tab="export">Export</button>
             <button class="admin-tab" data-admin-tab="api">API &amp; UI</button>
             <button class="admin-tab" data-admin-tab="vcenter">vCenter</button>
+            <button class="admin-tab" data-admin-tab="puppet">Puppet</button>
             <button class="admin-tab" data-admin-tab="users">Users</button>
             <button class="admin-tab" data-admin-tab="backup">Backup</button>
           </nav>
@@ -844,6 +856,39 @@
                   <button id="admin-vcenter-save" type="submit" class="btn">Save vCenter</button>
                   <button id="admin-vcenter-cancel" type="button" class="btn ghost">Cancel</button>
                   <span id="admin-vcenter-form-status" class="form-status"></span>
+                </div>
+              </form>
+            </section>
+            <section id="admin-panel-puppet" class="admin-panel" data-admin-tab="puppet">
+              <div class="admin-puppet-header">
+                <button id="admin-puppet-add" class="btn" type="button" title="Add Puppet Repository">＋ Add Puppet Repo</button>
+                <span id="admin-puppet-status" class="form-status"></span>
+              </div>
+              <div id="admin-puppet-list" class="admin-puppet-list"></div>
+              <form id="admin-puppet-form" class="account-form hidden">
+                <input id="admin-puppet-id" type="hidden" />
+                <h3 id="admin-puppet-form-title">Puppet Repository</h3>
+                <label class="field column">
+                  <span>Name</span>
+                  <input id="admin-puppet-name" type="text" placeholder="Enreach Puppet" required />
+                </label>
+                <label class="field column">
+                  <span>Git Remote URL</span>
+                  <input id="admin-puppet-remote-url" type="text" placeholder="git@gitlab.com:org/puppet.git" required />
+                </label>
+                <label class="field column">
+                  <span>Branch</span>
+                  <input id="admin-puppet-branch" type="text" placeholder="production" value="production" />
+                </label>
+                <label class="field column">
+                  <span>SSH Key Path (optional)</span>
+                  <input id="admin-puppet-ssh-key" type="text" placeholder="~/.ssh/id_rsa" />
+                  <small>Path to SSH private key for Git authentication. Leave blank for default SSH agent.</small>
+                </label>
+                <div class="account-actions">
+                  <button id="admin-puppet-save" type="submit" class="btn">Save Puppet Config</button>
+                  <button id="admin-puppet-cancel" type="button" class="btn ghost">Cancel</button>
+                  <span id="admin-puppet-form-status" class="form-status"></span>
                 </div>
               </form>
             </section>
@@ -1099,6 +1144,81 @@
                 <thead id="foreman-thead"></thead>
                 <tbody id="foreman-tbody"></tbody>
               </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Puppet Page -->
+      <section class="page" id="page-puppet" hidden>
+        <div class="panel panel-puppet">
+          <div class="puppet-header">
+            <div class="puppet-title">
+              <h2>Puppet Users &amp; Groups</h2>
+              <span id="puppet-status" class="form-status"></span>
+            </div>
+            <div class="puppet-actions">
+              <label class="field puppet-search-field">
+                <span>Search</span>
+                <input id="puppet-search" type="text" placeholder="Filter by user, group, email…" />
+              </label>
+              <button id="puppet-refresh" class="btn" type="button">Refresh</button>
+              <button id="puppet-export" class="btn" type="button" title="Export to Excel">Export</button>
+            </div>
+          </div>
+          <nav class="tabs puppet-tabs" id="puppet-tabs" aria-label="Puppet repositories"></nav>
+          <nav class="tabs puppet-view-tabs" id="puppet-view-tabs" aria-label="Views">
+            <button class="tab active" data-puppet-view="users">Users</button>
+            <button class="tab" data-puppet-view="groups">Groups</button>
+            <button class="tab" data-puppet-view="matrix">Access Matrix</button>
+          </nav>
+          <div class="puppet-body">
+            <div id="puppet-loading" class="panel-state" hidden>Loading…</div>
+            <div id="puppet-error" class="panel-state error" hidden></div>
+            <div id="puppet-empty" class="panel-state" hidden>No Puppet configurations found. Add one in Admin settings.</div>
+
+            <!-- Users View -->
+            <div id="puppet-users-view" class="puppet-view">
+              <div id="puppet-users-table-wrapper" class="puppet-table-wrapper" hidden>
+                <table class="puppet-table">
+                  <thead id="puppet-users-thead">
+                    <tr>
+                      <th>Username</th>
+                      <th>UID</th>
+                      <th>Email</th>
+                      <th>Status</th>
+                      <th>Sudo</th>
+                      <th>Groups</th>
+                      <th>Auth</th>
+                    </tr>
+                  </thead>
+                  <tbody id="puppet-users-tbody"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Groups View -->
+            <div id="puppet-groups-view" class="puppet-view" hidden>
+              <div id="puppet-groups-table-wrapper" class="puppet-table-wrapper" hidden>
+                <table class="puppet-table">
+                  <thead id="puppet-groups-thead">
+                    <tr>
+                      <th>Group</th>
+                      <th>GID</th>
+                      <th>Members</th>
+                      <th>Sudo Members</th>
+                    </tr>
+                  </thead>
+                  <tbody id="puppet-groups-tbody"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Matrix View -->
+            <div id="puppet-matrix-view" class="puppet-view" hidden>
+              <div id="puppet-matrix-wrapper" class="puppet-matrix-wrapper" hidden>
+                <div id="puppet-matrix-content" class="puppet-matrix-content"></div>
+              </div>
             </div>
           </div>
         </div>

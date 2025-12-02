@@ -97,6 +97,7 @@ ignore = [
 "tests/**/*.py" = ["S101", "S106"]
 "src/infrastructure_atlas/api/app.py" = ["PLR0913", "PLR0911"]
 "src/infrastructure_atlas/cli.py" = ["PLR0913"]
+"src/infrastructure_atlas/interfaces/api/routes/puppet.py" = ["PLR0913"]
 "src/infrastructure_atlas/application/chat_agents/enhanced_runtime.py" = ["PLR0913"]
 "src/infrastructure_atlas/application/chat_agents/runtime.py" = ["PLR0911"]
 "src/infrastructure_atlas/application/exporter/netbox.py" = ["PLR0913"]
