@@ -252,6 +252,7 @@ Frontend (UI)
   - NetBox: read‑only search across exported datasets (All/Devices/VMs).
   - Jira: read‑only search (full‑text + filters). Clicking the key opens the issue in Jira.
   - Confluence: read‑only CQL search. Clicking the title opens the page in Confluence.
+  - Puppet: Linux user/group management from Puppet manifests (Users, Groups, Access Matrix tabs).
   - Export: dataset viewer with Devices, VMs and All (merged)
 - Export grid features:
   - Virtual scrolling (smooth with large datasets)
@@ -266,6 +267,63 @@ Frontend (UI)
 - Column order:
   - Follows the header order from `NETBOX_DATA_DIR/Systems CMDB.xlsx` (sheet 1, row 1) when present
   - Otherwise falls back to merged CSV order; unknown columns are appended at the end
+
+Puppet User & Group Management
+-------------------------------
+
+The Puppet module visualizes Linux user and group management from Puppet Git repositories.
+
+### Setup
+
+1. Go to **Admin → Puppet** in the web UI
+2. Click **＋ Add Puppet Repo** and configure:
+   - **Name**: Display name (e.g., "Enreach Puppet")
+   - **Git Remote URL**: `git@gitlab.com:org/puppet.git`
+   - **Branch**: `production` (default)
+   - **SSH Key Path**: Path to private key for Git authentication (optional)
+
+### Web UI Features
+
+- **Users tab**: All users with UID, email, status, sudo access, groups, auth methods
+- **Groups tab**: All groups with GID, member count, members list
+- **Access Matrix tab**: User × Group membership matrix with sudo indicators
+- **Search**: Filter across all views by username, email, or group
+- **Export**: Download Excel with all three sheets (color-coded security warnings)
+
+### Security Analysis
+
+The parser extracts and analyzes credentials from Puppet manifests:
+
+| Indicator | Meaning |
+|-----------|---------|
+| 🔐 SHA-512 | Strong password hash (modern default) |
+| 🔐 MD5 ⚠️ | Weak password hash (vulnerable to cracking) |
+| 🔑 RSA 4096b | Strong SSH key |
+| 🔑 RSA 1024b ⚠️ | Weak SSH key (too short) |
+| 🔑 ED25519 | Modern SSH key (recommended) |
+
+Hover over auth badges for detailed security explanations.
+
+### CLI Commands
+
+```bash
+# List configured Puppet repositories
+curl http://localhost:8000/puppet/configs
+
+# Get users from a specific config
+curl "http://localhost:8000/puppet/users?config_id=<id>"
+
+# Export to Excel
+curl -o puppet_export.xlsx "http://localhost:8000/puppet/export?config_id=<id>"
+```
+
+### Parsed Manifest Structure
+
+The parser reads the VoiceWorks/Enreach Puppet layout:
+- `site/user/manifests/virtual_users/*.pp` — User definitions (uid, password, SSH keys)
+- `site/user/manifests/virtual_groups/*.pp` — Group definitions with members
+- `site/user/manifests/groups/*_full.pp` — Sudo access grants
+- `site/user/files/groups/*_full` — Sudoers file content
 
 Atlassian (Jira & Confluence)
 -----------------------------
