@@ -43,6 +43,72 @@ Flags worth noting:
   and shows an example VM when data is missing, including the raw placement payload.
 - `--vm / -V` may be specified multiple times; only the matching VMs are fetched and written to the cache.
 
+Foreman inventory
+-----------------
+
+Foreman integration provides host inventory management and Puppet configuration visibility. Hosts are cached
+in `data/foreman/<config-id>.json` for fast web UI access, while CLI commands use direct API calls.
+
+### Setup
+
+Configure Foreman instances via the Admin UI (`/app/#admin`) or CLI:
+
+```bash
+# Create a new Foreman configuration
+uv run atlas foreman create \
+  --name "Production Foreman" \
+  --url "https://foreman.example.com" \
+  --username "api_user" \
+  --token "your_personal_access_token" \
+  --verify-ssl
+
+# Or use username:token format
+uv run atlas foreman create \
+  --name "Production Foreman" \
+  --url "https://foreman.example.com" \
+  --token "api_user:your_personal_access_token"
+```
+
+**Authentication**: Foreman 1.24.3+ requires HTTP Basic Auth with a Personal Access Token (PAT). The token
+can be provided as `username:token` or separately via `--username` and `--token` flags.
+
+### CLI Commands
+
+- **List configurations**: `uv run atlas foreman list`
+- **List hosts**: `uv run atlas foreman hosts [--config-id <id>] [--search <query>]`
+  - Displays: ID, Name, Operating System, Environment, Compute/Model, Hostgroup, Last Report
+  - Supports `--search` to filter by name, OS, or environment
+- **Refresh cache**: `uv run atlas foreman refresh --id <config-id>`
+  - Updates the JSON cache used by the web UI
+- **Host details**: `uv run atlas foreman show <host-id> [--config-id <id>]`
+- **Puppet classes**: `uv run atlas foreman puppet-classes <host-id> [--config-id <id>]`
+- **Puppet parameters**: `uv run atlas foreman puppet-parameters <host-id> [--config-id <id>]`
+- **Puppet facts**: `uv run atlas foreman puppet-facts <host-id> [--config-id <id>] [--search <query>]`
+
+### Web UI Features
+
+The Foreman page (`/app/#foreman`) provides:
+
+- **Hosts table**: Read-only view with columns matching Foreman UI (Name, OS, Environment, Compute/Model, Hostgroup, Last Report)
+- **Multi-instance support**: Tabs for switching between configured Foreman instances
+- **Search**: Real-time filtering by name, OS, or environment
+- **Cache refresh**: Manual refresh button triggers background task to update the JSON cache
+- **Cache status**: Shows last refresh timestamp and host count per instance
+
+The web UI uses cached data for performance (handles 1000+ hosts smoothly), while CLI commands always fetch
+fresh data from the Foreman API.
+
+### Puppet Integration
+
+Foreman's Puppet integration provides visibility into:
+
+- **Classes**: Puppet classes assigned to hosts
+- **Parameters**: User-configurable Puppet parameters (important for user configurations)
+- **Facts**: Puppet facts reported by hosts
+- **Status**: Puppet agent status and proxy information
+
+Access Puppet data via CLI commands or API endpoints (`GET /foreman/hosts/{host_id}/puppet-*`).
+
 Tasks dashboard & dataset refresh
 ---------------------------------
 
@@ -252,6 +318,7 @@ Frontend (UI)
   - NetBox: read‑only search across exported datasets (All/Devices/VMs).
   - Jira: read‑only search (full‑text + filters). Clicking the key opens the issue in Jira.
   - Confluence: read‑only CQL search. Clicking the title opens the page in Confluence.
+  - Foreman: host inventory with Puppet configuration visibility (read‑only).
   - Puppet: Linux user/group management from Puppet manifests (Users, Groups, Access Matrix tabs).
   - Export: dataset viewer with Devices, VMs and All (merged)
 - Export grid features:
