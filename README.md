@@ -32,7 +32,7 @@ Common commands:
 - Refresh every configured vCenter and emit placement coverage summaries:
   `uv run atlas vcenter refresh --all --verbose`
 - Refresh a single configuration by name or ID:
-  `uv run atlas vcenter refresh --name "2. vw-vcenter03.systems.ispworks.net"`
+  `uv run atlas vcenter refresh --name "Production vCenter"`
   or `uv run atlas vcenter refresh --id b55f0fa8-e253-4b5d-a0b6-8f9135bce4d8`
 - Limit the refresh to one or more VM IDs (useful for debugging placement data):
   `uv run atlas vcenter refresh --id b55f0fa8-e253-4b5d-a0b6-8f9135bce4d8 --vm vm-1058`
@@ -344,7 +344,7 @@ The Puppet module visualizes Linux user and group management from Puppet Git rep
 
 1. Go to **Admin → Puppet** in the web UI
 2. Click **＋ Add Puppet Repo** and configure:
-   - **Name**: Display name (e.g., "Enreach Puppet")
+   - **Name**: Display name (e.g., "Puppet")
    - **Git Remote URL**: `git@gitlab.com:org/puppet.git`
    - **Branch**: `production` (default)
    - **SSH Key Path**: Path to private key for Git authentication (optional)
@@ -386,7 +386,7 @@ curl -o puppet_export.xlsx "http://localhost:8000/puppet/export?config_id=<id>"
 
 ### Parsed Manifest Structure
 
-The parser reads the VoiceWorks/Enreach Puppet layout:
+The parser reads the Puppet layout:
 - `site/user/manifests/virtual_users/*.pp` — User definitions (uid, password, SSH keys)
 - `site/user/manifests/virtual_groups/*.pp` — Group definitions with members
 - `site/user/manifests/groups/*_full.pp` — Sudo access grants
