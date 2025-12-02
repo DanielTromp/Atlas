@@ -1381,17 +1381,24 @@ body.theme-silver-light .admin-role-card {
 .panel-export { display: flex; flex-direction: column; gap: 18px; padding: 16px 18px; }
 .panel-commvault { display: flex; flex-direction: column; gap: 18px; padding: 16px 18px; }
 .panel-vcenter { display: flex; flex-direction: column; gap: 18px; padding: 16px 18px; }
+.panel-foreman { display: flex; flex-direction: column; gap: 18px; padding: 16px 18px; }
 .panel-suggestions { display: flex; flex-direction: column; gap: 18px; padding: 16px 18px; }
 .commvault-panel-group { display: flex; flex-direction: column; gap: 18px; }
 .commvault-panel { display: none; flex-direction: column; gap: 18px; }
 .commvault-panel.active { display: flex; }
 .commvault-panel[hidden] { display: none !important; }
 .vcenter-header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 12px; }
+.foreman-header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-end; gap: 12px; }
 .vcenter-title { display: flex; flex-direction: column; gap: 6px; }
 .vcenter-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
 .vcenter-search-field { min-width: 240px; flex: 1 1 260px; }
 .vcenter-tabs { display: flex; flex-wrap: wrap; gap: 10px; }
 .vcenter-body { display: flex; flex-direction: column; gap: 14px; }
+.foreman-title { display: flex; flex-direction: column; gap: 6px; }
+.foreman-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+.foreman-search-field { min-width: 240px; flex: 1 1 260px; }
+.foreman-tabs { display: flex; flex-wrap: wrap; gap: 10px; }
+.foreman-body { display: flex; flex-direction: column; gap: 14px; }
 .panel-state { padding: 18px; border-radius: 12px; border: 1px dashed rgba(var(--accent-rgb), 0.2); background: rgba(var(--accent-rgb), 0.08); color: var(--muted); font-size: 14px; }
 .panel-state.error { border-color: rgba(239, 68, 68, 0.32); background: rgba(239, 68, 68, 0.1); color: #dc2626; }
 .vcenter-table-wrapper { overflow-x: auto; border: 1px solid var(--grid-border); border-radius: 12px; background: var(--panel-elevated); box-shadow: var(--panel-shadow); }
@@ -1401,6 +1408,14 @@ body.theme-silver-light .admin-role-card {
 .vcenter-table tbody tr:nth-child(even) { background: var(--row-alt); }
 .vcenter-table tbody tr:hover { background: var(--hover); }
 .vcenter-table .empty td { text-align: center; color: var(--muted); font-style: italic; }
+.foreman-table-wrapper { overflow-x: auto; border: 1px solid var(--grid-border); border-radius: 12px; background: var(--panel-elevated); box-shadow: var(--panel-shadow); }
+.foreman-table { width: 100%; border-collapse: collapse; min-width: 960px; }
+.foreman-table th, .foreman-table td { padding: 10px 12px; border-bottom: 1px solid var(--grid-border); text-align: left; font-size: 13px; }
+.foreman-table th { font-weight: 600; background: var(--header-gradient); color: var(--text); position: sticky; top: 0; z-index: 1; }
+.foreman-table tbody tr:nth-child(even) { background: var(--row-alt); }
+.foreman-table tbody tr:hover { background: var(--hover); cursor: pointer; }
+.foreman-table .empty td { text-align: center; color: var(--muted); font-style: italic; }
+.foreman-host-row { cursor: pointer; }
 .vcenter-name-link { background: none; border: none; padding: 0; color: var(--accent); font-weight: 600; cursor: pointer; text-decoration: none; }
 .vcenter-name-link:hover { text-decoration: underline; }
 .vcenter-col-index { width: 50px; text-align: right; }

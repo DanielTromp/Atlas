@@ -159,12 +159,14 @@
   const $adminTabsContainer = document.getElementById('admin-tabs');
   const $navChat = document.querySelector('button[data-page="chat"]');
   const $navVCenter = document.querySelector('button[data-page="vcenter"]');
+  const $navForeman = document.querySelector('button[data-page="foreman"]');
   const $navTools = document.querySelector('button[data-page="tools"]');
   const $navTasks = document.querySelector('button[data-page="tasks"]');
   const $navAdmin = document.querySelector('button[data-page="admin"]');
   const $pageExport = document.getElementById("page-export");
   const $pageCommvault = document.getElementById("page-commvault");
   const $pageVCenter = document.getElementById("page-vcenter");
+  const $pageForeman = document.getElementById("page-foreman");
   const $pageNetbox = document.getElementById("page-netbox");
   const $pageSearch = document.getElementById("page-search");
   const $pageTools = document.getElementById("page-tools");
@@ -652,6 +654,16 @@
   const $vcenterTableWrapper = document.getElementById("vcenter-table-wrapper");
   const $vcenterTableHead = document.getElementById("vcenter-thead");
   const $vcenterTableBody = document.getElementById("vcenter-tbody");
+  const $foremanTabs = document.getElementById("foreman-tabs");
+  const $foremanRefresh = document.getElementById("foreman-refresh");
+  const $foremanStatus = document.getElementById("foreman-status");
+  const $foremanSearch = document.getElementById("foreman-search");
+  const $foremanLoading = document.getElementById("foreman-loading");
+  const $foremanError = document.getElementById("foreman-error");
+  const $foremanEmpty = document.getElementById("foreman-empty");
+  const $foremanTableWrapper = document.getElementById("foreman-table-wrapper");
+  const $foremanTableHead = document.getElementById("foreman-thead");
+  const $foremanTableBody = document.getElementById("foreman-tbody");
   const $commvaultPlansTableBody = document.getElementById("commvault-plans-table-body");
   const $commvaultPlansRefresh = document.getElementById("commvault-plans-refresh");
   const $commvaultPlansType = document.getElementById("commvault-plans-type");
@@ -1278,6 +1290,9 @@
     applyRoleRestrictions();
     if (canAccessPage('vcenter') && vcenterState.instances.length === 0) {
       loadVCenterInstances().catch(() => {});
+    }
+    if (canAccessPage('foreman') && foremanState.instances.length === 0) {
+      loadForemanInstances().catch(() => {});
     }
   }
 
@@ -4073,6 +4088,7 @@
     if (key === 'chat') return hasPermission('chat.use');
     if (key === 'tasks') return hasPermission('export.run');
     if (key === 'vcenter') return hasPermission('vcenter.view') || (currentUser && currentUser.role === 'admin');
+    if (key === 'foreman') return hasPermission('foreman.view') || (currentUser && currentUser.role === 'admin');
     if (key === 'admin') return currentUser && currentUser.role === 'admin';
     return true;
   }
@@ -4092,6 +4108,7 @@
     const canTools = canAccessPage('tools');
     const canChat = canAccessPage('chat');
     const canVCenter = canAccessPage('vcenter');
+    const canForeman = canAccessPage('foreman');
     const canAdmin = canAccessPage('admin');
      const canTasks = canAccessPage('tasks');
     const canRunExport = hasPermission('export.run');
@@ -4100,6 +4117,7 @@
     if ($navTools) $navTools.hidden = !canTools;
     if ($navChat) $navChat.hidden = !canChat;
     if ($navVCenter) $navVCenter.hidden = !canVCenter;
+    if ($navForeman) $navForeman.hidden = !canForeman;
     if ($navTasks) $navTasks.hidden = !canTasks;
     if ($navAdmin) $navAdmin.hidden = !canAdmin;
 
@@ -4144,6 +4162,7 @@
       export: $pageExport,
       commvault: $pageCommvault,
       vcenter: $pageVCenter,
+      foreman: $pageForeman,
       zhost: $pageZhost,
       tasks: $pageTasks,
       suggestions: $pageSuggestions,
@@ -4214,6 +4233,8 @@
       setCommvaultTab(commvaultState.tab || 'backups');
     } else if (p === 'vcenter') {
       loadVCenterInstances().catch(() => {});
+    } else if (p === 'foreman') {
+      loadForemanInstances().catch(() => {});
     } else if (p === 'tools') {
       loadTools();
     } else if (p === 'tasks') {
@@ -6848,6 +6869,468 @@
       updateVCenterView();
     }, 180);
     $vcenterSearch.addEventListener('input', applySearch);
+  }
+
+  // Foreman inventory
+  const ALL_FOREMAN_ID = '__all__';
+
+  const foremanState = {
+    instances: [],
+    activeId: null,
+    hosts: [],
+    filtered: [],
+    loading: false,
+    error: null,
+    search: '',
+    lastFetchAt: null,
+    statusOverride: null,
+  };
+
+  function getActiveForeman() {
+    if (!foremanState.instances.length) return null;
+    const match = foremanState.instances.find((inst) => inst.id === foremanState.activeId);
+    return match || foremanState.instances[0] || null;
+  }
+
+  function setForemanStatus(message = null, tone = 'info') {
+    if (!$foremanStatus) return;
+    const text = message || describeForemanSelection() || '';
+    $foremanStatus.textContent = text;
+    $foremanStatus.classList.remove('error', 'success');
+    if (tone === 'error') {
+      $foremanStatus.classList.add('error');
+    } else if (tone === 'success') {
+      $foremanStatus.classList.add('success');
+    }
+  }
+
+  function renderForemanTabs() {
+    if (!$foremanTabs) return;
+    $foremanTabs.innerHTML = '';
+    if (!foremanState.instances.length) {
+      $foremanTabs.classList.add('empty');
+      return;
+    }
+    $foremanTabs.classList.remove('empty');
+    const frag = document.createDocumentFragment();
+    foremanState.instances.forEach((inst) => {
+      const btn = document.createElement('button');
+      btn.className = 'tab';
+      btn.dataset.foremanId = inst.id;
+      btn.textContent = inst.name || 'Foreman';
+      if (inst.id === foremanState.activeId) {
+        btn.classList.add('active');
+      }
+      if (inst.aggregate || inst.id === ALL_FOREMAN_ID) {
+        const countLabel = foremanState.instances.filter((entry) => entry && entry.id && entry.id !== ALL_FOREMAN_ID).length === 1 ? 'Foreman' : 'Foreman instances';
+        btn.textContent = `All (${foremanState.instances.filter((entry) => entry && entry.id && entry.id !== ALL_FOREMAN_ID).length} ${countLabel})`;
+      }
+      frag.appendChild(btn);
+    });
+    $foremanTabs.appendChild(frag);
+    buildSidebarSubnav('foreman');
+  }
+
+  function foremanHostMatches(host, token) {
+    if (!host || !token) return false;
+    const searchable = [
+      host.name,
+      host.operatingsystem_name,
+      host.environment_name,
+      host.compute_resource_name,
+      host.model_name,
+      host.hostgroup_name,
+      host.id?.toString(),
+    ].filter(Boolean).join(' ').toLowerCase();
+    return searchable.includes(token.toLowerCase());
+  }
+
+  function describeForemanSelection() {
+    const active = getActiveForeman();
+    if (!active) {
+      return 'No Foreman instances configured yet.';
+    }
+    const name = active.name || 'Foreman';
+    const total = Array.isArray(foremanState.hosts) ? foremanState.hosts.length : 0;
+    const filtered = Array.isArray(foremanState.filtered) ? foremanState.filtered.length : 0;
+    if (total === 0) {
+      return `${name} • No hosts found`;
+    }
+    if (filtered === total) {
+      return `${name} • ${total} host${total === 1 ? '' : 's'}`;
+    }
+    return `${name} • ${filtered} of ${total} host${total === 1 ? '' : 's'}`;
+  }
+
+  function applyForemanFilter() {
+    const search = (foremanState.search || '').trim().toLowerCase();
+    if (!search) {
+      foremanState.filtered = Array.isArray(foremanState.hosts) ? foremanState.hosts.slice() : [];
+      return;
+    }
+    const tokens = search.split(/\s+/).filter(Boolean);
+    foremanState.filtered = foremanState.hosts.filter((host) => tokens.every((token) => foremanHostMatches(host, token)));
+  }
+
+  function renderForemanTableHeader() {
+    if (!$foremanTableHead) return;
+    const columns = [
+      { label: 'ID', className: 'foreman-col-id' },
+      { label: 'Name', className: 'foreman-col-name' },
+      { label: 'OS', className: 'foreman-col-os' },
+      { label: 'Environment', className: 'foreman-col-env' },
+      { label: 'Compute/Model', className: 'foreman-col-compute' },
+      { label: 'Hostgroup', className: 'foreman-col-hostgroup' },
+      { label: 'Last Report', className: 'foreman-col-report' },
+    ];
+    const row = document.createElement('tr');
+    columns.forEach((col) => {
+      const th = document.createElement('th');
+      th.className = col.className;
+      th.textContent = col.label;
+      row.appendChild(th);
+    });
+    $foremanTableHead.innerHTML = '';
+    $foremanTableHead.appendChild(row);
+  }
+
+  function renderForemanTable() {
+    if (!$foremanTableBody) return;
+    renderForemanTableHeader();
+    $foremanTableBody.innerHTML = '';
+    if (!foremanState.filtered.length) {
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = 7;
+      td.textContent = foremanState.hosts.length
+        ? `No hosts match "${foremanState.search}"`
+        : 'No hosts available for this Foreman instance.';
+      tr.appendChild(td);
+      $foremanTableBody.appendChild(tr);
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    foremanState.filtered.forEach((host) => {
+      const tr = document.createElement('tr');
+      tr.className = 'foreman-host-row';
+      tr.dataset.hostId = host.id?.toString() || '';
+      tr.dataset.hostName = host.name || '';
+      const cells = [
+        { text: host.id?.toString() || '—', className: 'foreman-col-id' },
+        { text: host.name || '—', className: 'foreman-col-name' },
+        { text: host.operatingsystem_name || '—', className: 'foreman-col-os' },
+        { text: host.environment_name || '—', className: 'foreman-col-env' },
+        { text: host.compute_resource_name || host.model_name || '—', className: 'foreman-col-compute' },
+        { text: host.hostgroup_name || '—', className: 'foreman-col-hostgroup' },
+        { text: host.last_report ? host.last_report.replace(' UTC', '') : '—', className: 'foreman-col-report' },
+      ];
+      cells.forEach((cell) => {
+        const td = document.createElement('td');
+        td.className = cell.className;
+        td.textContent = cell.text;
+        tr.appendChild(td);
+      });
+      // Click handler for future detail view
+      // tr.addEventListener('click', () => {
+      //   openForemanHostModal(host);
+      // });
+      frag.appendChild(tr);
+    });
+    $foremanTableBody.appendChild(frag);
+  }
+
+  function openForemanHostModal(host) {
+    if (!host || !host.id) return;
+    const url = new URL('/app/foreman/view.html', window.location.origin);
+    url.searchParams.set('host_id', host.id.toString());
+    if (foremanState.activeId && foremanState.activeId !== ALL_FOREMAN_ID) {
+      url.searchParams.set('config_id', foremanState.activeId);
+    }
+    window.open(url.toString(), '_blank', 'noopener,noreferrer');
+  }
+
+  function updateForemanView() {
+    renderForemanTabs();
+    const hasInstances = foremanState.instances.length > 0;
+    if ($foremanEmpty) $foremanEmpty.hidden = hasInstances;
+    if (!hasInstances) {
+      if ($foremanLoading) $foremanLoading.hidden = true;
+      if ($foremanError) {
+        $foremanError.hidden = true;
+        $foremanError.textContent = '';
+      }
+      if ($foremanTableWrapper) $foremanTableWrapper.hidden = true;
+      return;
+    }
+    if ($foremanLoading) $foremanLoading.hidden = !foremanState.loading;
+    if ($foremanError) {
+      if (foremanState.error) {
+        $foremanError.hidden = false;
+        $foremanError.textContent = foremanState.error;
+      } else {
+        $foremanError.hidden = true;
+        $foremanError.textContent = '';
+      }
+    }
+    const showTable = !foremanState.loading && !foremanState.error;
+    if ($foremanTableWrapper) $foremanTableWrapper.hidden = !showTable;
+    if (showTable) {
+      renderForemanTable();
+    }
+    const override = foremanState.statusOverride;
+    if (override) {
+      const { tone = 'info', message = null } = override;
+      foremanState.statusOverride = null;
+      setForemanStatus(message, tone);
+    } else {
+      setForemanStatus();
+    }
+  }
+
+  async function loadForemanHosts(instanceId, options = {}) {
+    if (!instanceId) return;
+    const { force = false, refresh = false } = options;
+    const wantLive = force || refresh;
+    const isAggregate = instanceId === ALL_FOREMAN_ID;
+    if (foremanState.activeId === instanceId && foremanState.loading && !wantLive) return;
+    const previousState = {
+      hosts: Array.isArray(foremanState.hosts) ? foremanState.hosts.slice() : null,
+      filtered: Array.isArray(foremanState.filtered) ? foremanState.filtered.slice() : null,
+      error: foremanState.error,
+    };
+    foremanState.activeId = instanceId;
+    foremanState.loading = true;
+    foremanState.error = null;
+    foremanState.statusOverride = null;
+    if ($foremanSearch && typeof $foremanSearch.value === 'string') {
+      foremanState.search = $foremanSearch.value.trim();
+    }
+    updateForemanView();
+    setForemanStatus(isAggregate ? 'Loading combined Foreman hosts…' : 'Loading Foreman hosts…');
+    try {
+      if (isAggregate) {
+        const realInstances = foremanState.instances.filter((inst) => inst && inst.id && inst.id !== ALL_FOREMAN_ID);
+        if (!realInstances.length) {
+          foremanState.hosts = [];
+          foremanState.filtered = [];
+          foremanState.error = null;
+          foremanState.statusOverride = { tone: 'error' };
+          setForemanStatus('No Foreman instances available to aggregate.', 'error');
+          return;
+        }
+        const aggregatedHosts = [];
+        const errors = [];
+        for (const inst of realInstances) {
+          try {
+            const endpoint = `${API_BASE}/foreman/hosts?config_id=${encodeURIComponent(inst.id)}`;
+            const res = await fetch(endpoint, { method: 'GET' });
+            const payload = await res.json().catch(() => ({}));
+            if (!res.ok) {
+              throw new Error(payload?.detail || `${res.status} ${res.statusText}`);
+            }
+            const hosts = Array.isArray(payload?.results) ? payload.results : [];
+            const normalized = hosts.map((host) => ({
+              ...host,
+              __foremanId: inst.id,
+              __foremanName: inst.name || inst.base_url || inst.id,
+            }));
+            aggregatedHosts.push(...normalized);
+            // Update instance metadata if available
+            if (payload.meta && inst.id) {
+              const idx = foremanState.instances.findIndex((entry) => entry.id === inst.id);
+              if (idx !== -1) {
+                foremanState.instances[idx] = {
+                  ...foremanState.instances[idx],
+                  last_refresh: payload.meta.generated_at || null,
+                  host_count: payload.meta.host_count || null,
+                };
+              }
+            }
+          } catch (error) {
+            errors.push({ instance: inst, error });
+            console.error('Failed to load Foreman hosts for', inst?.id || '(unknown)', error);
+          }
+        }
+        foremanState.hosts = aggregatedHosts;
+        if ($foremanSearch && typeof $foremanSearch.value === 'string') {
+          foremanState.search = $foremanSearch.value.trim();
+        }
+        applyForemanFilter();
+        foremanState.lastFetchAt = Date.now();
+        foremanState.error = null;
+        if ($foremanSearch && $foremanSearch.value.trim() !== foremanState.search) {
+          $foremanSearch.value = foremanState.search;
+        }
+        if (!aggregatedHosts.length && errors.length === realInstances.length) {
+          const errorNames = errors.map(({ instance }) => instance.name || instance.id).filter(Boolean).join(', ');
+          throw new Error(errorNames ? `Failed to load hosts for: ${errorNames}` : 'Failed to load combined Foreman hosts');
+        }
+        const tone = errors.length ? 'error' : 'success';
+        foremanState.statusOverride = { tone };
+        return;
+      }
+      const endpoint = `${API_BASE}/foreman/hosts?config_id=${encodeURIComponent(instanceId)}${wantLive ? '&refresh=true' : ''}`;
+      const res = await fetch(endpoint, { method: 'GET' });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload?.detail || `${res.status} ${res.statusText}`);
+      }
+      const hosts = Array.isArray(payload?.results) ? payload.results : [];
+      foremanState.hosts = hosts;
+      // Update instance metadata if available
+      if (payload.meta) {
+        const idx = foremanState.instances.findIndex((inst) => inst.id === instanceId);
+        if (idx !== -1) {
+          foremanState.instances[idx] = {
+            ...foremanState.instances[idx],
+            last_refresh: payload.meta.generated_at || null,
+            host_count: payload.meta.host_count || null,
+          };
+        }
+      }
+      if ($foremanSearch && typeof $foremanSearch.value === 'string') {
+        foremanState.search = $foremanSearch.value.trim();
+      }
+      applyForemanFilter();
+      foremanState.lastFetchAt = Date.now();
+      foremanState.error = null;
+      if ($foremanSearch && $foremanSearch.value.trim() !== foremanState.search) {
+        $foremanSearch.value = foremanState.search;
+      }
+      foremanState.statusOverride = { tone: 'success' };
+    } catch (err) {
+      console.error('Failed to load Foreman hosts', instanceId, err);
+      foremanState.error = err?.message || 'Failed to load Foreman hosts';
+      if (previousState.hosts) {
+        foremanState.hosts = previousState.hosts;
+        foremanState.filtered = previousState.filtered || previousState.hosts.slice();
+        setForemanStatus(`${foremanState.error} • showing cached data`, 'error');
+      } else {
+        foremanState.hosts = [];
+        foremanState.filtered = [];
+        setForemanStatus(foremanState.error, 'error');
+      }
+    } finally {
+      foremanState.loading = false;
+      updateForemanView();
+    }
+  }
+
+  async function loadForemanInstances(force = false) {
+    if (!canAccessPage('foreman')) return [];
+    try {
+      setForemanStatus('Loading Foreman instances…');
+      const res = await fetch(`${API_BASE}/foreman/instances`);
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload?.detail || `${res.status} ${res.statusText}`);
+      }
+      const items = Array.isArray(payload)
+        ? payload
+            .filter((item) => item && item.id)
+            .map((item) => {
+              const name = (item.name || item.base_url || 'Foreman').trim() || 'Foreman';
+              return {
+                id: item.id,
+                name,
+                base_url: item.base_url || '',
+                verify_ssl: item.verify_ssl !== false,
+                has_credentials: !!item.has_credentials,
+                last_refresh: item.last_refresh || null,
+                host_count: item.host_count || null,
+              };
+            })
+        : [];
+      items.sort((a, b) => a.name.localeCompare(b.name));
+      const aggregateEntry = items.length
+        ? {
+            id: ALL_FOREMAN_ID,
+            name: 'All',
+            base_url: '',
+            verify_ssl: true,
+            has_credentials: items.every((inst) => inst.has_credentials),
+            aggregate: true,
+          }
+        : null;
+      const combined = aggregateEntry ? [aggregateEntry, ...items] : items;
+      foremanState.instances = combined;
+      if (!combined.length) {
+        foremanState.activeId = null;
+        foremanState.hosts = [];
+        foremanState.filtered = [];
+        foremanState.error = null;
+        renderForemanTabs();
+        updateForemanView();
+        setForemanStatus('No Foreman instances configured.', 'error');
+        return items;
+      }
+      const priorId = foremanState.activeId;
+      const preserveSelection = priorId && combined.some((inst) => inst.id === priorId) && !force;
+      const targetId = preserveSelection ? priorId : combined[0].id;
+      foremanState.activeId = targetId;
+      renderForemanTabs();
+      await loadForemanHosts(targetId);
+      return items;
+    } catch (err) {
+      console.error('Failed to load Foreman instances', err);
+      foremanState.instances = [];
+      foremanState.activeId = null;
+      foremanState.hosts = [];
+      foremanState.filtered = [];
+      foremanState.error = err?.message || 'Failed to load Foreman instances';
+      renderForemanTabs();
+      updateForemanView();
+      setForemanStatus(foremanState.error, 'error');
+      return [];
+    }
+  }
+
+  if ($foremanTabs) {
+    $foremanTabs.addEventListener('click', (event) => {
+      const btn = event.target.closest('button[data-foreman-id]');
+      if (!btn) return;
+      const identifier = btn.dataset.foremanId;
+      if (!identifier) return;
+      if (foremanState.loading && identifier === foremanState.activeId) return;
+      loadForemanHosts(identifier).catch(() => {});
+    });
+  }
+
+  if ($foremanRefresh) {
+    $foremanRefresh.addEventListener('click', async () => {
+      if (foremanState.activeId && foremanState.activeId !== ALL_FOREMAN_ID) {
+        // Refresh specific instance cache
+        try {
+          setForemanStatus('Refreshing cache…');
+          const res = await fetch(`${API_BASE}/foreman/${encodeURIComponent(foremanState.activeId)}/refresh`, {
+            method: 'POST',
+          });
+          if (!res.ok) {
+            const payload = await res.json().catch(() => ({}));
+            throw new Error(payload?.detail || `${res.status} ${res.statusText}`);
+          }
+          // Reload hosts after refresh
+          await loadForemanHosts(foremanState.activeId, { refresh: true });
+        } catch (err) {
+          console.error('Failed to refresh Foreman cache', err);
+          setForemanStatus(err?.message || 'Failed to refresh cache', 'error');
+        }
+      } else {
+        loadForemanInstances(true).catch(() => {});
+      }
+    });
+  }
+
+  if ($foremanSearch) {
+    const applySearch = debounce(() => {
+      foremanState.search = ($foremanSearch.value || '').trim();
+      applyForemanFilter();
+      if (!foremanState.loading && !foremanState.error) {
+        setForemanStatus(describeForemanSelection());
+      }
+      updateForemanView();
+    }, 180);
+    $foremanSearch.addEventListener('input', applySearch);
   }
 
   // ---------------------------

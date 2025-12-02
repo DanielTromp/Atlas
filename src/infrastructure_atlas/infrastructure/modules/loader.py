@@ -6,6 +6,7 @@ from infrastructure_atlas.infrastructure.logging import get_logger
 
 from .commvault import CommvaultModule
 from .confluence import ConfluenceModule
+from .foreman import ForemanModule
 from .jira import JiraModule
 from .netbox import NetBoxModule
 from .registry import ModuleRegistry, get_module_registry
@@ -34,6 +35,7 @@ def register_all_modules(registry: ModuleRegistry | None = None) -> ModuleRegist
         ZabbixModule(),
         JiraModule(),
         ConfluenceModule(),
+        ForemanModule(),
     ]
 
     for module in modules:

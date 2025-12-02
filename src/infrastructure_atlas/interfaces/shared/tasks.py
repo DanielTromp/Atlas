@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from infrastructure_atlas.application.services import create_vcenter_service
+from infrastructure_atlas.application.services import create_foreman_service, create_vcenter_service
 from infrastructure_atlas.db import get_sessionmaker
 from infrastructure_atlas.env import project_root
 
@@ -182,6 +182,7 @@ def _collect_task_dataset_definitions() -> list[DatasetDefinition]:
         ),
     ]
     definitions.extend(_discover_vcenter_task_definitions())
+    definitions.extend(_discover_foreman_task_definitions())
     return definitions
 
 
@@ -232,6 +233,67 @@ def _discover_vcenter_task_definitions() -> list[DatasetDefinition]:
                         "orphan": True,
                     },
                     command_builder=_make_vcenter_command_builder(config_id),
+                )
+            )
+    return definitions
+
+
+def _make_foreman_command_builder(config_id: str) -> CommandBuilder:
+    """Create a command builder for Foreman refresh."""
+
+    def _builder(_: DatasetDefinition, __: DatasetMetadata) -> list[str]:
+        return _command_with_uv(["atlas", "foreman", "refresh", "--config-id", config_id])
+
+    return _builder
+
+
+def _discover_foreman_task_definitions() -> list[DatasetDefinition]:
+    """Discover Foreman dataset tasks from database and filesystem."""
+    definitions: list[DatasetDefinition] = []
+    known_configs: dict[str, str | None] = {}
+    try:
+        with SessionLocal() as session:
+            service = create_foreman_service(session)
+            entries = service.list_configs_with_status()
+    except Exception:
+        entries = []
+    for config, _meta in entries:
+        label = f"Foreman: {config.name or config.id}"
+        definitions.append(
+            DatasetDefinition(
+                id=f"foreman-{config.id}",
+                label=label,
+                path_globs=(f"foreman/{config.id}.json",),
+                description="Cached Foreman hosts snapshot.",
+                since_source=None,
+                context={
+                    "config_id": config.id,
+                    "config_name": config.name,
+                },
+                command_builder=_make_foreman_command_builder(config.id),
+            )
+        )
+        known_configs[config.id] = config.name
+
+    foreman_dir = _data_dir() / "foreman"
+    if foreman_dir.exists():
+        for path in sorted(foreman_dir.glob("*.json")):
+            config_id = path.stem
+            if config_id in known_configs:
+                continue
+            label = f"Foreman cache ({config_id})"
+            definitions.append(
+                DatasetDefinition(
+                    id=f"foreman-{config_id}",
+                    label=label,
+                    path_globs=(f"foreman/{path.name}",),
+                    description="Cached Foreman hosts snapshot.",
+                    context={
+                        "config_id": config_id,
+                        "config_name": None,
+                        "orphan": True,
+                    },
+                    command_builder=_make_foreman_command_builder(config_id),
                 )
             )
     return definitions

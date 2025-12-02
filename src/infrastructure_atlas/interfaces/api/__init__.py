@@ -5,7 +5,7 @@ from fastapi import APIRouter
 from infrastructure_atlas.infrastructure.logging import get_logger, setup_logging
 from infrastructure_atlas.infrastructure.modules import get_module_registry, initialize_modules
 
-from .routes import admin, auth, core, netbox, profile, search, tasks, tools, vcenter, zabbix
+from .routes import admin, auth, core, foreman, netbox, profile, search, tasks, tools, vcenter, zabbix
 
 logger = get_logger(__name__)
 
@@ -34,6 +34,7 @@ def bootstrap_api() -> APIRouter:
 
     # Chat routes (imported lazily to avoid circular import)
     from .routes import chat, export
+
     router.include_router(chat.router)
     router.include_router(export.router)
 
@@ -58,6 +59,7 @@ def bootstrap_api() -> APIRouter:
 
     if registry.is_enabled("commvault"):
         from .routes import commvault
+
         router.include_router(commvault.router)
         logger.info("Enabled Commvault API routes")
     else:
@@ -65,6 +67,7 @@ def bootstrap_api() -> APIRouter:
 
     if registry.is_enabled("jira"):
         from .routes import jira
+
         router.include_router(jira.router)
         logger.info("Enabled Jira API routes")
     else:
@@ -72,10 +75,17 @@ def bootstrap_api() -> APIRouter:
 
     if registry.is_enabled("confluence"):
         from .routes import confluence
+
         router.include_router(confluence.router)
         logger.info("Enabled Confluence API routes")
     else:
         logger.info("Confluence module is disabled, skipping routes")
+
+    if registry.is_enabled("foreman"):
+        router.include_router(foreman.router)
+        logger.info("Enabled Foreman API routes")
+    else:
+        logger.info("Foreman module is disabled, skipping routes")
 
     return router
 
