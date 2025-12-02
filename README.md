@@ -32,7 +32,7 @@ Common commands:
 - Refresh every configured vCenter and emit placement coverage summaries:
   `uv run atlas vcenter refresh --all --verbose`
 - Refresh a single configuration by name or ID:
-  `uv run atlas vcenter refresh --name "2. vw-vcenter03.systems.ispworks.net"`
+  `uv run atlas vcenter refresh --name "Production vCenter"`
   or `uv run atlas vcenter refresh --id b55f0fa8-e253-4b5d-a0b6-8f9135bce4d8`
 - Limit the refresh to one or more VM IDs (useful for debugging placement data):
   `uv run atlas vcenter refresh --id b55f0fa8-e253-4b5d-a0b6-8f9135bce4d8 --vm vm-1058`
