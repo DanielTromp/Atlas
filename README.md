@@ -386,7 +386,7 @@ curl -o puppet_export.xlsx "http://localhost:8000/puppet/export?config_id=<id>"
 
 ### Parsed Manifest Structure
 
-The parser reads the VoiceWorks/Enreach Puppet layout:
+The parser reads the Puppet layout:
 - `site/user/manifests/virtual_users/*.pp` — User definitions (uid, password, SSH keys)
 - `site/user/manifests/virtual_groups/*.pp` — Group definitions with members
 - `site/user/manifests/groups/*_full.pp` — Sudo access grants
