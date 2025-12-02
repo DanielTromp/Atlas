@@ -1,4 +1,5 @@
 """Conversion helpers between ORM models and domain entities."""
+
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
@@ -7,6 +8,7 @@ from infrastructure_atlas.db import models
 from infrastructure_atlas.domain.entities import (
     ChatMessageEntity,
     ChatSessionEntity,
+    ForemanConfigEntity,
     GlobalAPIKeyEntity,
     RolePermissionEntity,
     UserAPIKeyEntity,
@@ -97,6 +99,19 @@ def vcenter_config_to_entity(record: models.VCenterConfig) -> VCenterConfigEntit
         username=record.username,
         verify_ssl=record.verify_ssl,
         password_secret=record.password_secret,
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+    )
+
+
+def foreman_config_to_entity(record: models.ForemanConfig) -> ForemanConfigEntity:
+    return ForemanConfigEntity(
+        id=record.id,
+        name=record.name,
+        base_url=record.base_url,
+        username=record.username,
+        token_secret=record.token_secret,
+        verify_ssl=record.verify_ssl,
         created_at=record.created_at,
         updated_at=record.updated_at,
     )

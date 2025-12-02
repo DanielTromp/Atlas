@@ -1,4 +1,5 @@
 """SQLAlchemy-backed repository implementations."""
+
 from __future__ import annotations
 
 from collections.abc import Iterable
@@ -9,6 +10,7 @@ from sqlalchemy.orm import Session
 from infrastructure_atlas.db import models
 from infrastructure_atlas.domain.repositories import (
     ChatSessionRepository,
+    ForemanConfigRepository,
     GlobalAPIKeyRepository,
     RolePermissionRepository,
     UserAPIKeyRepository,
@@ -234,8 +236,84 @@ class SqlAlchemyVCenterConfigRepository(VCenterConfigRepository):
         return True
 
 
+class SqlAlchemyForemanConfigRepository(ForemanConfigRepository):
+    """Repository for stored Foreman configuration records."""
+
+    def __init__(self, session: Session):
+        self._session = session
+
+    def list_all(self):
+        stmt = select(models.ForemanConfig).order_by(models.ForemanConfig.name.asc())
+        records = self._session.execute(stmt).scalars().all()
+        return [mappers.foreman_config_to_entity(record) for record in records]
+
+    def get(self, config_id: str):
+        record = self._session.get(models.ForemanConfig, config_id)
+        return mappers.foreman_config_to_entity(record) if record else None
+
+    def create(  # noqa: PLR0913
+        self,
+        *,
+        config_id: str | None,
+        name: str,
+        base_url: str,
+        username: str,
+        token_secret: str,
+        verify_ssl: bool,
+    ):
+        record = models.ForemanConfig(
+            id=config_id,
+            name=name,
+            base_url=base_url,
+            username=username,
+            token_secret=token_secret,
+            verify_ssl=verify_ssl,
+        )
+        self._session.add(record)
+        self._session.flush()
+        self._session.refresh(record)
+        return mappers.foreman_config_to_entity(record)
+
+    def update(  # noqa: PLR0913
+        self,
+        config_id: str,
+        *,
+        name: str | None = None,
+        base_url: str | None = None,
+        username: str | None = None,
+        verify_ssl: bool | None = None,
+        token_secret: str | None = None,
+    ):
+        record = self._session.get(models.ForemanConfig, config_id)
+        if record is None:
+            return None
+        if name is not None:
+            record.name = name
+        if base_url is not None:
+            record.base_url = base_url
+        if username is not None:
+            record.username = username
+        if verify_ssl is not None:
+            record.verify_ssl = verify_ssl
+        if token_secret is not None:
+            record.token_secret = token_secret
+        self._session.add(record)
+        self._session.flush()
+        self._session.refresh(record)
+        return mappers.foreman_config_to_entity(record)
+
+    def delete(self, config_id: str):
+        record = self._session.get(models.ForemanConfig, config_id)
+        if record is None:
+            return False
+        self._session.delete(record)
+        self._session.flush()
+        return True
+
+
 __all__ = [
     "SqlAlchemyChatSessionRepository",
+    "SqlAlchemyForemanConfigRepository",
     "SqlAlchemyGlobalAPIKeyRepository",
     "SqlAlchemyRolePermissionRepository",
     "SqlAlchemyUserAPIKeyRepository",

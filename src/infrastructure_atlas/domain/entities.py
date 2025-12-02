@@ -4,6 +4,7 @@ These dataclasses capture the business-facing shape of our data without tying it
 to persistence or transport concerns. They will progressively replace direct
 usage of SQLAlchemy models throughout the application and interface layers.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -95,5 +96,19 @@ class VCenterConfigEntity:
     username: str
     verify_ssl: bool
     password_secret: str
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(slots=True)
+class ForemanConfigEntity:
+    """Configuration details for connecting to a Foreman instance."""
+
+    id: str
+    name: str
+    base_url: str
+    username: str
+    token_secret: str
+    verify_ssl: bool
     created_at: datetime
     updated_at: datetime

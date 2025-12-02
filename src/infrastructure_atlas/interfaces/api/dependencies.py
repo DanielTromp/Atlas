@@ -1,4 +1,5 @@
 """Shared FastAPI dependencies for the Infrastructure Atlas API layer."""
+
 from __future__ import annotations
 
 from collections.abc import Generator
@@ -12,9 +13,11 @@ from infrastructure_atlas.application.services import (
     AdminService,
     DefaultChatHistoryService,
     DefaultUserService,
+    ForemanService,
     VCenterService,
     create_admin_service,
     create_chat_history_service,
+    create_foreman_service,
     create_user_service,
     create_vcenter_service,
 )
@@ -99,6 +102,7 @@ __all__ = [
     "get_admin_service",
     "get_chat_history_service",
     "get_db_session",
+    "get_foreman_service",
     "get_profile_service",
     "get_service_context",
     "get_user_service",

@@ -11,6 +11,13 @@ from .commvault_client import (
     CommvaultResponseError,
 )
 from .confluence_client import ConfluenceClient, ConfluenceClientConfig
+from .foreman_client import (
+    ForemanAPIError,
+    ForemanAuthError,
+    ForemanClient,
+    ForemanClientConfig,
+    ForemanClientError,
+)
 from .netbox_client import NetboxClient, NetboxClientConfig
 from .vcenter_client import (
     VCenterAPIError,
@@ -38,6 +45,11 @@ __all__ = [
     "CommvaultResponseError",
     "ConfluenceClient",
     "ConfluenceClientConfig",
+    "ForemanAPIError",
+    "ForemanAuthError",
+    "ForemanClient",
+    "ForemanClientConfig",
+    "ForemanClientError",
     "NetboxClient",
     "NetboxClientConfig",
     "VCenterAPIError",

@@ -148,6 +148,17 @@
               </button>
               <div class="sidebar-subitems" id="sidebar-subitems-vcenter" data-subnav-container="vcenter" hidden></div>
             </div>
+            <div class="sidebar-group" data-page="foreman">
+              <button class="tab sidebar-item" data-page="foreman" type="button" aria-controls="sidebar-subitems-foreman" aria-expanded="false">
+                <span class="sidebar-item-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M5.25 14.25h13.5m-13.5 0a3 3 0 0 1-3-3m3 3a3 3 0 1 0 0 6h13.5a3 3 0 1 0 0-6m-16.5-3a3 3 0 0 1 3-3h13.5a3 3 0 0 1 3 3m-19.5 0a4.5 4.5 0 0 1 .9-2.7L5.737 5.1a3.375 3.375 0 0 1 2.7-1.35h7.126c1.062 0 2.062.5 2.7 1.35l2.587 3.45a4.5 4.5 0 0 1 .9 2.7m0 0a3 3 0 0 1-3 3m0 3h.008v.008h-.008v-.008Zm0-6h.008v.008h-.008v-.008Zm-3 6h.008v.008h-.008v-.008Zm0-6h.008v.008h-.008v-.008Z"></path>
+                  </svg>
+                </span>
+                <span class="sidebar-item-label">Foreman</span>
+              </button>
+              <div class="sidebar-subitems" id="sidebar-subitems-foreman" data-subnav-container="foreman" hidden></div>
+            </div>
             <div class="sidebar-group" data-page="tools">
               <button class="tab sidebar-item" data-page="tools" type="button">
                 <span class="sidebar-item-icon" aria-hidden="true">
@@ -1056,6 +1067,37 @@
               <table class="vcenter-table">
                 <thead id="vcenter-thead"></thead>
                 <tbody id="vcenter-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Foreman Page -->
+      <section class="page" id="page-foreman" hidden>
+        <div class="panel panel-foreman">
+          <div class="foreman-header">
+            <div class="foreman-title">
+              <h2>Foreman Hosts</h2>
+              <span id="foreman-status" class="form-status"></span>
+            </div>
+            <div class="foreman-actions">
+              <label class="field foreman-search-field">
+                <span>Search</span>
+                <input id="foreman-search" type="text" placeholder="Filter by name, OS, environment…" />
+              </label>
+              <button id="foreman-refresh" class="btn" type="button">Refresh</button>
+            </div>
+          </div>
+          <nav class="tabs foreman-tabs" id="foreman-tabs" aria-label="Foreman instances"></nav>
+          <div class="foreman-body">
+            <div id="foreman-loading" class="panel-state" hidden>Loading hosts…</div>
+            <div id="foreman-error" class="panel-state error" hidden></div>
+            <div id="foreman-empty" class="panel-state" hidden>No Foreman instances configured yet.</div>
+            <div id="foreman-table-wrapper" class="foreman-table-wrapper" hidden>
+              <table class="foreman-table">
+                <thead id="foreman-thead"></thead>
+                <tbody id="foreman-tbody"></tbody>
               </table>
             </div>
           </div>

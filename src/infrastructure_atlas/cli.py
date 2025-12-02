@@ -56,6 +56,7 @@ try:
 except Exception:
     AMS_TZ = UTC
 
+
 def _run_script(relpath: str, *args: str) -> int:
     """Run a Python script at repo-relative path with inherited env."""
     root = project_root()
@@ -141,6 +142,7 @@ def _common(
 # Import extracted CLI modules
 from .interfaces.cli import database as database_cli
 from .interfaces.cli import export as export_cli
+from .interfaces.cli import foreman as foreman_cli
 from .interfaces.cli import jira as jira_cli
 from .interfaces.cli import confluence as confluence_cli
 from .interfaces.cli import netbox as netbox_cli
@@ -204,6 +206,12 @@ def _register_cli_commands() -> None:
     else:
         logger.debug("Confluence module disabled, skipping CLI commands")
 
+    if registry.is_enabled("foreman"):
+        app.add_typer(foreman_cli.app, name="foreman")
+        logger.debug("Enabled Foreman CLI commands")
+    else:
+        logger.debug("Foreman module is disabled, skipping CLI commands")
+
 
 # Register commands on module initialization
 _register_cli_commands()
@@ -229,7 +237,9 @@ def _safe_int(value: object, default: int = 0) -> int:
 def cache_stats(
     json_output: bool = typer.Option(False, "--json", help="Emit metrics as JSON"),
     include_empty: bool = typer.Option(False, "--include-empty", help="Show caches with zero usage"),
-    prime_netbox: bool = typer.Option(False, "--prime-netbox/--no-prime-netbox", help="Instantiate the NetBox client before sampling caches"),
+    prime_netbox: bool = typer.Option(
+        False, "--prime-netbox/--no-prime-netbox", help="Instantiate the NetBox client before sampling caches"
+    ),
 ):
     """Print cache hit/miss metrics for registered TTL caches."""
 
@@ -306,4 +316,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
