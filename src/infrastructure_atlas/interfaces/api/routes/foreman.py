@@ -149,6 +149,10 @@ def list_hosts(
     refresh: bool = Query(False, description="Force refresh from Foreman API"),
 ):
     """List hosts from Foreman (uses cache for web UI, direct API for CLI)."""
+    permissions = getattr(request.state, "permissions", frozenset())
+    if "foreman.view" not in permissions and user.role != "admin":
+        raise HTTPException(status_code=403, detail="Foreman access requires additional permissions")
+
     # Get config
     if config_id:
         config = service.get_config(config_id)
@@ -233,11 +237,16 @@ def refresh_hosts(
 @router.get("/hosts/{host_id}")
 def get_host_detail(
     host_id: str,
+    request: Request,
     user: CurrentUserDep,
     service: ForemanServiceDep,
     config_id: str | None = None,
 ):
     """Get detailed host information including Puppet configuration."""
+    permissions = getattr(request.state, "permissions", frozenset())
+    if "foreman.view" not in permissions and user.role != "admin":
+        raise HTTPException(status_code=403, detail="Foreman access requires additional permissions")
+
     # Get config
     if config_id:
         config = service.get_config(config_id)
@@ -265,11 +274,16 @@ def get_host_detail(
 @router.get("/hosts/{host_id}/puppet-classes")
 def get_host_puppet_classes(
     host_id: str,
+    request: Request,
     user: CurrentUserDep,
     service: ForemanServiceDep,
     config_id: str | None = None,
 ):
     """Get Puppet classes assigned to a host."""
+    permissions = getattr(request.state, "permissions", frozenset())
+    if "foreman.view" not in permissions and user.role != "admin":
+        raise HTTPException(status_code=403, detail="Foreman access requires additional permissions")
+
     # Get config
     if config_id:
         config = service.get_config(config_id)
@@ -295,11 +309,16 @@ def get_host_puppet_classes(
 @router.get("/hosts/{host_id}/puppet-parameters")
 def get_host_puppet_parameters(
     host_id: str,
+    request: Request,
     user: CurrentUserDep,
     service: ForemanServiceDep,
     config_id: str | None = None,
 ):
     """Get Puppet parameters (user configs) for a host."""
+    permissions = getattr(request.state, "permissions", frozenset())
+    if "foreman.view" not in permissions and user.role != "admin":
+        raise HTTPException(status_code=403, detail="Foreman access requires additional permissions")
+
     # Get config
     if config_id:
         config = service.get_config(config_id)
@@ -325,12 +344,17 @@ def get_host_puppet_parameters(
 @router.get("/hosts/{host_id}/puppet-facts")
 def get_host_puppet_facts(
     host_id: str,
+    request: Request,
     user: CurrentUserDep,
     service: ForemanServiceDep,
     config_id: str | None = None,
     search: str | None = None,
 ):
     """Get Puppet facts for a host."""
+    permissions = getattr(request.state, "permissions", frozenset())
+    if "foreman.view" not in permissions and user.role != "admin":
+        raise HTTPException(status_code=403, detail="Foreman access requires additional permissions")
+
     # Get config
     if config_id:
         config = service.get_config(config_id)
@@ -362,11 +386,16 @@ def get_host_puppet_facts(
 @router.get("/hosts/{host_id}/puppet-status")
 def get_host_puppet_status(
     host_id: str,
+    request: Request,
     user: CurrentUserDep,
     service: ForemanServiceDep,
     config_id: str | None = None,
 ):
     """Get Puppet status and proxy information for a host."""
+    permissions = getattr(request.state, "permissions", frozenset())
+    if "foreman.view" not in permissions and user.role != "admin":
+        raise HTTPException(status_code=403, detail="Foreman access requires additional permissions")
+
     # Get config
     if config_id:
         config = service.get_config(config_id)
