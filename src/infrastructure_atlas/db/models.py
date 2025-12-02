@@ -153,3 +153,21 @@ class ForemanConfig(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
     )
+
+
+class PuppetConfig(Base):
+    """Configuration for a Puppet Git repository source."""
+
+    __tablename__ = "puppet_configs"
+    __table_args__ = (UniqueConstraint("name", name="uq_puppet_config_name"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    remote_url: Mapped[str] = mapped_column(String(512), nullable=False)
+    branch: Mapped[str] = mapped_column(String(128), default="production", nullable=False)
+    ssh_key_secret: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    local_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
+    )

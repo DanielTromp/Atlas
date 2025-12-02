@@ -112,3 +112,17 @@ class ForemanConfigEntity:
     verify_ssl: bool
     created_at: datetime
     updated_at: datetime
+
+
+@dataclass(slots=True)
+class PuppetConfigEntity:
+    """Configuration details for connecting to a Puppet Git repository."""
+
+    id: str
+    name: str
+    remote_url: str
+    branch: str
+    ssh_key_secret: str | None
+    local_path: str | None
+    created_at: datetime
+    updated_at: datetime

@@ -1,4 +1,4 @@
-"""External service adapters (NetBox, Confluence, backups, Zabbix)."""
+"""External service adapters (NetBox, Confluence, backups, Zabbix, Git, Puppet)."""
 
 from .backup_provider import BackupProvider
 from .commvault_client import (
@@ -33,6 +33,22 @@ from .zabbix_client import (
     ZabbixConfigError,
     ZabbixError,
 )
+from .git_client import (
+    GitAuthError,
+    GitClient,
+    GitClientConfig,
+    GitClientError,
+    GitCloneError,
+    GitPullError,
+    GitRepoInfo,
+)
+from .puppet_parser import (
+    PuppetGroup,
+    PuppetInventory,
+    PuppetParser,
+    PuppetUser,
+    PuppetUserAccess,
+)
 
 __all__ = [
     "BackupProvider",
@@ -50,8 +66,20 @@ __all__ = [
     "ForemanClient",
     "ForemanClientConfig",
     "ForemanClientError",
+    "GitAuthError",
+    "GitClient",
+    "GitClientConfig",
+    "GitClientError",
+    "GitCloneError",
+    "GitPullError",
+    "GitRepoInfo",
     "NetboxClient",
     "NetboxClientConfig",
+    "PuppetGroup",
+    "PuppetInventory",
+    "PuppetParser",
+    "PuppetUser",
+    "PuppetUserAccess",
     "VCenterAPIError",
     "VCenterAuthError",
     "VCenterClient",

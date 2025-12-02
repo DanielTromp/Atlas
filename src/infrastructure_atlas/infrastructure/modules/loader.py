@@ -9,6 +9,7 @@ from .confluence import ConfluenceModule
 from .foreman import ForemanModule
 from .jira import JiraModule
 from .netbox import NetBoxModule
+from .puppet import PuppetModule
 from .registry import ModuleRegistry, get_module_registry
 from .vcenter import VCenterModule
 from .zabbix import ZabbixModule
@@ -36,6 +37,7 @@ def register_all_modules(registry: ModuleRegistry | None = None) -> ModuleRegist
         JiraModule(),
         ConfluenceModule(),
         ForemanModule(),
+        PuppetModule(),
     ]
 
     for module in modules:

@@ -5,7 +5,7 @@ from fastapi import APIRouter
 from infrastructure_atlas.infrastructure.logging import get_logger, setup_logging
 from infrastructure_atlas.infrastructure.modules import get_module_registry, initialize_modules
 
-from .routes import admin, auth, core, foreman, netbox, profile, search, tasks, tools, vcenter, zabbix
+from .routes import admin, auth, core, foreman, netbox, profile, puppet, search, tasks, tools, vcenter, zabbix
 
 logger = get_logger(__name__)
 
@@ -86,6 +86,12 @@ def bootstrap_api() -> APIRouter:
         logger.info("Enabled Foreman API routes")
     else:
         logger.info("Foreman module is disabled, skipping routes")
+
+    if registry.is_enabled("puppet"):
+        router.include_router(puppet.router)
+        logger.info("Enabled Puppet API routes")
+    else:
+        logger.info("Puppet module is disabled, skipping routes")
 
     return router
 
