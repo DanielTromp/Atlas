@@ -32,7 +32,7 @@ Common commands:
 - Refresh every configured vCenter and emit placement coverage summaries:
   `uv run atlas vcenter refresh --all --verbose`
 - Refresh a single configuration by name or ID:
-  `uv run atlas vcenter refresh --name "2. vw-vcenter03.systems.ispworks.net"`
+  `uv run atlas vcenter refresh --name "Production vCenter"`
   or `uv run atlas vcenter refresh --id b55f0fa8-e253-4b5d-a0b6-8f9135bce4d8`
 - Limit the refresh to one or more VM IDs (useful for debugging placement data):
   `uv run atlas vcenter refresh --id b55f0fa8-e253-4b5d-a0b6-8f9135bce4d8 --vm vm-1058`
@@ -42,6 +42,72 @@ Flags worth noting:
 - `--verbose` prints placement coverage per vCenter (host/cluster/datacenter/resource pool/folder)
   and shows an example VM when data is missing, including the raw placement payload.
 - `--vm / -V` may be specified multiple times; only the matching VMs are fetched and written to the cache.
+
+Foreman inventory
+-----------------
+
+Foreman integration provides host inventory management and Puppet configuration visibility. Hosts are cached
+in `data/foreman/<config-id>.json` for fast web UI access, while CLI commands use direct API calls.
+
+### Setup
+
+Configure Foreman instances via the Admin UI (`/app/#admin`) or CLI:
+
+```bash
+# Create a new Foreman configuration
+uv run atlas foreman create \
+  --name "Production Foreman" \
+  --url "https://foreman.example.com" \
+  --username "api_user" \
+  --token "your_personal_access_token" \
+  --verify-ssl
+
+# Or use username:token format
+uv run atlas foreman create \
+  --name "Production Foreman" \
+  --url "https://foreman.example.com" \
+  --token "api_user:your_personal_access_token"
+```
+
+**Authentication**: Foreman 1.24.3+ requires HTTP Basic Auth with a Personal Access Token (PAT). The token
+can be provided as `username:token` or separately via `--username` and `--token` flags.
+
+### CLI Commands
+
+- **List configurations**: `uv run atlas foreman list`
+- **List hosts**: `uv run atlas foreman hosts [--config-id <id>] [--search <query>]`
+  - Displays: ID, Name, Operating System, Environment, Compute/Model, Hostgroup, Last Report
+  - Supports `--search` to filter by name, OS, or environment
+- **Refresh cache**: `uv run atlas foreman refresh --id <config-id>`
+  - Updates the JSON cache used by the web UI
+- **Host details**: `uv run atlas foreman show <host-id> [--config-id <id>]`
+- **Puppet classes**: `uv run atlas foreman puppet-classes <host-id> [--config-id <id>]`
+- **Puppet parameters**: `uv run atlas foreman puppet-parameters <host-id> [--config-id <id>]`
+- **Puppet facts**: `uv run atlas foreman puppet-facts <host-id> [--config-id <id>] [--search <query>]`
+
+### Web UI Features
+
+The Foreman page (`/app/#foreman`) provides:
+
+- **Hosts table**: Read-only view with columns matching Foreman UI (Name, OS, Environment, Compute/Model, Hostgroup, Last Report)
+- **Multi-instance support**: Tabs for switching between configured Foreman instances
+- **Search**: Real-time filtering by name, OS, or environment
+- **Cache refresh**: Manual refresh button triggers background task to update the JSON cache
+- **Cache status**: Shows last refresh timestamp and host count per instance
+
+The web UI uses cached data for performance (handles 1000+ hosts smoothly), while CLI commands always fetch
+fresh data from the Foreman API.
+
+### Puppet Integration
+
+Foreman's Puppet integration provides visibility into:
+
+- **Classes**: Puppet classes assigned to hosts
+- **Parameters**: User-configurable Puppet parameters (important for user configurations)
+- **Facts**: Puppet facts reported by hosts
+- **Status**: Puppet agent status and proxy information
+
+Access Puppet data via CLI commands or API endpoints (`GET /foreman/hosts/{host_id}/puppet-*`).
 
 Tasks dashboard & dataset refresh
 ---------------------------------
@@ -252,6 +318,8 @@ Frontend (UI)
   - NetBox: read‑only search across exported datasets (All/Devices/VMs).
   - Jira: read‑only search (full‑text + filters). Clicking the key opens the issue in Jira.
   - Confluence: read‑only CQL search. Clicking the title opens the page in Confluence.
+  - Foreman: host inventory with Puppet configuration visibility (read‑only).
+  - Puppet: Linux user/group management from Puppet manifests (Users, Groups, Access Matrix tabs).
   - Export: dataset viewer with Devices, VMs and All (merged)
 - Export grid features:
   - Virtual scrolling (smooth with large datasets)
@@ -266,6 +334,63 @@ Frontend (UI)
 - Column order:
   - Follows the header order from `NETBOX_DATA_DIR/Systems CMDB.xlsx` (sheet 1, row 1) when present
   - Otherwise falls back to merged CSV order; unknown columns are appended at the end
+
+Puppet User & Group Management
+-------------------------------
+
+The Puppet module visualizes Linux user and group management from Puppet Git repositories.
+
+### Setup
+
+1. Go to **Admin → Puppet** in the web UI
+2. Click **＋ Add Puppet Repo** and configure:
+   - **Name**: Display name (e.g., "Puppet")
+   - **Git Remote URL**: `git@gitlab.com:org/puppet.git`
+   - **Branch**: `production` (default)
+   - **SSH Key Path**: Path to private key for Git authentication (optional)
+
+### Web UI Features
+
+- **Users tab**: All users with UID, email, status, sudo access, groups, auth methods
+- **Groups tab**: All groups with GID, member count, members list
+- **Access Matrix tab**: User × Group membership matrix with sudo indicators
+- **Search**: Filter across all views by username, email, or group
+- **Export**: Download Excel with all three sheets (color-coded security warnings)
+
+### Security Analysis
+
+The parser extracts and analyzes credentials from Puppet manifests:
+
+| Indicator | Meaning |
+|-----------|---------|
+| 🔐 SHA-512 | Strong password hash (modern default) |
+| 🔐 MD5 ⚠️ | Weak password hash (vulnerable to cracking) |
+| 🔑 RSA 4096b | Strong SSH key |
+| 🔑 RSA 1024b ⚠️ | Weak SSH key (too short) |
+| 🔑 ED25519 | Modern SSH key (recommended) |
+
+Hover over auth badges for detailed security explanations.
+
+### CLI Commands
+
+```bash
+# List configured Puppet repositories
+curl http://localhost:8000/puppet/configs
+
+# Get users from a specific config
+curl "http://localhost:8000/puppet/users?config_id=<id>"
+
+# Export to Excel
+curl -o puppet_export.xlsx "http://localhost:8000/puppet/export?config_id=<id>"
+```
+
+### Parsed Manifest Structure
+
+The parser reads the Puppet layout:
+- `site/user/manifests/virtual_users/*.pp` — User definitions (uid, password, SSH keys)
+- `site/user/manifests/virtual_groups/*.pp` — Group definitions with members
+- `site/user/manifests/groups/*_full.pp` — Sudo access grants
+- `site/user/files/groups/*_full` — Sudoers file content
 
 Atlassian (Jira & Confluence)
 -----------------------------
