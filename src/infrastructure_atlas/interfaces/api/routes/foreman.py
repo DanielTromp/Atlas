@@ -115,6 +115,7 @@ def list_instances(user: CurrentUserDep, service: ForemanServiceDep):
                 "id": config.id,
                 "name": config.name,
                 "base_url": config.base_url,
+                "username": config.username,
                 "verify_ssl": config.verify_ssl,
                 "has_credentials": bool(config.token_secret),
                 "last_refresh": meta_payload.get("generated_at"),

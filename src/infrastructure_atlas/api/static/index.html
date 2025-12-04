@@ -220,7 +220,7 @@
     };
     img.addEventListener('error', hide);
     img.addEventListener('load', show);
-    img.src = 'logo.svg';
+    img.src = 'logo.png';
     logo.appendChild(img);
     if (img.complete && img.naturalWidth > 0) {
       show();
@@ -805,6 +805,7 @@
             <button class="admin-tab" data-admin-tab="export">Export</button>
             <button class="admin-tab" data-admin-tab="api">API &amp; UI</button>
             <button class="admin-tab" data-admin-tab="vcenter">vCenter</button>
+            <button class="admin-tab" data-admin-tab="foreman">Foreman</button>
             <button class="admin-tab" data-admin-tab="puppet">Puppet</button>
             <button class="admin-tab" data-admin-tab="users">Users</button>
             <button class="admin-tab" data-admin-tab="backup">Backup</button>
@@ -856,6 +857,44 @@
                   <button id="admin-vcenter-save" type="submit" class="btn">Save vCenter</button>
                   <button id="admin-vcenter-cancel" type="button" class="btn ghost">Cancel</button>
                   <span id="admin-vcenter-form-status" class="form-status"></span>
+                </div>
+              </form>
+            </section>
+            <section id="admin-panel-foreman" class="admin-panel" data-admin-tab="foreman">
+              <div class="admin-vcenter-header">
+                <button id="admin-foreman-add" class="btn" type="button" title="Add Foreman Instance">＋ Add Foreman</button>
+                <span id="admin-foreman-status" class="form-status"></span>
+              </div>
+              <div id="admin-foreman-list" class="admin-vcenter-list"></div>
+              <form id="admin-foreman-form" class="account-form hidden">
+                <input id="admin-foreman-id" type="hidden" />
+                <h3 id="admin-foreman-form-title">Foreman Instance</h3>
+                <label class="field column">
+                  <span>Name</span>
+                  <input id="admin-foreman-name" type="text" placeholder="Production Foreman" required />
+                </label>
+                <label class="field column">
+                  <span>Base URL</span>
+                  <input id="admin-foreman-base-url" type="url" placeholder="https://foreman.example.com" required />
+                </label>
+                <label class="field column">
+                  <span>Username</span>
+                  <input id="admin-foreman-username" type="text" placeholder="api_user" required />
+                </label>
+                <label class="field column">
+                  <span>Personal Access Token</span>
+                  <input id="admin-foreman-token" type="password" placeholder="Enter token" />
+                  <small id="admin-foreman-token-help">Leave blank to keep the current token.</small>
+                </label>
+                <label class="field">
+                  <input id="admin-foreman-verify-ssl" type="checkbox" checked />
+                  <span>Verify TLS certificates</span>
+                </label>
+                <div class="account-actions">
+                  <button id="admin-foreman-save" type="submit" class="btn">Save Foreman</button>
+                  <button id="admin-foreman-test" type="button" class="btn ghost">Test Connection</button>
+                  <button id="admin-foreman-cancel" type="button" class="btn ghost">Cancel</button>
+                  <span id="admin-foreman-form-status" class="form-status"></span>
                 </div>
               </form>
             </section>

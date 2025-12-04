@@ -49,15 +49,12 @@ def root_redirect():
 
 
 @router.get("/favicon.png")
-def favicon_ico():
+def favicon_png():
     """Serve favicon from project package location."""
-    # Prefer png present at src/infrastructure_atlas/api/favicon.png
-    png_path = Path(__file__).parent.parent.parent / "api" / "favicon.png"
-    if png_path.exists():
-        # Serve PNG under .ico path; browsers accept image/png
-        return FileResponse(png_path, media_type="image/png")
-    # Else, try static path under /app
-    static_png = Path(__file__).parent.parent.parent / "api" / "static" / "favicon.png"
+    # Path: interfaces/api/routes/core.py -> need to go up to infrastructure_atlas then into api/static
+    # __file__.parent = routes/, .parent.parent = interfaces/, .parent.parent.parent = infrastructure_atlas/
+    base = Path(__file__).parent.parent.parent.parent  # -> infrastructure_atlas/
+    static_png = base / "api" / "static" / "favicon.png"
     if static_png.exists():
         return FileResponse(static_png, media_type="image/png")
     from fastapi import HTTPException

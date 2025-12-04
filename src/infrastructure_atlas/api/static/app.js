@@ -739,6 +739,7 @@
     'export': document.getElementById('admin-panel-export'),
     'api': document.getElementById('admin-panel-api'),
     'vcenter': document.getElementById('admin-panel-vcenter'),
+    'foreman': document.getElementById('admin-panel-foreman'),
     'puppet': document.getElementById('admin-panel-puppet'),
     'users': document.getElementById('admin-panel-users'),
     'backup': document.getElementById('admin-panel-backup'),
@@ -786,6 +787,23 @@
   const $adminVCenterCancel = document.getElementById("admin-vcenter-cancel");
   const $adminVCenterStatus = document.getElementById("admin-vcenter-status");
   const $adminVCenterFormStatus = document.getElementById("admin-vcenter-form-status");
+  // Foreman admin elements
+  const $adminForemanList = document.getElementById("admin-foreman-list");
+  const $adminForemanAdd = document.getElementById("admin-foreman-add");
+  const $adminForemanForm = document.getElementById("admin-foreman-form");
+  const $adminForemanFormTitle = document.getElementById("admin-foreman-form-title");
+  const $adminForemanId = document.getElementById("admin-foreman-id");
+  const $adminForemanName = document.getElementById("admin-foreman-name");
+  const $adminForemanBaseUrl = document.getElementById("admin-foreman-base-url");
+  const $adminForemanUsername = document.getElementById("admin-foreman-username");
+  const $adminForemanToken = document.getElementById("admin-foreman-token");
+  const $adminForemanTokenHelp = document.getElementById("admin-foreman-token-help");
+  const $adminForemanVerifySSL = document.getElementById("admin-foreman-verify-ssl");
+  const $adminForemanSave = document.getElementById("admin-foreman-save");
+  const $adminForemanTest = document.getElementById("admin-foreman-test");
+  const $adminForemanCancel = document.getElementById("admin-foreman-cancel");
+  const $adminForemanStatus = document.getElementById("admin-foreman-status");
+  const $adminForemanFormStatus = document.getElementById("admin-foreman-form-status");
   // User management elements
   const $adminUserList = document.getElementById("admin-user-list");
   const $adminUserDetail = document.getElementById("admin-user-detail");
@@ -1836,6 +1854,9 @@
     puppets: [],
     puppetLoading: false,
     editingPuppet: null,
+    foremans: [],
+    foremanLoading: false,
+    editingForeman: null,
   };
   const chatConfig = {
     systemPrompt: '',
@@ -8734,6 +8755,9 @@
     if (tab === 'vcenter') {
       loadAdminVCenters(adminState.vcenters.length === 0).catch(() => {});
     }
+    if (tab === 'foreman') {
+      loadAdminForemans(adminState.foremans.length === 0).catch(() => {});
+    }
     if (tab === 'puppet') {
       loadAdminPuppets(adminState.puppets.length === 0).catch(() => {});
     }
@@ -9237,6 +9261,344 @@
     $adminPuppetForm.addEventListener('submit', (e) => {
       e.preventDefault();
       saveAdminPuppet();
+    });
+  }
+
+  // ---------------------------
+  // Foreman Admin Functions
+  // ---------------------------
+  function resetAdminForemanForm() {
+    if ($adminForemanId) $adminForemanId.value = '';
+    if ($adminForemanName) $adminForemanName.value = '';
+    if ($adminForemanBaseUrl) $adminForemanBaseUrl.value = '';
+    if ($adminForemanUsername) $adminForemanUsername.value = '';
+    if ($adminForemanToken) $adminForemanToken.value = '';
+    if ($adminForemanVerifySSL) $adminForemanVerifySSL.checked = true;
+    if ($adminForemanFormStatus) $adminForemanFormStatus.textContent = '';
+    if ($adminForemanTokenHelp) $adminForemanTokenHelp.hidden = true;
+  }
+
+  function openAdminForemanForm(config = null) {
+    if (!$adminForemanForm) return;
+    adminState.editingForeman = config;
+    if ($adminForemanFormTitle) $adminForemanFormTitle.textContent = config ? 'Edit Foreman Instance' : 'Add Foreman Instance';
+    if ($adminForemanId) $adminForemanId.value = config?.id || '';
+    if ($adminForemanName) $adminForemanName.value = config?.name || '';
+    if ($adminForemanBaseUrl) $adminForemanBaseUrl.value = config?.base_url || '';
+    if ($adminForemanUsername) $adminForemanUsername.value = config?.username || '';
+    if ($adminForemanToken) $adminForemanToken.value = '';
+    if ($adminForemanVerifySSL) $adminForemanVerifySSL.checked = config ? config.verify_ssl !== false : true;
+    if ($adminForemanTokenHelp) $adminForemanTokenHelp.hidden = !config;
+    if ($adminForemanFormStatus) $adminForemanFormStatus.textContent = '';
+    $adminForemanForm.classList.remove('hidden');
+    $adminForemanName?.focus();
+  }
+
+  function closeAdminForemanForm() {
+    if (!$adminForemanForm) return;
+    adminState.editingForeman = null;
+    resetAdminForemanForm();
+    if ($adminForemanFormStatus) $adminForemanFormStatus.classList.remove('error', 'success');
+    $adminForemanForm.classList.add('hidden');
+  }
+
+  function renderAdminForemanList() {
+    if (!$adminForemanList) return;
+    $adminForemanList.innerHTML = '';
+    if (adminState.foremanLoading) {
+      const loading = document.createElement('div');
+      loading.className = 'account-empty';
+      loading.textContent = 'Loading Foreman instances…';
+      $adminForemanList.appendChild(loading);
+      return;
+    }
+    if (!adminState.foremans.length) {
+      const empty = document.createElement('div');
+      empty.className = 'account-empty';
+      empty.textContent = 'No Foreman instances configured yet.';
+      $adminForemanList.appendChild(empty);
+      return;
+    }
+
+    const frag = document.createDocumentFragment();
+    adminState.foremans.forEach((fm) => {
+      if (!fm) return;
+      const card = document.createElement('div');
+      card.className = 'admin-vcenter-card';
+
+      const main = document.createElement('div');
+      main.className = 'admin-vcenter-card-main';
+
+      const title = document.createElement('h3');
+      title.className = 'admin-vcenter-card-name';
+      title.textContent = fm.name || 'Foreman';
+      main.appendChild(title);
+
+      const url = document.createElement('div');
+      url.className = 'admin-vcenter-card-url';
+      url.textContent = fm.base_url || 'URL not configured';
+      main.appendChild(url);
+
+      const meta = document.createElement('div');
+      meta.className = 'admin-vcenter-card-meta';
+      
+      const usernameSpan = document.createElement('span');
+      usernameSpan.textContent = fm.username ? `User: ${fm.username}` : 'User not set';
+
+      const tlsSpan = document.createElement('span');
+      const tlsOk = fm.verify_ssl !== false;
+      tlsSpan.textContent = tlsOk ? 'TLS verified' : 'TLS not verified';
+      tlsSpan.classList.add(tlsOk ? 'status-ok' : 'status-warn');
+
+      const credsSpan = document.createElement('span');
+      const credsOk = !!fm.has_credentials;
+      credsSpan.textContent = credsOk ? 'Token stored' : 'Token missing';
+      credsSpan.classList.add(credsOk ? 'status-ok' : 'status-warn');
+
+      const refreshSpan = document.createElement('span');
+      if (fm.last_refresh) {
+        try {
+          refreshSpan.textContent = `Last update: ${amsDateTimeString(new Date(fm.last_refresh))}`;
+        } catch {
+          refreshSpan.textContent = `Last update: ${fm.last_refresh}`;
+        }
+        refreshSpan.classList.add('status-ok');
+      } else {
+        refreshSpan.textContent = 'Last update: never';
+        refreshSpan.classList.add('status-warn');
+      }
+
+      const countSpan = document.createElement('span');
+      const hostCount = Number(fm.host_count);
+      if (Number.isFinite(hostCount) && hostCount >= 0) {
+        const label = hostCount === 1 ? 'host' : 'hosts';
+        countSpan.textContent = `${hostCount.toLocaleString()} ${label}`;
+        countSpan.classList.add('status-ok');
+      } else {
+        countSpan.textContent = 'Hosts: unknown';
+        countSpan.classList.add('status-warn');
+      }
+
+      meta.append(usernameSpan, tlsSpan, credsSpan, countSpan, refreshSpan);
+      main.appendChild(meta);
+
+      const actions = document.createElement('div');
+      actions.className = 'admin-vcenter-card-actions';
+
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'btn ghost';
+      editBtn.textContent = 'Edit';
+      editBtn.addEventListener('click', () => openAdminForemanForm(fm));
+
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className = 'btn danger ghost';
+      deleteBtn.textContent = 'Delete';
+      deleteBtn.addEventListener('click', () => deleteAdminForeman(fm));
+
+      actions.appendChild(editBtn);
+      actions.appendChild(deleteBtn);
+
+      card.appendChild(main);
+      card.appendChild(actions);
+      frag.appendChild(card);
+    });
+
+    $adminForemanList.appendChild(frag);
+  }
+
+  async function loadAdminForemans(force = false) {
+    if (!$adminForemanList) return [];
+    if (adminState.foremanLoading && !force) return adminState.foremans;
+    adminState.foremanLoading = true;
+    renderAdminForemanList();
+    try {
+      // Use /foreman/instances to get full data including host_count and last_refresh
+      const res = await fetch(`${API_BASE}/foreman/instances`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.detail || `${res.status} ${res.statusText}`);
+      }
+      adminState.foremans = Array.isArray(data)
+        ? data.map((item) => {
+            if (!item || typeof item !== 'object') return item;
+            const numericHostCount = Number(item.host_count);
+            return {
+              ...item,
+              host_count: Number.isFinite(numericHostCount) && numericHostCount >= 0 ? numericHostCount : null,
+            };
+          })
+        : [];
+      if ($adminForemanStatus) {
+        $adminForemanStatus.classList.remove('error');
+        $adminForemanStatus.classList.add('success');
+      }
+      flashStatus(
+        $adminForemanStatus,
+        `Loaded ${adminState.foremans.length} Foreman instance${adminState.foremans.length === 1 ? '' : 's'}.`,
+      );
+      return adminState.foremans;
+    } catch (err) {
+      console.error('Failed to load Foreman configurations', err);
+      adminState.foremans = [];
+      if ($adminForemanStatus) {
+        $adminForemanStatus.classList.remove('success');
+        $adminForemanStatus.classList.add('error');
+      }
+      flashStatus($adminForemanStatus, `Failed to load Foreman instances: ${err?.message || err}`, 4000);
+      return [];
+    } finally {
+      adminState.foremanLoading = false;
+      renderAdminForemanList();
+    }
+  }
+
+  async function saveAdminForeman() {
+    if (!$adminForemanForm || !$adminForemanSave) return;
+    const id = ($adminForemanId?.value || '').trim();
+    const name = ($adminForemanName?.value || '').trim();
+    const baseUrl = ($adminForemanBaseUrl?.value || '').trim();
+    const username = ($adminForemanUsername?.value || '').trim();
+    const token = ($adminForemanToken?.value || '').trim();
+    const verify = !!$adminForemanVerifySSL?.checked;
+
+    if ($adminForemanFormStatus) $adminForemanFormStatus.classList.remove('error', 'success');
+    if (!name || !baseUrl || !username) {
+      if ($adminForemanFormStatus) $adminForemanFormStatus.classList.add('error');
+      flashStatus($adminForemanFormStatus, 'Name, base URL, and username are required.', 3200);
+      return;
+    }
+
+    const payload = {
+      name,
+      base_url: baseUrl,
+      username,
+      verify_ssl: verify,
+    };
+    if (!id || token) {
+      if (!token) {
+        if ($adminForemanFormStatus) $adminForemanFormStatus.classList.add('error');
+        flashStatus($adminForemanFormStatus, 'Personal Access Token is required for new Foreman instances.', 3200);
+        return;
+      }
+      payload.token = token;
+    }
+
+    const method = id ? 'PUT' : 'POST';
+    const url = id ? `${API_BASE}/foreman/configs/${encodeURIComponent(id)}` : `${API_BASE}/foreman/configs`;
+
+    $adminForemanSave.disabled = true;
+    flashStatus($adminForemanFormStatus, 'Saving…');
+    try {
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.detail || `${res.status} ${res.statusText}`);
+      }
+      if ($adminForemanStatus) {
+        $adminForemanStatus.classList.remove('error');
+        $adminForemanStatus.classList.add('success');
+      }
+      flashStatus($adminForemanStatus, id ? 'Updated Foreman configuration.' : 'Created Foreman configuration.', 3600);
+      closeAdminForemanForm();
+      await loadAdminForemans(true);
+      loadForemanInstances?.(true).catch?.(() => {});
+    } catch (err) {
+      console.error('Failed to save Foreman configuration', err);
+      if ($adminForemanFormStatus) $adminForemanFormStatus.classList.add('error');
+      flashStatus($adminForemanFormStatus, `Failed to save: ${err?.message || err}`, 4000);
+    } finally {
+      $adminForemanSave.disabled = false;
+    }
+  }
+
+  async function testAdminForemanConnection() {
+    if (!$adminForemanForm || !$adminForemanTest) return;
+    const id = ($adminForemanId?.value || '').trim();
+    
+    if (!id) {
+      if ($adminForemanFormStatus) $adminForemanFormStatus.classList.add('error');
+      flashStatus($adminForemanFormStatus, 'Save the configuration before testing connection.', 3200);
+      return;
+    }
+
+    $adminForemanTest.disabled = true;
+    flashStatus($adminForemanFormStatus, 'Testing connection…');
+    try {
+      const res = await fetch(`${API_BASE}/foreman/configs/${encodeURIComponent(id)}/test`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.detail || `${res.status} ${res.statusText}`);
+      }
+      if ($adminForemanFormStatus) {
+        $adminForemanFormStatus.classList.remove('error');
+        $adminForemanFormStatus.classList.add('success');
+      }
+      const version = data.foreman_version || data.version || 'unknown';
+      flashStatus($adminForemanFormStatus, `✓ Connection successful! Foreman v${version}`, 5000);
+    } catch (err) {
+      console.error('Failed to test Foreman connection', err);
+      if ($adminForemanFormStatus) {
+        $adminForemanFormStatus.classList.remove('success');
+        $adminForemanFormStatus.classList.add('error');
+      }
+      flashStatus($adminForemanFormStatus, `✗ Connection failed: ${err?.message || err}`, 5000);
+    } finally {
+      $adminForemanTest.disabled = false;
+    }
+  }
+
+  async function deleteAdminForeman(fm) {
+    if (!fm || !fm.id) return;
+    const confirmed = window.confirm(`Delete Foreman instance '${fm.name || fm.id}'?`);
+    if (!confirmed) return;
+    try {
+      const res = await fetch(`${API_BASE}/foreman/configs/${encodeURIComponent(fm.id)}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.detail || `${res.status} ${res.statusText}`);
+      }
+      if ($adminForemanStatus) {
+        $adminForemanStatus.classList.remove('error');
+        $adminForemanStatus.classList.add('success');
+      }
+      flashStatus($adminForemanStatus, 'Deleted Foreman configuration.', 3600);
+      if (adminState.editingForeman?.id === fm.id) {
+        closeAdminForemanForm();
+      }
+      await loadAdminForemans(true);
+      loadForemanInstances?.(true).catch?.(() => {});
+    } catch (err) {
+      console.error('Failed to delete Foreman configuration', err);
+      if ($adminForemanStatus) {
+        $adminForemanStatus.classList.remove('success');
+        $adminForemanStatus.classList.add('error');
+      }
+      flashStatus($adminForemanStatus, `Failed to delete: ${err?.message || err}`, 4000);
+    }
+  }
+
+  if ($adminForemanAdd) {
+    $adminForemanAdd.addEventListener('click', () => openAdminForemanForm());
+  }
+
+  if ($adminForemanCancel) {
+    $adminForemanCancel.addEventListener('click', closeAdminForemanForm);
+  }
+
+  if ($adminForemanTest) {
+    $adminForemanTest.addEventListener('click', testAdminForemanConnection);
+  }
+
+  if ($adminForemanForm) {
+    $adminForemanForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      saveAdminForeman();
     });
   }
 
