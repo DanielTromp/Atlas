@@ -488,4 +488,4 @@ Utilities
 
 ### Branding
 
-To show a custom logo in the web UI, add an SVG named `logo.svg` to `src/infrastructure_atlas/api/static/`. The login page and top bar load this asset when present; if it is absent, the product name is shown without a logo.
+To show a custom logo in the web UI, add a PNG named `logo.png` to `src/infrastructure_atlas/api/static/`. The login page and top bar load this asset when present; if it is absent, the product name is shown without a logo.

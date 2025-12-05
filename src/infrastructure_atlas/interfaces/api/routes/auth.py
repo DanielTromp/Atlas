@@ -60,19 +60,11 @@ def _has_ui_session(request: Request) -> bool:
 def _login_html(next_url: str, error: str | None = None) -> HTMLResponse:
     """Generate login HTML page."""
     err_html = f'<div class="error">{error}</div>' if error else ""
-    logo_svg = ""
-    logo_path = Path(__file__).parent.parent.parent / "api" / "static" / "logo.svg"
+    logo_path = Path(__file__).parent.parent.parent / "api" / "static" / "logo.png"
     if logo_path.exists():
-        try:
-            raw_logo = logo_path.read_text(encoding="utf-8")
-            start = raw_logo.find("<svg")
-            if start != -1:
-                logo_svg = raw_logo[start:]
-            else:
-                logo_svg = raw_logo
-        except OSError:
-            logo_svg = ""
-    logo_html = logo_svg or '<span class="brand-logo__fallback" aria-hidden="true"></span>'
+        logo_html = '<img src="/static/logo.png" alt="Logo" class="brand-logo" />'
+    else:
+        logo_html = '<span class="brand-logo__fallback" aria-hidden="true"></span>'
     return HTMLResponse(
         f"""
         <!doctype html>

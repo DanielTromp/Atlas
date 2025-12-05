@@ -36,3 +36,4 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_table("puppet_configs")
 
+

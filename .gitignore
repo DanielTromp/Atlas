@@ -104,8 +104,6 @@ scratch/
 tests/
 docs/
 
-# Static assets (personal branding)
-src/infrastructure_atlas/api/static/logo.svg
 
 # ═══════════════════════════════════════════════════════════
 # Python Packaging

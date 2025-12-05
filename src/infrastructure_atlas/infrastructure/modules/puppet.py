@@ -68,3 +68,4 @@ class PuppetModule(BaseModule):
                 message=f"Failed to check Puppet configurations: {e}",
             )
 
+
