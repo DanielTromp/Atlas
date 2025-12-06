@@ -2134,6 +2134,21 @@ body.theme-silver-light .admin-role-card {
 .admin-backup-options { display: flex; flex-direction: column; gap: 8px; padding: 12px 16px; border: 1px solid var(--grid-border); border-radius: 10px; background: var(--panel-translucent); }
 .fields-panel[hidden] { display: none !important; }
 
+/* Suggestions Admin Config */
+.admin-suggestions-config { display: flex; flex-direction: column; gap: 16px; margin-bottom: 20px; }
+.admin-suggestions-status { padding: 12px 16px; border-radius: 10px; font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+.admin-suggestions-info { display: flex; flex-direction: column; gap: 8px; padding: 16px; border: 1px solid var(--grid-border); border-radius: 10px; background: var(--panel-translucent); }
+.admin-suggestions-info .info-row { display: flex; align-items: center; gap: 12px; }
+.admin-suggestions-info .info-row .label { font-weight: 500; min-width: 150px; color: var(--muted); font-size: 13px; }
+.admin-suggestions-info .info-row .value { font-family: var(--mono); font-size: 13px; }
+.admin-suggestions-info .info-row .value.status-ok { color: var(--success); }
+.admin-suggestions-info .info-row .value.status-warn { color: #f59e0b; }
+.admin-suggestions-info .info-row .value.status-info { color: var(--accent); }
+.admin-suggestions-info .info-row .value.status-error { color: var(--error); }
+.admin-suggestions-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.admin-suggestions-actions .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.admin-hint { font-size: 12px; color: var(--muted); line-height: 1.5; margin: 0; }
+.admin-hint code { background: var(--code-bg); padding: 2px 6px; border-radius: 4px; font-family: var(--mono); font-size: 11px; }
 
 /* Chat Session Delete Button Styles */
 .chat-session-wrapper { position: relative; display: flex; align-items: center; margin-bottom: 4px; }

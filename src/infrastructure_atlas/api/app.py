@@ -48,6 +48,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from infrastructure_atlas import backup_sync
+
 # AI/LangChain functionality disabled
 # from infrastructure_atlas.application.chat_agents import AgentRuntime, AgentRuntimeError
 from infrastructure_atlas.application.dto import (
@@ -65,6 +66,14 @@ from infrastructure_atlas.application.dto import (
 from infrastructure_atlas.application.role_defaults import DEFAULT_ROLE_DEFINITIONS
 from infrastructure_atlas.application.security import hash_password, verify_password
 from infrastructure_atlas.application.services import create_vcenter_service
+from infrastructure_atlas.application.services.suggestions import (
+    SUGGESTION_CLASSIFICATIONS,
+    SUGGESTION_STATUSES,
+    SuggestionNotFoundError,
+    create_suggestion_service,
+    get_suggestion_backend_type,
+    migrate_csv_to_airtable,
+)
 from infrastructure_atlas.db import get_sessionmaker, init_database
 from infrastructure_atlas.db.models import (
     ChatMessage,
@@ -904,27 +913,27 @@ def _parse_job_datetime(value: Any) -> datetime | None:
     return parsed
 
 
-SUGGESTIONS_FILE = "suggestions.csv"
-SUGGESTION_FIELDS = [
-    "id",
-    "title",
-    "summary",
-    "classification",
-    "status",
-    "likes",
-    "created_at",
-    "updated_at",
-    "comments",
-]
-SUGGESTION_CLASSIFICATIONS = {
-    "Must have": {"color": "#7c3aed", "letter": "M"},
-    "Should have": {"color": "#2563eb", "letter": "S"},
-    "Could have": {"color": "#fbbf24", "letter": "C"},
-    "Nice to have": {"color": "#22c55e", "letter": "N"},
-    "Should not have": {"color": "#ef4444", "letter": "X"},
-}
-SUGGESTION_STATUSES = ["new", "accepted", "in progress", "done", "denied"]
-_suggestions_lock = Lock()
+# Suggestion service instance (lazy-loaded)
+_suggestion_service = None
+_suggestion_service_lock = Lock()
+
+
+def _get_suggestion_service():
+    """Get or create the suggestion service instance."""
+    global _suggestion_service
+    if _suggestion_service is None:
+        with _suggestion_service_lock:
+            if _suggestion_service is None:
+                _suggestion_service = create_suggestion_service(_data_dir())
+    return _suggestion_service
+
+
+def _reset_suggestion_service():
+    """Reset the suggestion service (for config changes)."""
+    global _suggestion_service
+    with _suggestion_service_lock:
+        _suggestion_service = None
+
 
 ENV_SETTING_FIELDS: list[dict[str, Any]] = [
     # Zabbix
@@ -1240,6 +1249,42 @@ ENV_SETTING_FIELDS: list[dict[str, Any]] = [
         "placeholder": "false",
         "category": "backup",
     },
+    # Suggestions / Airtable
+    {
+        "key": "SUGGESTIONS_BACKEND",
+        "label": "Suggestions Backend",
+        "secret": False,
+        "placeholder": "csv or airtable",
+        "category": "suggestions",
+    },
+    {
+        "key": "AIRTABLE_PAT",
+        "label": "Airtable Personal Access Token",
+        "secret": True,
+        "placeholder": "patXXX...",
+        "category": "suggestions",
+    },
+    {
+        "key": "AIRTABLE_BASE_ID",
+        "label": "Airtable Base ID",
+        "secret": False,
+        "placeholder": "appXXXXXXXXXXXXXX",
+        "category": "suggestions",
+    },
+    {
+        "key": "AIRTABLE_TABLE_NAME",
+        "label": "Airtable Table Name",
+        "secret": False,
+        "placeholder": "Suggestions",
+        "category": "suggestions",
+    },
+    {
+        "key": "AIRTABLE_CACHE_TTL",
+        "label": "Airtable Cache TTL (seconds)",
+        "secret": False,
+        "placeholder": "300",
+        "category": "suggestions",
+    },
 ]
 
 
@@ -1251,34 +1296,6 @@ def _write_log(msg: str) -> None:
     except Exception:
         # Logging failures should never crash the API
         pass
-
-
-def _suggestions_path() -> Path:
-    path = _csv_path(SUGGESTIONS_FILE)
-    if not path.parent.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-    if not path.exists():
-        with path.open("w", newline="", encoding="utf-8") as fh:
-            writer = csv.DictWriter(fh, fieldnames=SUGGESTION_FIELDS)
-            writer.writeheader()
-    return path
-
-
-def _safe_classification(value: str | None) -> str:
-    if not value:
-        return "Could have"
-    raw = str(value).strip().lower()
-    for name in SUGGESTION_CLASSIFICATIONS:
-        if raw == name.lower():
-            return name
-    return "Could have"
-
-
-def _safe_status(value: str | None) -> str:
-    if not value:
-        return "new"
-    raw = str(value).strip().lower()
-    return raw if raw in SUGGESTION_STATUSES else "new"
 
 
 def _require_classification(value: str | None) -> str:
@@ -1298,88 +1315,6 @@ def _require_status(value: str | None) -> str:
     if raw not in SUGGESTION_STATUSES:
         raise HTTPException(status_code=400, detail=f"Invalid status: {value}")
     return raw
-
-
-def _now_iso() -> str:
-    return datetime.now(UTC).replace(microsecond=0).isoformat()
-
-
-def _decorate_suggestion(item: dict[str, Any]) -> dict[str, Any]:
-    data = {**item}
-    data["classification"] = _safe_classification(data.get("classification"))
-    data["status"] = _safe_status(data.get("status"))
-    data.setdefault("summary", "")
-    try:
-        data["likes"] = int(data.get("likes") or 0)
-    except Exception:
-        data["likes"] = 0
-    comments_raw = data.get("comments") or []
-    if isinstance(comments_raw, str):
-        try:
-            parsed = json.loads(comments_raw)
-            comments = [c for c in parsed if isinstance(c, dict)] if isinstance(parsed, list) else []
-        except json.JSONDecodeError:
-            comments = []
-    elif isinstance(comments_raw, list):
-        comments = [c for c in comments_raw if isinstance(c, dict)]
-    else:
-        comments = []
-    data["comments"] = comments
-    meta = SUGGESTION_CLASSIFICATIONS.get(data["classification"], {})
-    data["classification_color"] = meta.get("color")
-    data["classification_letter"] = meta.get("letter")
-    data["status_label"] = data["status"].title()
-    return data
-
-
-def _load_suggestions() -> list[dict[str, Any]]:
-    path = _suggestions_path()
-    try:
-        sql = "SELECT * FROM read_csv_auto(?, header=True)"
-        df = duckdb.query(sql, params=[path.as_posix()]).df()
-    except Exception:
-        df = pd.DataFrame(columns=SUGGESTION_FIELDS)
-    if df.empty:
-        return []
-    for col in SUGGESTION_FIELDS:
-        if col not in df.columns:
-            df[col] = None
-    df = df.replace([np.inf, -np.inf], np.nan)
-    df = df.astype(object).where(pd.notnull(df), None)
-    out: list[dict[str, Any]] = []
-    for _, row in df.iterrows():
-        item = {k: row.get(k) for k in SUGGESTION_FIELDS}
-        out.append(_decorate_suggestion(item))
-
-    # Newest first
-    def _sort_key(it: dict[str, Any]):
-        try:
-            raw = str(it.get("created_at") or "")
-            if raw.endswith("Z"):
-                raw = raw[:-1]
-            return datetime.fromisoformat(raw)
-        except Exception:
-            return datetime.min
-
-    out.sort(key=_sort_key, reverse=True)
-    return out
-
-
-def _write_suggestions(rows: list[dict[str, Any]]) -> None:
-    path = _suggestions_path()
-    with path.open("w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=SUGGESTION_FIELDS, extrasaction="ignore")
-        writer.writeheader()
-        for row in rows:
-            payload = row.copy()
-            payload["likes"] = int(payload.get("likes") or 0)
-            payload["classification"] = _safe_classification(payload.get("classification"))
-            payload["status"] = _safe_status(payload.get("status"))
-            comments = payload.get("comments") or []
-            if not isinstance(comments, list):
-                comments = []
-            payload["comments"] = json.dumps(comments, ensure_ascii=False)
-            writer.writerow(payload)
 
 
 def _env_file_path() -> Path:
@@ -1469,25 +1404,6 @@ class EnvResetRequest(BaseModel):
     key: str
 
 
-def _suggestion_meta() -> dict[str, Any]:
-    classifications = [
-        {
-            "name": name,
-            "color": meta.get("color"),
-            "letter": meta.get("letter"),
-        }
-        for name, meta in SUGGESTION_CLASSIFICATIONS.items()
-    ]
-    statuses = [
-        {
-            "value": value,
-            "label": value.title(),
-        }
-        for value in SUGGESTION_STATUSES
-    ]
-    return {"classifications": classifications, "statuses": statuses}
-
-
 # Include modular routes from interfaces
 app.include_router(bootstrap_api())
 
@@ -1518,9 +1434,9 @@ app.add_middleware(
 
 @app.get("/suggestions")
 def suggestions_list() -> dict:
-    with _suggestions_lock:
-        items = _load_suggestions()
-    meta = meta_to_dto(_suggestion_meta())
+    service = _get_suggestion_service()
+    items = service.list_suggestions()
+    meta = meta_to_dto(service.get_meta())
     dto = SuggestionListDTO(
         items=suggestions_to_dto(items),
         total=len(items),
@@ -1529,19 +1445,48 @@ def suggestions_list() -> dict:
     return dto.dict_clean()
 
 
+@app.get("/suggestions/config")
+def suggestions_config() -> dict:
+    """Return the current suggestions backend configuration."""
+    backend_type = get_suggestion_backend_type()
+    airtable_configured = bool(os.getenv("AIRTABLE_PAT", "").strip() and os.getenv("AIRTABLE_BASE_ID", "").strip())
+    return {
+        "backend": backend_type,
+        "airtable_configured": airtable_configured,
+        "airtable_base_id": os.getenv("AIRTABLE_BASE_ID", "") if airtable_configured else None,
+        "airtable_table_name": os.getenv("AIRTABLE_TABLE_NAME", "Suggestions") if airtable_configured else None,
+        "cache_ttl": int(os.getenv("AIRTABLE_CACHE_TTL", "300")),
+    }
+
+
+@app.post("/suggestions/migrate")
+def suggestions_migrate() -> dict:
+    """Migrate suggestions from CSV to Airtable."""
+    csv_path = _data_dir() / "suggestions.csv"
+    if not csv_path.exists():
+        raise HTTPException(status_code=404, detail="No CSV file found to migrate")
+
+    try:
+        result = migrate_csv_to_airtable(csv_path)
+        # Reset the service to pick up the new backend
+        _reset_suggestion_service()
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Migration failed: {e}") from e
+
+
 @app.get("/suggestions/{suggestion_id}")
 def suggestions_detail(suggestion_id: str) -> dict:
-    with _suggestions_lock:
-        items = _load_suggestions()
-    for item in items:
-        if str(item.get("id")) == suggestion_id:
-            meta = meta_to_dto(_suggestion_meta())
-            dto = SuggestionItemDTO(
-                item=suggestion_to_dto(item),
-                meta=meta,
-            )
-            return dto.dict_clean()
-    raise HTTPException(status_code=404, detail="Suggestion not found")
+    service = _get_suggestion_service()
+    item = service.get_suggestion(suggestion_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Suggestion not found")
+    meta = meta_to_dto(service.get_meta())
+    dto = SuggestionItemDTO(
+        item=suggestion_to_dto(item),
+        meta=meta,
+    )
+    return dto.dict_clean()
 
 
 @app.post("/suggestions")
@@ -1551,90 +1496,60 @@ def suggestions_create(req: SuggestionCreate) -> dict:
         raise HTTPException(status_code=400, detail="Title is required")
     summary = (req.summary or "").strip()
     classification = _require_classification(req.classification)
-    now = _now_iso()
-    item = {
-        "id": uuid.uuid4().hex,
-        "title": title,
-        "summary": summary,
-        "classification": classification,
-        "status": "new",
-        "likes": 0,
-        "created_at": now,
-        "updated_at": now,
-        "comments": [],
-    }
-    with _suggestions_lock:
-        rows = _load_suggestions()
-        rows.append(item)
-        _write_suggestions(rows)
-    decorated = _decorate_suggestion(item)
-    dto = SuggestionItemDTO(item=suggestion_to_dto(decorated))
-    return dto.dict_clean()
+
+    service = _get_suggestion_service()
+    try:
+        item = service.create_suggestion(title=title, summary=summary, classification=classification)
+        dto = SuggestionItemDTO(item=suggestion_to_dto(item))
+        return dto.dict_clean()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create suggestion: {e}") from e
 
 
 @app.put("/suggestions/{suggestion_id}")
 def suggestions_update(suggestion_id: str, req: SuggestionUpdate) -> dict:
-    with _suggestions_lock:
-        rows = _load_suggestions()
-        target = None
-        target_index = -1
-        for idx, existing in enumerate(rows):
-            if str(existing.get("id")) == suggestion_id:
-                target = existing
-                target_index = idx
-                break
-        if target is None:
-            raise HTTPException(status_code=404, detail="Suggestion not found")
+    service = _get_suggestion_service()
 
-        if req.title is not None:
-            new_title = req.title.strip()
-            if not new_title:
-                raise HTTPException(status_code=400, detail="Title cannot be empty")
-            target["title"] = new_title
-        if req.summary is not None:
-            target["summary"] = req.summary.strip() if req.summary else ""
-        if req.classification is not None:
-            target["classification"] = _require_classification(req.classification)
-        if req.status is not None:
-            target["status"] = _require_status(req.status)
+    title = None
+    if req.title is not None:
+        new_title = req.title.strip()
+        if not new_title:
+            raise HTTPException(status_code=400, detail="Title cannot be empty")
+        title = new_title
 
-        target["updated_at"] = _now_iso()
-        rows[target_index] = target
-        _write_suggestions(rows)
-        saved = _decorate_suggestion(target)
+    summary = req.summary.strip() if req.summary else None if req.summary is None else ""
+    classification = _require_classification(req.classification) if req.classification is not None else None
+    status = _require_status(req.status) if req.status is not None else None
 
-    dto = SuggestionItemDTO(item=suggestion_to_dto(saved))
-    return dto.dict_clean()
+    try:
+        item = service.update_suggestion(
+            suggestion_id,
+            title=title,
+            summary=summary,
+            classification=classification,
+            status=status,
+        )
+        dto = SuggestionItemDTO(item=suggestion_to_dto(item))
+        return dto.dict_clean()
+    except SuggestionNotFoundError:
+        raise HTTPException(status_code=404, detail="Suggestion not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update suggestion: {e}") from e
 
 
 @app.post("/suggestions/{suggestion_id}/like")
 def suggestions_like(suggestion_id: str, req: SuggestionLikeRequest) -> dict:
     delta = req.delta or 1
-    with _suggestions_lock:
-        rows = _load_suggestions()
-        target = None
-        target_index = -1
-        for idx, existing in enumerate(rows):
-            if str(existing.get("id")) == suggestion_id:
-                target = existing
-                target_index = idx
-                break
-        if target is None:
-            raise HTTPException(status_code=404, detail="Suggestion not found")
+    service = _get_suggestion_service()
 
-        try:
-            likes = int(target.get("likes") or 0)
-        except Exception:
-            likes = 0
-        likes = max(0, likes + delta)
-        target["likes"] = likes
-        target["updated_at"] = _now_iso()
-        rows[target_index] = target
-        _write_suggestions(rows)
-        saved = _decorate_suggestion(target)
-
-    dto = SuggestionItemDTO(item=suggestion_to_dto(saved))
-    return dto.dict_clean()
+    try:
+        item = service.like_suggestion(suggestion_id, delta=delta)
+        dto = SuggestionItemDTO(item=suggestion_to_dto(item))
+        return dto.dict_clean()
+    except SuggestionNotFoundError:
+        raise HTTPException(status_code=404, detail="Suggestion not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to like suggestion: {e}") from e
 
 
 @app.post("/suggestions/{suggestion_id}/comments")
@@ -1642,78 +1557,41 @@ def suggestions_add_comment(suggestion_id: str, req: SuggestionCommentCreate) ->
     text = (req.text or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="Comment text is required")
-    with _suggestions_lock:
-        rows = _load_suggestions()
-        target = None
-        target_index = -1
-        for idx, existing in enumerate(rows):
-            if str(existing.get("id")) == suggestion_id:
-                target = existing
-                target_index = idx
-                break
-        if target is None:
-            raise HTTPException(status_code=404, detail="Suggestion not found")
 
-        comments = target.get("comments") or []
-        if not isinstance(comments, list):
-            comments = []
-        comment = {
-            "id": uuid.uuid4().hex,
-            "text": text,
-            "created_at": _now_iso(),
-        }
-        comments.append(comment)
-        target["comments"] = comments
-        target["updated_at"] = _now_iso()
-        rows[target_index] = target
-        _write_suggestions(rows)
-        saved = _decorate_suggestion(target)
-
-    dto = SuggestionCommentResponseDTO(
-        item=suggestion_to_dto(saved),
-        comment=SuggestionCommentDTO.model_validate(comment),
-    )
-    return dto.dict_clean()
+    service = _get_suggestion_service()
+    try:
+        item, comment = service.add_comment(suggestion_id, text)
+        dto = SuggestionCommentResponseDTO(
+            item=suggestion_to_dto(item),
+            comment=SuggestionCommentDTO.model_validate(comment),
+        )
+        return dto.dict_clean()
+    except SuggestionNotFoundError:
+        raise HTTPException(status_code=404, detail="Suggestion not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to add comment: {e}") from e
 
 
 @app.delete("/suggestions/{suggestion_id}/comments/{comment_id}")
 def suggestions_delete_comment(suggestion_id: str, comment_id: str) -> dict:
-    with _suggestions_lock:
-        rows = _load_suggestions()
-        target = None
-        target_index = -1
-        for idx, existing in enumerate(rows):
-            if str(existing.get("id")) == suggestion_id:
-                target = existing
-                target_index = idx
-                break
-        if target is None:
-            raise HTTPException(status_code=404, detail="Suggestion not found")
+    service = _get_suggestion_service()
 
-        comments = target.get("comments") or []
-        if not isinstance(comments, list):
-            comments = []
-        new_comments = [c for c in comments if str(c.get("id")) != comment_id]
-        if len(new_comments) == len(comments):
-            raise HTTPException(status_code=404, detail="Comment not found")
-        target["comments"] = new_comments
-        target["updated_at"] = _now_iso()
-        rows[target_index] = target
-        _write_suggestions(rows)
-        saved = _decorate_suggestion(target)
-
-    dto = SuggestionItemDTO(item=suggestion_to_dto(saved))
-    return dto.dict_clean()
+    try:
+        item = service.delete_comment(suggestion_id, comment_id)
+        dto = SuggestionItemDTO(item=suggestion_to_dto(item))
+        return dto.dict_clean()
+    except SuggestionNotFoundError as e:
+        detail = "Comment not found" if "Comment" in str(e) else "Suggestion not found"
+        raise HTTPException(status_code=404, detail=detail)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete comment: {e}") from e
 
 
 @app.delete("/suggestions/{suggestion_id}")
 def suggestions_delete(suggestion_id: str) -> dict:
-    with _suggestions_lock:
-        rows = _load_suggestions()
-        new_rows = [row for row in rows if str(row.get("id")) != suggestion_id]
-        if len(new_rows) == len(rows):
-            raise HTTPException(status_code=404, detail="Suggestion not found")
-        _write_suggestions(new_rows)
+    service = _get_suggestion_service()
+    if not service.delete_suggestion(suggestion_id):
+        raise HTTPException(status_code=404, detail="Suggestion not found")
     return {"ok": True}
 
 
@@ -1803,6 +1681,9 @@ def admin_env_update(req: EnvUpdateRequest):
     if req.value is None:
         return admin_env_settings()
     _write_env_value(key, req.value)
+    # Reset suggestion service if Airtable config changed
+    if key.startswith("AIRTABLE_") or key == "SUGGESTIONS_BACKEND":
+        _reset_suggestion_service()
     return admin_env_settings()
 
 
@@ -1815,6 +1696,9 @@ def admin_env_reset(req: EnvResetRequest):
     if field is None:
         raise HTTPException(status_code=404, detail="Unknown setting")
     _write_env_value(key, None)
+    # Reset suggestion service if Airtable config changed
+    if key.startswith("AIRTABLE_") or key == "SUGGESTIONS_BACKEND":
+        _reset_suggestion_service()
     return admin_env_settings()
 
 

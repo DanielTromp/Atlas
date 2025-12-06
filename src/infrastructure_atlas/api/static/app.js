@@ -730,6 +730,7 @@
     'chat': document.getElementById('admin-settings-chat'),
     'export': document.getElementById('admin-settings-export'),
     'api': document.getElementById('admin-settings-api'),
+    'suggestions': document.getElementById('admin-settings-suggestions'),
     'backup': document.getElementById('admin-settings-backup'),
   };
   const adminPanels = {
@@ -742,6 +743,7 @@
     'foreman': document.getElementById('admin-panel-foreman'),
     'puppet': document.getElementById('admin-panel-puppet'),
     'users': document.getElementById('admin-panel-users'),
+    'suggestions': document.getElementById('admin-panel-suggestions'),
     'backup': document.getElementById('admin-panel-backup'),
   };
   const adminTabs = document.querySelectorAll('#admin-tabs .admin-tab');
@@ -8553,6 +8555,7 @@
     renderAdminGroup(adminContainers['chat'], groups['chat'] || [], { emptyMessage: 'Add API keys and defaults to enable chat providers.' });
     renderAdminGroup(adminContainers['export'], groups['export'] || [], { emptyMessage: 'No export settings available.' });
     renderAdminGroup(adminContainers['api'], groups['api'] || [], { emptyMessage: 'No API/UI settings available.' });
+    renderAdminGroup(adminContainers['suggestions'], groups['suggestions'] || [], { emptyMessage: 'Configure Airtable integration for suggestions.' });
     renderAdminGroup(adminContainers['backup'], groups['backup'] || [], { emptyMessage: 'Configure backup options.' });
   }
 
@@ -8761,6 +8764,106 @@
     if (tab === 'puppet') {
       loadAdminPuppets(adminState.puppets.length === 0).catch(() => {});
     }
+    if (tab === 'suggestions') {
+      loadAdminSuggestionsConfig().catch(() => {});
+    }
+  }
+
+  // Suggestions admin config
+  const $adminSuggestionsBackend = document.getElementById('admin-suggestions-backend');
+  const $adminSuggestionsAirtableStatus = document.getElementById('admin-suggestions-airtable-status');
+  const $adminSuggestionsBaseId = document.getElementById('admin-suggestions-base-id');
+  const $adminSuggestionsTableName = document.getElementById('admin-suggestions-table-name');
+  const $adminSuggestionsCacheTTL = document.getElementById('admin-suggestions-cache-ttl');
+  const $adminSuggestionsBaseRow = document.getElementById('admin-suggestions-base-row');
+  const $adminSuggestionsTableRow = document.getElementById('admin-suggestions-table-row');
+  const $adminSuggestionsMigrate = document.getElementById('admin-suggestions-migrate');
+  const $adminSuggestionsMigrateStatus = document.getElementById('admin-suggestions-migrate-status');
+
+  async function loadAdminSuggestionsConfig() {
+    try {
+      const res = await fetch(`${API_BASE}/suggestions/config`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.detail || res.statusText);
+      }
+      const config = await res.json();
+      if ($adminSuggestionsBackend) {
+        $adminSuggestionsBackend.textContent = config.backend === 'airtable' ? 'Airtable' : 'CSV File';
+        $adminSuggestionsBackend.className = 'value ' + (config.backend === 'airtable' ? 'status-ok' : 'status-info');
+      }
+      if ($adminSuggestionsAirtableStatus) {
+        $adminSuggestionsAirtableStatus.textContent = config.airtable_configured ? 'Yes' : 'No';
+        $adminSuggestionsAirtableStatus.className = 'value ' + (config.airtable_configured ? 'status-ok' : 'status-warn');
+      }
+      if ($adminSuggestionsBaseRow) {
+        $adminSuggestionsBaseRow.hidden = !config.airtable_configured;
+      }
+      if ($adminSuggestionsTableRow) {
+        $adminSuggestionsTableRow.hidden = !config.airtable_configured;
+      }
+      if ($adminSuggestionsBaseId) {
+        $adminSuggestionsBaseId.textContent = config.airtable_base_id || '—';
+      }
+      if ($adminSuggestionsTableName) {
+        $adminSuggestionsTableName.textContent = config.airtable_table_name || 'Suggestions';
+      }
+      if ($adminSuggestionsCacheTTL) {
+        $adminSuggestionsCacheTTL.textContent = `${config.cache_ttl || 300}s`;
+      }
+      // Disable migrate button if already using Airtable or if Airtable is not configured
+      if ($adminSuggestionsMigrate) {
+        $adminSuggestionsMigrate.disabled = config.backend === 'airtable' || !config.airtable_configured;
+        if (config.backend === 'airtable') {
+          $adminSuggestionsMigrate.title = 'Already using Airtable';
+        } else if (!config.airtable_configured) {
+          $adminSuggestionsMigrate.title = 'Configure Airtable settings first';
+        } else {
+          $adminSuggestionsMigrate.title = 'Migrate existing CSV data to Airtable';
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load suggestions config', err);
+    }
+  }
+
+  async function migrateToAirtable() {
+    if (!$adminSuggestionsMigrate) return;
+    $adminSuggestionsMigrate.disabled = true;
+    if ($adminSuggestionsMigrateStatus) {
+      $adminSuggestionsMigrateStatus.textContent = 'Migrating…';
+      $adminSuggestionsMigrateStatus.className = 'form-status';
+    }
+    try {
+      const res = await fetch(`${API_BASE}/suggestions/migrate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.detail || res.statusText);
+      }
+      const result = await res.json();
+      if ($adminSuggestionsMigrateStatus) {
+        $adminSuggestionsMigrateStatus.textContent = result.message || 'Migration complete';
+        $adminSuggestionsMigrateStatus.className = 'form-status status-ok';
+      }
+      // Reload config to update UI
+      await loadAdminSuggestionsConfig();
+      // Reload suggestions if on that page
+      loadSuggestions(true, { silent: true }).catch(() => {});
+    } catch (err) {
+      console.error('Migration failed', err);
+      if ($adminSuggestionsMigrateStatus) {
+        $adminSuggestionsMigrateStatus.textContent = `Migration failed: ${err?.message || err}`;
+        $adminSuggestionsMigrateStatus.className = 'form-status status-error';
+      }
+      $adminSuggestionsMigrate.disabled = false;
+    }
+  }
+
+  if ($adminSuggestionsMigrate) {
+    $adminSuggestionsMigrate.addEventListener('click', migrateToAirtable);
   }
 
   function resetAdminVCenterForm() {

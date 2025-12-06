@@ -808,6 +808,7 @@
             <button class="admin-tab" data-admin-tab="foreman">Foreman</button>
             <button class="admin-tab" data-admin-tab="puppet">Puppet</button>
             <button class="admin-tab" data-admin-tab="users">Users</button>
+            <button class="admin-tab" data-admin-tab="suggestions">Suggestions</button>
             <button class="admin-tab" data-admin-tab="backup">Backup</button>
           </nav>
           <div id="admin-settings" class="admin-panels">
@@ -1031,6 +1032,46 @@
                   <span id="admin-role-status" class="form-status"></span>
                 </div>
                 <div id="admin-role-list" class="admin-role-list"></div>
+              </div>
+            </section>
+            <section id="admin-panel-suggestions" class="admin-panel" data-admin-tab="suggestions">
+              <div id="admin-settings-suggestions" class="admin-settings-group"></div>
+              <div class="admin-suggestions-config">
+                <h3>Suggestions Database</h3>
+                <div class="admin-suggestions-status" id="admin-suggestions-status"></div>
+                <div class="admin-suggestions-info">
+                  <div class="info-row">
+                    <span class="label">Current Backend:</span>
+                    <span id="admin-suggestions-backend" class="value">—</span>
+                  </div>
+                  <div class="info-row">
+                    <span class="label">Airtable Configured:</span>
+                    <span id="admin-suggestions-airtable-status" class="value">—</span>
+                  </div>
+                  <div class="info-row" id="admin-suggestions-base-row" hidden>
+                    <span class="label">Airtable Base ID:</span>
+                    <span id="admin-suggestions-base-id" class="value">—</span>
+                  </div>
+                  <div class="info-row" id="admin-suggestions-table-row" hidden>
+                    <span class="label">Airtable Table:</span>
+                    <span id="admin-suggestions-table-name" class="value">—</span>
+                  </div>
+                  <div class="info-row">
+                    <span class="label">Cache TTL:</span>
+                    <span id="admin-suggestions-cache-ttl" class="value">—</span>
+                  </div>
+                </div>
+                <div class="admin-suggestions-actions">
+                  <button id="admin-suggestions-migrate" class="btn" type="button">
+                    Migrate CSV → Airtable
+                  </button>
+                  <span id="admin-suggestions-migrate-status" class="form-status"></span>
+                </div>
+                <p class="admin-hint">
+                  Configure your Airtable Personal Access Token (PAT) and Base ID above, then click
+                  "Migrate CSV → Airtable" to transfer existing suggestions. Set <code>SUGGESTIONS_BACKEND</code>
+                  to <code>airtable</code> to force using Airtable, or leave empty for auto-detection.
+                </p>
               </div>
             </section>
             <section id="admin-panel-backup" class="admin-panel" data-admin-tab="backup">
