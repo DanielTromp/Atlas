@@ -47,7 +47,7 @@ from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from infrastructure_atlas import backup_sync
+from infrastructure_atlas import backup_manager, backup_sync
 
 # AI/LangChain functionality disabled
 # from infrastructure_atlas.application.chat_agents import AgentRuntime, AgentRuntimeError
@@ -1198,41 +1198,12 @@ ENV_SETTING_FIELDS: list[dict[str, Any]] = [
     {"key": "UI_THEME_DEFAULT", "label": "Default Theme", "secret": False, "placeholder": "silver-dark", "category": "api"},
     # Backup
     {"key": "BACKUP_ENABLE", "label": "Backup Enabled", "secret": False, "placeholder": "1", "category": "backup"},
-    {"key": "BACKUP_TYPE", "label": "Backup Type", "secret": False, "placeholder": "local", "category": "backup"},
+    {"key": "BACKUP_TYPE", "label": "Backup Type", "secret": False, "placeholder": "local, sftp, scp, webdav", "category": "backup"},
     {
-        "key": "BACKUP_HOST",
-        "label": "Backup Host",
-        "secret": False,
-        "placeholder": "backup.example.com",
-        "category": "backup",
-    },
-    {"key": "BACKUP_PORT", "label": "Backup Port", "secret": False, "placeholder": "22", "category": "backup"},
-    {
-        "key": "BACKUP_USERNAME",
-        "label": "Backup Username",
-        "secret": False,
-        "placeholder": "backup_user",
-        "category": "backup",
-    },
-    {
-        "key": "BACKUP_PASSWORD",
-        "label": "Backup Password",
+        "key": "BACKUP_ENCRYPTION_PASSWORD",
+        "label": "Encryption Password",
         "secret": True,
-        "placeholder": "password",
-        "category": "backup",
-    },
-    {
-        "key": "BACKUP_PRIVATE_KEY_PATH",
-        "label": "Private Key Path",
-        "secret": False,
-        "placeholder": "~/.ssh/id_rsa",
-        "category": "backup",
-    },
-    {
-        "key": "BACKUP_REMOTE_PATH",
-        "label": "Remote Path",
-        "secret": False,
-        "placeholder": "/backups/infrastructure-atlas",
+        "placeholder": "secure-password-for-backups",
         "category": "backup",
     },
     {
@@ -1243,10 +1214,74 @@ ENV_SETTING_FIELDS: list[dict[str, Any]] = [
         "category": "backup",
     },
     {
+        "key": "BACKUP_HOST",
+        "label": "SFTP/SCP Host",
+        "secret": False,
+        "placeholder": "backup.example.com",
+        "category": "backup",
+    },
+    {"key": "BACKUP_PORT", "label": "SFTP/SCP Port", "secret": False, "placeholder": "22", "category": "backup"},
+    {
+        "key": "BACKUP_USERNAME",
+        "label": "SFTP/SCP Username",
+        "secret": False,
+        "placeholder": "backup_user",
+        "category": "backup",
+    },
+    {
+        "key": "BACKUP_PASSWORD",
+        "label": "SFTP/SCP Password",
+        "secret": True,
+        "placeholder": "password",
+        "category": "backup",
+    },
+    {
+        "key": "BACKUP_PRIVATE_KEY_PATH",
+        "label": "SFTP/SCP Private Key Path",
+        "secret": False,
+        "placeholder": "~/.ssh/id_rsa",
+        "category": "backup",
+    },
+    {
+        "key": "BACKUP_REMOTE_PATH",
+        "label": "SFTP/SCP Remote Path",
+        "secret": False,
+        "placeholder": "/backups/atlas",
+        "category": "backup",
+    },
+    {
+        "key": "BACKUP_WEBDAV_URL",
+        "label": "WebDAV URL",
+        "secret": False,
+        "placeholder": "https://file.example.com/remote.php/webdav",
+        "category": "backup",
+    },
+    {
+        "key": "BACKUP_WEBDAV_USERNAME",
+        "label": "WebDAV Username",
+        "secret": False,
+        "placeholder": "backup",
+        "category": "backup",
+    },
+    {
+        "key": "BACKUP_WEBDAV_PASSWORD",
+        "label": "WebDAV Password",
+        "secret": True,
+        "placeholder": "password",
+        "category": "backup",
+    },
+    {
+        "key": "BACKUP_WEBDAV_PATH",
+        "label": "WebDAV Folder",
+        "secret": False,
+        "placeholder": "Atlas",
+        "category": "backup",
+    },
+    {
         "key": "BACKUP_CREATE_TIMESTAMPED_DIRS",
         "label": "Create Timestamped Directories",
         "secret": False,
-        "placeholder": "false",
+        "placeholder": "true",
         "category": "backup",
     },
     # Suggestions / Airtable
@@ -1704,15 +1739,16 @@ def admin_env_reset(req: EnvResetRequest):
 
 @app.post("/admin/backup-sync")
 def admin_backup_sync(user: OptionalUserDep = None):
+    """Legacy backup sync endpoint - now uses new encrypted backup system."""
     actor = getattr(user, "username", None)
     with task_logging("admin.backup_sync", actor=actor, trigger="ui") as task_log:
         try:
-            result = backup_sync.sync_data_dir(note="manual-ui")
+            result = backup_manager.create_backup()
         except Exception as exc:  # pragma: no cover
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
         status = (result or {}).get("status")
-        count = (result or {}).get("count")
+        count = (result or {}).get("files_count")
         method = (result or {}).get("method")
         task_log.add_success(status=status, method=method, file_count=count)
 
@@ -1725,6 +1761,132 @@ def admin_backup_sync(user: OptionalUserDep = None):
                 },
             )
 
+        return result
+
+
+class BackupCreateRequest(BaseModel):
+    password: str | None = None
+
+
+class BackupRestoreRequest(BaseModel):
+    filename: str
+    password: str | None = None
+    dry_run: bool = False
+
+
+@app.get("/admin/backup/config")
+def admin_backup_config():
+    """Get current backup configuration status."""
+    backup_type = os.getenv("BACKUP_TYPE", "local").strip().lower()
+    encryption_configured = bool(os.getenv("BACKUP_ENCRYPTION_PASSWORD", "").strip())
+    
+    config_status = {
+        "type": backup_type,
+        "encryption_configured": encryption_configured,
+        "enabled": os.getenv("BACKUP_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off"},
+    }
+    
+    if backup_type == "local":
+        config_status["local_path"] = os.getenv("BACKUP_LOCAL_PATH", "backups")
+        config_status["configured"] = True
+    elif backup_type in {"sftp", "scp"}:
+        config_status["host"] = os.getenv("BACKUP_HOST", "")
+        config_status["username"] = os.getenv("BACKUP_USERNAME", "")
+        config_status["remote_path"] = os.getenv("BACKUP_REMOTE_PATH", "")
+        config_status["configured"] = bool(config_status["host"] and config_status["username"])
+    elif backup_type == "webdav":
+        config_status["webdav_url"] = os.getenv("BACKUP_WEBDAV_URL", "")
+        config_status["webdav_path"] = os.getenv("BACKUP_WEBDAV_PATH", "Atlas")
+        config_status["configured"] = bool(config_status["webdav_url"])
+    else:
+        config_status["configured"] = False
+    
+    return config_status
+
+
+@app.post("/admin/backup/create")
+def admin_backup_create(req: BackupCreateRequest = None, user: OptionalUserDep = None):
+    """Create an encrypted backup."""
+    actor = getattr(user, "username", None)
+    password = req.password if req else None
+    
+    with task_logging("admin.backup_create", actor=actor, trigger="ui") as task_log:
+        try:
+            result = backup_manager.create_backup(password=password)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        
+        status = result.get("status")
+        task_log.add_success(
+            status=status,
+            method=result.get("method"),
+            file_count=result.get("files_count"),
+            filename=result.get("filename"),
+        )
+        
+        if status == "error":
+            raise HTTPException(status_code=500, detail=result.get("reason", "Backup failed"))
+        
+        return result
+
+
+@app.get("/admin/backup/list")
+def admin_backup_list():
+    """List available backups."""
+    try:
+        result = backup_manager.list_backups()
+        if result.get("status") == "error":
+            raise HTTPException(status_code=500, detail=result.get("reason", "Failed to list backups"))
+        return result
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/admin/backup/restore")
+def admin_backup_restore(req: BackupRestoreRequest, user: OptionalUserDep = None):
+    """Restore a backup."""
+    actor = getattr(user, "username", None)
+    
+    with task_logging("admin.backup_restore", actor=actor, trigger="ui") as task_log:
+        try:
+            result = backup_manager.restore_backup(
+                filename=req.filename,
+                password=req.password,
+                dry_run=req.dry_run,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        
+        status = result.get("status")
+        task_log.add_success(
+            status=status,
+            dry_run=req.dry_run,
+            filename=req.filename,
+            files_count=result.get("files_count"),
+        )
+        
+        if status == "error":
+            raise HTTPException(status_code=500, detail=result.get("reason", "Restore failed"))
+        
+        return result
+
+
+@app.delete("/admin/backup/{filename}")
+def admin_backup_delete(filename: str, user: OptionalUserDep = None):
+    """Delete a backup."""
+    actor = getattr(user, "username", None)
+    
+    with task_logging("admin.backup_delete", actor=actor, trigger="ui") as task_log:
+        try:
+            result = backup_manager.delete_backup(filename)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        
+        task_log.add_success(filename=filename, status=result.get("status"))
+        
+        if result.get("status") == "error":
+            raise HTTPException(status_code=404, detail=result.get("reason", "Backup not found"))
+        
         return result
 
 

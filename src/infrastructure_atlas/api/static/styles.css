@@ -2121,17 +2121,41 @@ body.theme-silver-light .admin-role-card {
 /* Respect [hidden] even with display set on the class */
 
 /* Backup Configuration Styles */
-.admin-backup-config { display: flex; flex-direction: column; gap: 16px; margin-bottom: 20px; }
-.admin-backup-status { padding: 12px 16px; border-radius: 10px; font-size: 14px; font-weight: 600; margin-bottom: 16px; }
-.admin-backup-status.success { background: rgba(34, 197, 94, 0.15); color: var(--success); border: 1px solid rgba(34, 197, 94, 0.3); }
-.admin-backup-status.warning { background: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.3); }
-.admin-backup-status.disabled { background: rgba(100, 116, 139, 0.15); color: var(--muted); border: 1px solid rgba(100, 116, 139, 0.3); }
-.admin-backup-controls { display: flex; flex-direction: column; gap: 16px; }
-.admin-backup-type-config { display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid var(--grid-border); border-radius: 10px; background: var(--panel-translucent); }
-.admin-backup-type-config[hidden] { display: none !important; }
-.field-row { display: flex; gap: 16px; flex-wrap: wrap; }
-.field-row .field { flex: 1 1 200px; }
-.admin-backup-options { display: flex; flex-direction: column; gap: 8px; padding: 12px 16px; border: 1px solid var(--grid-border); border-radius: 10px; background: var(--panel-translucent); }
+.admin-backup-overview { padding: 16px; border: 1px solid var(--grid-border); border-radius: 12px; background: var(--panel-translucent); margin-bottom: 16px; }
+.admin-backup-overview h3 { margin: 0 0 12px 0; font-size: 14px; font-weight: 600; }
+.backup-status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.backup-status-item { display: flex; flex-direction: column; gap: 4px; }
+.backup-status-item .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.backup-status-item .value { font-size: 14px; font-weight: 600; }
+.backup-status-item .value.status-ok { color: var(--success); }
+.backup-status-item .value.status-warn { color: #f59e0b; }
+.backup-status-item .value.status-error { color: var(--error); }
+.backup-status-item .value.status-info { color: var(--accent); }
+
+.admin-backup-actions { padding: 16px; border: 1px solid var(--grid-border); border-radius: 12px; background: var(--panel-translucent); margin-bottom: 16px; }
+.admin-backup-actions h3 { margin: 0 0 8px 0; font-size: 14px; font-weight: 600; }
+.backup-action-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
+
+.admin-backup-list-section { padding: 16px; border: 1px solid var(--grid-border); border-radius: 12px; background: var(--panel-translucent); margin-bottom: 16px; }
+.admin-backup-list-section h3 { margin: 0 0 12px 0; font-size: 14px; font-weight: 600; }
+.admin-backup-list { max-height: 300px; overflow-y: auto; margin-bottom: 12px; }
+.backup-list-loading, .backup-list-empty, .backup-list-error { padding: 24px; text-align: center; color: var(--muted); font-size: 13px; }
+.backup-list-error { color: var(--error); }
+.backup-list-item { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border: 1px solid var(--grid-border); border-radius: 8px; margin-bottom: 8px; background: var(--panel); }
+.backup-list-item:last-child { margin-bottom: 0; }
+.backup-info { flex: 1; min-width: 0; }
+.backup-name { font-weight: 500; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.backup-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.backup-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.backup-actions .btn.small { padding: 4px 10px; font-size: 12px; }
+.backup-actions .btn.danger { color: var(--error); }
+.backup-actions .btn.danger:hover { background: var(--error); color: white; }
+
+.admin-backup-restore-section { padding: 16px; border: 1px solid var(--grid-border); border-radius: 12px; background: var(--panel-translucent); }
+.admin-backup-restore-section h3 { margin: 0 0 8px 0; font-size: 14px; font-weight: 600; }
+.restore-form { display: flex; flex-direction: column; gap: 12px; }
+.restore-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 4px; }
+
 .fields-panel[hidden] { display: none !important; }
 
 /* Suggestions Admin Config */

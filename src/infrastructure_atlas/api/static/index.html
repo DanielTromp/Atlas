@@ -1076,65 +1076,73 @@
             </section>
             <section id="admin-panel-backup" class="admin-panel" data-admin-tab="backup">
               <div id="admin-settings-backup" class="admin-settings-group"></div>
-              <div class="admin-backup-config">
-                <h3>Backup Configuration</h3>
-                <div class="admin-backup-status" id="admin-backup-status"></div>
-                <div class="admin-backup-controls">
-                  <label class="field">
-                    <span>Backup Type</span>
-                    <select id="admin-backup-type">
-                      <option value="local">Local Directory</option>
-                      <option value="sftp">SFTP</option>
-                      <option value="scp">SCP</option>
-                    </select>
-                  </label>
-                  <div id="admin-backup-local-config" class="admin-backup-type-config">
-                    <label class="field column">
-                      <span>Local Backup Path</span>
-                      <input id="admin-backup-local-path" type="text" placeholder="backups" />
-                    </label>
+              
+              <!-- Backup Status -->
+              <div class="admin-backup-overview">
+                <h3>Backup Status</h3>
+                <div class="backup-status-grid">
+                  <div class="backup-status-item">
+                    <span class="label">Type:</span>
+                    <span id="backup-config-type" class="value">—</span>
                   </div>
-                  <div id="admin-backup-remote-config" class="admin-backup-type-config" hidden>
-                    <label class="field column">
-                      <span>Host</span>
-                      <input id="admin-backup-host" type="text" placeholder="backup.example.com" />
-                    </label>
-                    <div class="field-row">
-                      <label class="field">
-                        <span>Port</span>
-                        <input id="admin-backup-port" type="number" value="22" min="1" max="65535" />
-                      </label>
-                      <label class="field">
-                        <span>Username</span>
-                        <input id="admin-backup-username" type="text" placeholder="backup_user" />
-                      </label>
-                    </div>
-                    <label class="field column">
-                      <span>Password</span>
-                      <input id="admin-backup-password" type="password" placeholder="Leave empty to use private key" />
-                    </label>
-                    <label class="field column">
-                      <span>Private Key Path (alternative to password)</span>
-                      <input id="admin-backup-key-path" type="text" placeholder="~/.ssh/id_rsa" />
-                    </label>
-                    <label class="field column">
-                      <span>Remote Path</span>
-                      <input id="admin-backup-remote-path" type="text" placeholder="/backups/infrastructure-atlas" />
-                    </label>
+                  <div class="backup-status-item">
+                    <span class="label">Encryption:</span>
+                    <span id="backup-config-encryption" class="value">—</span>
                   </div>
-                  <div class="admin-backup-options">
-                    <label class="field">
-                      <input id="admin-backup-timestamped" type="checkbox" />
-                      <span>Create timestamped directories</span>
-                    </label>
+                  <div class="backup-status-item">
+                    <span class="label">Status:</span>
+                    <span id="backup-config-status" class="value">—</span>
                   </div>
                 </div>
               </div>
-              <details class="admin-advanced">
-                <summary>Manual Backup</summary>
-                <p class="muted">Run a backup to save the latest exports immediately.</p>
-                <button id="admin-backup-run" class="btn ghost" type="button">Run Backup</button>
-              </details>
+
+              <!-- Create Backup -->
+              <div class="admin-backup-actions">
+                <h3>Create Backup</h3>
+                <p class="admin-hint">
+                  Creates an encrypted archive of all application data (.env, database, exports, configurations).
+                  The backup can be restored after upgrades or on a new installation.
+                </p>
+                <div class="backup-action-row">
+                  <button id="admin-backup-create" class="btn" type="button">
+                    🔒 Create Encrypted Backup
+                  </button>
+                  <span id="admin-backup-create-status" class="form-status"></span>
+                </div>
+              </div>
+
+              <!-- Backup List -->
+              <div class="admin-backup-list-section">
+                <h3>Available Backups</h3>
+                <div id="admin-backup-list" class="admin-backup-list">
+                  <div class="backup-list-loading">Loading backups…</div>
+                </div>
+                <button id="admin-backup-refresh" class="btn ghost" type="button">↻ Refresh List</button>
+              </div>
+
+              <!-- Restore Backup -->
+              <div class="admin-backup-restore-section">
+                <h3>Restore Backup</h3>
+                <p class="admin-hint">
+                  Select a backup from the list above, or enter a filename manually.
+                  Use "Preview" to see what will be restored before applying.
+                </p>
+                <div class="restore-form">
+                  <label class="field column">
+                    <span>Backup Filename</span>
+                    <input id="admin-restore-filename" type="text" placeholder="atlas_backup_20250101_120000.enc" />
+                  </label>
+                  <label class="field column">
+                    <span>Decryption Password (optional if using configured password)</span>
+                    <input id="admin-restore-password" type="password" placeholder="Leave empty to use configured password" />
+                  </label>
+                  <div class="restore-actions">
+                    <button id="admin-restore-preview" class="btn ghost" type="button">👁 Preview</button>
+                    <button id="admin-restore-run" class="btn" type="button">📥 Restore Backup</button>
+                    <span id="admin-restore-status" class="form-status"></span>
+                  </div>
+                </div>
+              </div>
             </section>
           </div>
         </div>

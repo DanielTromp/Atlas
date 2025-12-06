@@ -748,19 +748,19 @@
   };
   const adminTabs = document.querySelectorAll('#admin-tabs .admin-tab');
   const $adminStatus = document.getElementById("admin-status");
-  const $adminBackupRun = document.getElementById("admin-backup-run");
-  const $adminBackupType = document.getElementById("admin-backup-type");
-  const $adminBackupLocalPath = document.getElementById("admin-backup-local-path");
-  const $adminBackupHost = document.getElementById("admin-backup-host");
-  const $adminBackupPort = document.getElementById("admin-backup-port");
-  const $adminBackupUsername = document.getElementById("admin-backup-username");
-  const $adminBackupPassword = document.getElementById("admin-backup-password");
-  const $adminBackupKeyPath = document.getElementById("admin-backup-key-path");
-  const $adminBackupRemotePath = document.getElementById("admin-backup-remote-path");
-  const $adminBackupTimestamped = document.getElementById("admin-backup-timestamped");
-  const $adminBackupStatus = document.getElementById("admin-backup-status");
-  const $adminBackupLocalConfig = document.getElementById("admin-backup-local-config");
-  const $adminBackupRemoteConfig = document.getElementById("admin-backup-remote-config");
+  // New backup UI elements
+  const $adminBackupCreate = document.getElementById("admin-backup-create");
+  const $adminBackupCreateStatus = document.getElementById("admin-backup-create-status");
+  const $adminBackupList = document.getElementById("admin-backup-list");
+  const $adminBackupRefresh = document.getElementById("admin-backup-refresh");
+  const $adminRestoreFilename = document.getElementById("admin-restore-filename");
+  const $adminRestorePassword = document.getElementById("admin-restore-password");
+  const $adminRestorePreview = document.getElementById("admin-restore-preview");
+  const $adminRestoreRun = document.getElementById("admin-restore-run");
+  const $adminRestoreStatus = document.getElementById("admin-restore-status");
+  const $backupConfigType = document.getElementById("backup-config-type");
+  const $backupConfigEncryption = document.getElementById("backup-config-encryption");
+  const $backupConfigStatus = document.getElementById("backup-config-status");
   const $adminVCenterList = document.getElementById("admin-vcenter-list");
   const $adminVCenterAdd = document.getElementById("admin-vcenter-add");
   const $adminPuppetList = document.getElementById("admin-puppet-list");
@@ -8437,14 +8437,11 @@
     e.preventDefault();
     deleteSuggestion();
   });
-  $adminBackupRun?.addEventListener('click', (e) => {
-    e.preventDefault();
-    runManualBackup($adminBackupRun);
-  });
-
-  $adminBackupType?.addEventListener('change', () => {
-    updateBackupConfigVisibility();
-  });
+  // Backup event listeners
+  $adminBackupCreate?.addEventListener('click', () => createBackup());
+  $adminBackupRefresh?.addEventListener('click', () => loadBackupList());
+  $adminRestorePreview?.addEventListener('click', () => restoreBackup(true));
+  $adminRestoreRun?.addEventListener('click', () => restoreBackup(false));
 
   adminTabs.forEach((btn) => {
     btn.addEventListener('click', (e) => {
@@ -8670,58 +8667,260 @@
     }
   }
 
-  async function runManualBackup(button) {
-    if (!window.confirm('Run backup now?')) return;
-    button.disabled = true;
-    if ($adminStatus) $adminStatus.textContent = 'Running backup…';
+  // New backup management functions
+  async function loadBackupConfig() {
     try {
-      const res = await fetch(`${API_BASE}/admin/backup-sync`, { method: 'POST' });
+      const res = await fetch(`${API_BASE}/admin/backup/config`);
+      if (!res.ok) throw new Error('Failed to load backup config');
+      const config = await res.json();
+      
+      if ($backupConfigType) {
+        $backupConfigType.textContent = config.type?.toUpperCase() || 'LOCAL';
+      }
+      if ($backupConfigEncryption) {
+        $backupConfigEncryption.textContent = config.encryption_configured ? '✓ Configured' : '✗ Not set';
+        $backupConfigEncryption.className = 'value ' + (config.encryption_configured ? 'status-ok' : 'status-warn');
+      }
+      if ($backupConfigStatus) {
+        if (config.enabled && config.configured) {
+          $backupConfigStatus.textContent = '✓ Ready';
+          $backupConfigStatus.className = 'value status-ok';
+        } else if (config.enabled) {
+          $backupConfigStatus.textContent = '⚠ Not configured';
+          $backupConfigStatus.className = 'value status-warn';
+        } else {
+          $backupConfigStatus.textContent = '✗ Disabled';
+          $backupConfigStatus.className = 'value status-error';
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load backup config', err);
+    }
+  }
+
+  async function loadBackupList() {
+    if (!$adminBackupList) return;
+    $adminBackupList.innerHTML = '<div class="backup-list-loading">Loading backups…</div>';
+    
+    try {
+      const res = await fetch(`${API_BASE}/admin/backup/list`);
+      if (!res.ok) throw new Error('Failed to load backups');
+      const data = await res.json();
+      
+      if (!data.backups || data.backups.length === 0) {
+        $adminBackupList.innerHTML = '<div class="backup-list-empty">No backups found</div>';
+        return;
+      }
+      
+      const frag = document.createDocumentFragment();
+      data.backups.forEach(backup => {
+        const item = document.createElement('div');
+        item.className = 'backup-list-item';
+        
+        const info = document.createElement('div');
+        info.className = 'backup-info';
+        
+        const name = document.createElement('div');
+        name.className = 'backup-name';
+        name.textContent = backup.filename;
+        
+        const meta = document.createElement('div');
+        meta.className = 'backup-meta';
+        const size = backup.size ? `${(backup.size / 1024 / 1024).toFixed(2)} MB` : 'Unknown size';
+        const date = backup.created_at ? new Date(backup.created_at).toLocaleString() : '';
+        meta.textContent = `${size} • ${date}`;
+        
+        info.appendChild(name);
+        info.appendChild(meta);
+        
+        const actions = document.createElement('div');
+        actions.className = 'backup-actions';
+        
+        const selectBtn = document.createElement('button');
+        selectBtn.className = 'btn ghost small';
+        selectBtn.textContent = 'Select';
+        selectBtn.addEventListener('click', () => {
+          if ($adminRestoreFilename) $adminRestoreFilename.value = backup.filename;
+        });
+        
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'btn ghost small danger';
+        deleteBtn.textContent = '✕';
+        deleteBtn.title = 'Delete backup';
+        deleteBtn.addEventListener('click', () => deleteBackup(backup.filename));
+        
+        actions.appendChild(selectBtn);
+        actions.appendChild(deleteBtn);
+        
+        item.appendChild(info);
+        item.appendChild(actions);
+        frag.appendChild(item);
+      });
+      
+      $adminBackupList.innerHTML = '';
+      $adminBackupList.appendChild(frag);
+    } catch (err) {
+      console.error('Failed to load backups', err);
+      $adminBackupList.innerHTML = '<div class="backup-list-error">Failed to load backups</div>';
+    }
+  }
+
+  async function createBackup() {
+    if (!$adminBackupCreate) return;
+    
+    $adminBackupCreate.disabled = true;
+    if ($adminBackupCreateStatus) {
+      $adminBackupCreateStatus.textContent = 'Creating encrypted backup…';
+      $adminBackupCreateStatus.className = 'form-status';
+    }
+    
+    try {
+      const res = await fetch(`${API_BASE}/admin/backup/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      
       if (!res.ok) {
         const data = await res.json().catch(() => null);
         throw new Error(data?.detail || res.statusText);
       }
+      
       const data = await res.json();
-      if (data?.status === 'ok') {
-        const method = data?.method || 'backup';
-        const count = data?.count || data?.uploaded?.length || data?.copied?.length || 0;
-        alert(`${method.toUpperCase()} backup finished with ${count} file(s).`);
+      
+      if (data.status === 'ok') {
+        const size = data.encrypted_size ? `${(data.encrypted_size / 1024 / 1024).toFixed(2)} MB` : '';
+        if ($adminBackupCreateStatus) {
+          $adminBackupCreateStatus.textContent = `✓ Backup created: ${data.filename} (${size})`;
+          $adminBackupCreateStatus.className = 'form-status status-ok';
+        }
+        loadBackupList();
       } else {
-        alert(`Backup response: ${data?.reason || data?.status || 'unknown'}`);
+        throw new Error(data.reason || 'Backup failed');
       }
-      if ($adminStatus) $adminStatus.textContent = 'Backup completed';
     } catch (err) {
       console.error('Backup failed', err);
-      if ($adminStatus) $adminStatus.textContent = 'Backup failed';
-      alert(`Backup failed: ${err?.message || err}`);
+      if ($adminBackupCreateStatus) {
+        $adminBackupCreateStatus.textContent = `✗ ${err.message || 'Backup failed'}`;
+        $adminBackupCreateStatus.className = 'form-status status-error';
+      }
     } finally {
-      button.disabled = false;
+      $adminBackupCreate.disabled = false;
     }
   }
 
-  function updateBackupConfigVisibility() {
-    const type = $adminBackupType?.value || 'local';
-    if ($adminBackupLocalConfig) {
-      $adminBackupLocalConfig.hidden = type !== 'local';
+  async function restoreBackup(dryRun = false) {
+    const filename = $adminRestoreFilename?.value?.trim();
+    if (!filename) {
+      alert('Please enter or select a backup filename');
+      return;
     }
-    if ($adminBackupRemoteConfig) {
-      $adminBackupRemoteConfig.hidden = !['sftp', 'scp'].includes(type);
+    
+    if (!dryRun && !confirm(`Are you sure you want to restore from "${filename}"? This will overwrite current data.`)) {
+      return;
+    }
+    
+    const password = $adminRestorePassword?.value || null;
+    const btn = dryRun ? $adminRestorePreview : $adminRestoreRun;
+    if (btn) btn.disabled = true;
+    
+    if ($adminRestoreStatus) {
+      $adminRestoreStatus.textContent = dryRun ? 'Previewing backup…' : 'Restoring backup…';
+      $adminRestoreStatus.className = 'form-status';
+    }
+    
+    try {
+      const res = await fetch(`${API_BASE}/admin/backup/restore`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename, password, dry_run: dryRun }),
+      });
+      
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.detail || res.statusText);
+      }
+      
+      const data = await res.json();
+      
+      if (data.status === 'ok') {
+        if (dryRun) {
+          const files = data.manifest?.files?.length || 0;
+          const size = data.manifest?.total_size ? `${(data.manifest.total_size / 1024 / 1024).toFixed(2)} MB` : '';
+          if ($adminRestoreStatus) {
+            $adminRestoreStatus.textContent = `Preview: ${files} files, ${size} total. Click "Restore" to proceed.`;
+            $adminRestoreStatus.className = 'form-status status-info';
+          }
+        } else {
+          if ($adminRestoreStatus) {
+            $adminRestoreStatus.textContent = `✓ Restore complete! ${data.files_count || 0} files restored.`;
+            $adminRestoreStatus.className = 'form-status status-ok';
+          }
+          alert('Backup restored successfully! You may need to refresh the page or restart the application.');
+        }
+      } else {
+        throw new Error(data.reason || 'Restore failed');
+      }
+    } catch (err) {
+      console.error('Restore failed', err);
+      if ($adminRestoreStatus) {
+        $adminRestoreStatus.textContent = `✗ ${err.message || 'Restore failed'}`;
+        $adminRestoreStatus.className = 'form-status status-error';
+      }
+    } finally {
+      if (btn) btn.disabled = false;
     }
   }
 
+  async function deleteBackup(filename) {
+    if (!confirm(`Delete backup "${filename}"?`)) return;
+    
+    try {
+      const res = await fetch(`${API_BASE}/admin/backup/${encodeURIComponent(filename)}`, {
+        method: 'DELETE',
+      });
+      
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.detail || res.statusText);
+      }
+      
+      loadBackupList();
+    } catch (err) {
+      console.error('Failed to delete backup', err);
+      alert(`Failed to delete backup: ${err.message || err}`);
+    }
+  }
+
+  function initBackupTab() {
+    loadBackupConfig();
+    loadBackupList();
+  }
+
+  // Update backup config UI visibility based on admin state
   function updateBackupConfigFromState() {
     const backup = adminState.backup || {};
-    if ($adminBackupStatus) {
-      if (backup.enabled && backup.configured) {
-        $adminBackupStatus.textContent = `Backup configured: ${backup.type || 'unknown'} → ${backup.target || 'unknown'}`;
-        $adminBackupStatus.className = 'admin-backup-status success';
-      } else if (backup.enabled) {
-        $adminBackupStatus.textContent = 'Backup enabled but not properly configured';
-        $adminBackupStatus.className = 'admin-backup-status warning';
+    const backupType = backup.type || 'local';
+    
+    // Show/hide WebDAV fields based on backup type
+    const webdavFields = document.querySelectorAll('.admin-setting-item[data-key*="WEBDAV"]');
+    webdavFields.forEach(field => {
+      if (backupType === 'webdav') {
+        field.style.display = '';
       } else {
-        $adminBackupStatus.textContent = 'Backup disabled';
-        $adminBackupStatus.className = 'admin-backup-status disabled';
+        field.style.display = 'none';
       }
-    }
+    });
+    
+    // Show/hide SFTP/SCP fields
+    const sshFields = document.querySelectorAll('.admin-setting-item[data-key*="SSH"], .admin-setting-item[data-key*="SFTP"], .admin-setting-item[data-key*="SCP"]');
+    sshFields.forEach(field => {
+      if (backupType === 'sftp' || backupType === 'scp') {
+        field.style.display = '';
+      } else {
+        field.style.display = 'none';
+      }
+    });
   }
 
   function setAdminTab(tab) {
@@ -8751,8 +8950,7 @@
 
     // Initialize backup config when switching to backup tab
     if (tab === 'backup') {
-      updateBackupConfigVisibility();
-      updateBackupConfigFromState();
+      initBackupTab();
     }
 
     if (tab === 'vcenter') {
@@ -12643,3 +12841,4 @@
     }
   });
 })();
+
