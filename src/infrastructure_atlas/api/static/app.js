@@ -761,6 +761,16 @@
   const $backupConfigType = document.getElementById("backup-config-type");
   const $backupConfigEncryption = document.getElementById("backup-config-encryption");
   const $backupConfigStatus = document.getElementById("backup-config-status");
+  // Export UI elements (portable data without server config)
+  const $adminExportCreate = document.getElementById("admin-export-create");
+  const $adminExportCreateStatus = document.getElementById("admin-export-create-status");
+  const $adminExportList = document.getElementById("admin-export-list");
+  const $adminExportRefresh = document.getElementById("admin-export-refresh");
+  const $adminImportFilename = document.getElementById("admin-import-filename");
+  const $adminImportPassword = document.getElementById("admin-import-password");
+  const $adminImportPreview = document.getElementById("admin-import-preview");
+  const $adminImportRun = document.getElementById("admin-import-run");
+  const $adminImportStatus = document.getElementById("admin-import-status");
   const $adminVCenterList = document.getElementById("admin-vcenter-list");
   const $adminVCenterAdd = document.getElementById("admin-vcenter-add");
   const $adminPuppetList = document.getElementById("admin-puppet-list");
@@ -8442,6 +8452,11 @@
   $adminBackupRefresh?.addEventListener('click', () => loadBackupList());
   $adminRestorePreview?.addEventListener('click', () => restoreBackup(true));
   $adminRestoreRun?.addEventListener('click', () => restoreBackup(false));
+  // Export event listeners (portable data)
+  $adminExportCreate?.addEventListener('click', () => createExport());
+  $adminExportRefresh?.addEventListener('click', () => loadExportList());
+  $adminImportPreview?.addEventListener('click', () => importExport(true));
+  $adminImportRun?.addEventListener('click', () => importExport(false));
 
   adminTabs.forEach((btn) => {
     btn.addEventListener('click', (e) => {
@@ -8892,9 +8907,201 @@
     }
   }
 
+  // ============================================
+  // Export functions (portable data, no server config)
+  // ============================================
+
+  async function loadExportList() {
+    if (!$adminExportList) return;
+    $adminExportList.innerHTML = '<div class="backup-list-loading">Loading exports…</div>';
+
+    try {
+      const res = await fetch(`${API_BASE}/admin/export/list`);
+      if (!res.ok) throw new Error('Failed to load exports');
+      const data = await res.json();
+
+      if (!data.exports || data.exports.length === 0) {
+        $adminExportList.innerHTML = '<div class="backup-list-empty">No exports found</div>';
+        return;
+      }
+
+      const frag = document.createDocumentFragment();
+      data.exports.forEach(exp => {
+        const item = document.createElement('div');
+        item.className = 'backup-list-item';
+
+        const sizeMB = exp.size ? (exp.size / 1024 / 1024).toFixed(2) : '?';
+        const dateStr = exp.created_at ? new Date(exp.created_at).toLocaleString() : '—';
+
+        item.innerHTML = `
+          <div class="backup-info">
+            <span class="backup-filename">📦 ${exp.filename}</span>
+            <span class="backup-meta">${sizeMB} MB • ${dateStr}</span>
+          </div>
+          <div class="backup-actions">
+            <button class="btn ghost btn-select-export" data-filename="${exp.filename}">Select</button>
+            <button class="btn ghost danger btn-delete-export" data-filename="${exp.filename}">Delete</button>
+          </div>
+        `;
+        frag.appendChild(item);
+      });
+
+      // Add event listeners for buttons
+      frag.querySelectorAll('.btn-select-export').forEach(btn => {
+        btn.addEventListener('click', () => {
+          if ($adminImportFilename) {
+            $adminImportFilename.value = btn.dataset.filename;
+          }
+        });
+      });
+      frag.querySelectorAll('.btn-delete-export').forEach(btn => {
+        btn.addEventListener('click', () => deleteExport(btn.dataset.filename));
+      });
+
+      $adminExportList.innerHTML = '';
+      $adminExportList.appendChild(frag);
+    } catch (err) {
+      console.error('Failed to load exports', err);
+      $adminExportList.innerHTML = '<div class="backup-list-error">Failed to load exports</div>';
+    }
+  }
+
+  async function createExport() {
+    if (!$adminExportCreate) return;
+
+    $adminExportCreate.disabled = true;
+    if ($adminExportCreateStatus) {
+      $adminExportCreateStatus.textContent = 'Creating export…';
+      $adminExportCreateStatus.className = 'form-status';
+    }
+
+    try {
+      const res = await fetch(`${API_BASE}/admin/export/create`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.detail || res.statusText);
+      }
+
+      const data = await res.json();
+
+      if (data.status === 'ok') {
+        const size = data.encrypted_size ? `${(data.encrypted_size / 1024 / 1024).toFixed(2)} MB` : '';
+        if ($adminExportCreateStatus) {
+          $adminExportCreateStatus.textContent = `✓ Export created: ${data.filename} (${size})`;
+          $adminExportCreateStatus.className = 'form-status status-ok';
+        }
+        loadExportList();
+      } else {
+        throw new Error(data.reason || 'Export failed');
+      }
+    } catch (err) {
+      console.error('Export failed', err);
+      if ($adminExportCreateStatus) {
+        $adminExportCreateStatus.textContent = `✗ ${err.message || 'Export failed'}`;
+        $adminExportCreateStatus.className = 'form-status status-error';
+      }
+    } finally {
+      $adminExportCreate.disabled = false;
+    }
+  }
+
+  async function importExport(dryRun = false) {
+    const filename = $adminImportFilename?.value?.trim();
+    if (!filename) {
+      alert('Please enter or select an export filename');
+      return;
+    }
+
+    if (!dryRun && !confirm(`Are you sure you want to import "${filename}"? This will import data but will NOT overwrite your server configuration.`)) {
+      return;
+    }
+
+    const btn = dryRun ? $adminImportPreview : $adminImportRun;
+    if (btn) btn.disabled = true;
+
+    if ($adminImportStatus) {
+      $adminImportStatus.textContent = dryRun ? 'Loading preview…' : 'Importing…';
+      $adminImportStatus.className = 'form-status';
+    }
+
+    try {
+      const payload = {
+        filename,
+        dry_run: dryRun,
+      };
+      const password = $adminImportPassword?.value?.trim();
+      if (password) payload.password = password;
+
+      const res = await fetch(`${API_BASE}/admin/export/import`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.detail || res.statusText);
+      }
+
+      const data = await res.json();
+
+      if (data.status === 'ok') {
+        if (dryRun) {
+          const manifest = data.manifest || {};
+          const files = manifest.files || [];
+          if ($adminImportStatus) {
+            $adminImportStatus.textContent = `Preview: ${files.length} files from ${manifest.hostname || 'unknown'} (${manifest.created_at || '—'}). Server config will NOT be overwritten.`;
+            $adminImportStatus.className = 'form-status status-ok';
+          }
+        } else {
+          if ($adminImportStatus) {
+            $adminImportStatus.textContent = `✓ Import complete: ${data.files_count || 0} files imported. Server config preserved.`;
+            $adminImportStatus.className = 'form-status status-ok';
+          }
+        }
+      } else {
+        throw new Error(data.reason || 'Import failed');
+      }
+    } catch (err) {
+      console.error('Import failed', err);
+      if ($adminImportStatus) {
+        $adminImportStatus.textContent = `✗ ${err.message || 'Import failed'}`;
+        $adminImportStatus.className = 'form-status status-error';
+      }
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function deleteExport(filename) {
+    if (!confirm(`Delete export "${filename}"?`)) return;
+    
+    try {
+      const res = await fetch(`${API_BASE}/admin/export/${encodeURIComponent(filename)}`, {
+        method: 'DELETE',
+      });
+      
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.detail || res.statusText);
+      }
+      
+      loadExportList();
+    } catch (err) {
+      console.error('Failed to delete export', err);
+      alert(`Failed to delete export: ${err.message || err}`);
+    }
+  }
+
   function initBackupTab() {
     loadBackupConfig();
     loadBackupList();
+    loadExportList();
   }
 
   // Update backup config UI visibility based on admin state

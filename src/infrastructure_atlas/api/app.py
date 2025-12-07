@@ -258,10 +258,7 @@ METRICS_MEDIA_TYPE = "text/plain; version=0.0.4; charset=utf-8"
 
 def ensure_default_role_permissions() -> None:
     with SessionLocal() as db:
-        existing = {
-            record.role: record
-            for record in db.execute(select(RolePermission)).scalars()
-        }
+        existing = {record.role: record for record in db.execute(select(RolePermission)).scalars()}
         changed = False
         for role, spec in DEFAULT_ROLE_DEFINITIONS.items():
             label = (spec.get("label") or role).strip() or role
@@ -1195,10 +1192,22 @@ ENV_SETTING_FIELDS: list[dict[str, Any]] = [
         "placeholder": "optional",
         "category": "api",
     },
-    {"key": "UI_THEME_DEFAULT", "label": "Default Theme", "secret": False, "placeholder": "silver-dark", "category": "api"},
+    {
+        "key": "UI_THEME_DEFAULT",
+        "label": "Default Theme",
+        "secret": False,
+        "placeholder": "silver-dark",
+        "category": "api",
+    },
     # Backup
     {"key": "BACKUP_ENABLE", "label": "Backup Enabled", "secret": False, "placeholder": "1", "category": "backup"},
-    {"key": "BACKUP_TYPE", "label": "Backup Type", "secret": False, "placeholder": "local, sftp, scp, webdav", "category": "backup"},
+    {
+        "key": "BACKUP_TYPE",
+        "label": "Backup Type",
+        "secret": False,
+        "placeholder": "local, sftp, scp, webdav",
+        "category": "backup",
+    },
     {
         "key": "BACKUP_ENCRYPTION_PASSWORD",
         "label": "Encryption Password",
@@ -1407,8 +1416,6 @@ def _write_env_value(key: str, value: str | None) -> None:
     load_env(override=True)
 
 
-
-
 class SuggestionCreate(BaseModel):
     title: str
     summary: str | None = ""
@@ -1445,6 +1452,7 @@ app.include_router(bootstrap_api())
 # Include monitoring routes
 try:
     from infrastructure_atlas.interfaces.api.routes.monitoring import router as monitoring_router
+
     app.include_router(monitoring_router)
 except ImportError:
     logger.warning("Monitoring routes not available - optional dependencies missing")
@@ -1779,13 +1787,13 @@ def admin_backup_config():
     """Get current backup configuration status."""
     backup_type = os.getenv("BACKUP_TYPE", "local").strip().lower()
     encryption_configured = bool(os.getenv("BACKUP_ENCRYPTION_PASSWORD", "").strip())
-    
+
     config_status = {
         "type": backup_type,
         "encryption_configured": encryption_configured,
         "enabled": os.getenv("BACKUP_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off"},
     }
-    
+
     if backup_type == "local":
         config_status["local_path"] = os.getenv("BACKUP_LOCAL_PATH", "backups")
         config_status["configured"] = True
@@ -1800,7 +1808,7 @@ def admin_backup_config():
         config_status["configured"] = bool(config_status["webdav_url"])
     else:
         config_status["configured"] = False
-    
+
     return config_status
 
 
@@ -1809,13 +1817,13 @@ def admin_backup_create(req: BackupCreateRequest = None, user: OptionalUserDep =
     """Create an encrypted backup."""
     actor = getattr(user, "username", None)
     password = req.password if req else None
-    
+
     with task_logging("admin.backup_create", actor=actor, trigger="ui") as task_log:
         try:
             result = backup_manager.create_backup(password=password)
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
-        
+
         status = result.get("status")
         task_log.add_success(
             status=status,
@@ -1823,10 +1831,10 @@ def admin_backup_create(req: BackupCreateRequest = None, user: OptionalUserDep =
             file_count=result.get("files_count"),
             filename=result.get("filename"),
         )
-        
+
         if status == "error":
             raise HTTPException(status_code=500, detail=result.get("reason", "Backup failed"))
-        
+
         return result
 
 
@@ -1846,7 +1854,7 @@ def admin_backup_list():
 def admin_backup_restore(req: BackupRestoreRequest, user: OptionalUserDep = None):
     """Restore a backup."""
     actor = getattr(user, "username", None)
-    
+
     with task_logging("admin.backup_restore", actor=actor, trigger="ui") as task_log:
         try:
             result = backup_manager.restore_backup(
@@ -1856,7 +1864,7 @@ def admin_backup_restore(req: BackupRestoreRequest, user: OptionalUserDep = None
             )
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
-        
+
         status = result.get("status")
         task_log.add_success(
             status=status,
@@ -1864,10 +1872,10 @@ def admin_backup_restore(req: BackupRestoreRequest, user: OptionalUserDep = None
             filename=req.filename,
             files_count=result.get("files_count"),
         )
-        
+
         if status == "error":
             raise HTTPException(status_code=500, detail=result.get("reason", "Restore failed"))
-        
+
         return result
 
 
@@ -1875,18 +1883,129 @@ def admin_backup_restore(req: BackupRestoreRequest, user: OptionalUserDep = None
 def admin_backup_delete(filename: str, user: OptionalUserDep = None):
     """Delete a backup."""
     actor = getattr(user, "username", None)
-    
+
     with task_logging("admin.backup_delete", actor=actor, trigger="ui") as task_log:
         try:
             result = backup_manager.delete_backup(filename)
         except Exception as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
-        
+
         task_log.add_success(filename=filename, status=result.get("status"))
-        
+
         if result.get("status") == "error":
             raise HTTPException(status_code=404, detail=result.get("reason", "Backup not found"))
-        
+
+        return result
+
+
+# ---------------------------
+# Export endpoints (data only, no server-specific configs)
+# ---------------------------
+
+
+class ExportCreateRequest(BaseModel):
+    password: str | None = None
+
+
+class ExportImportRequest(BaseModel):
+    filename: str
+    password: str | None = None
+    dry_run: bool = False
+
+
+@app.post("/admin/export/create")
+def admin_export_create(req: ExportCreateRequest = None, user: OptionalUserDep = None):
+    """Create a data export (without server-specific configs like .env).
+
+    Exports are safe to import on any server without overwriting its configuration.
+    """
+    actor = getattr(user, "username", None)
+    password = req.password if req else None
+
+    with task_logging("admin.export_create", actor=actor, trigger="ui") as task_log:
+        try:
+            result = backup_manager.create_export(password=password)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        status = result.get("status")
+        task_log.add_success(
+            status=status,
+            filename=result.get("filename"),
+            files_count=result.get("files_count"),
+            type="export",
+        )
+
+        if status == "error":
+            raise HTTPException(status_code=500, detail=result.get("reason", "Export failed"))
+
+        return result
+
+
+@app.get("/admin/export/list")
+def admin_export_list():
+    """List available exports."""
+    try:
+        result = backup_manager.list_exports()
+        if result.get("status") == "error":
+            raise HTTPException(status_code=500, detail=result.get("reason", "Failed to list exports"))
+        return result
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/admin/export/import")
+def admin_export_import(req: ExportImportRequest, user: OptionalUserDep = None):
+    """Import a data export (without overwriting server-specific configs).
+
+    This safely imports data from an export without affecting:
+    - .env files (server-specific secrets)
+    - Database files
+    - Any server-specific configuration
+    """
+    actor = getattr(user, "username", None)
+
+    with task_logging("admin.export_import", actor=actor, trigger="ui") as task_log:
+        try:
+            result = backup_manager.import_export(
+                filename=req.filename,
+                password=req.password,
+                dry_run=req.dry_run,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        status = result.get("status")
+        task_log.add_success(
+            status=status,
+            dry_run=req.dry_run,
+            filename=req.filename,
+            files_count=result.get("files_count"),
+            type="export",
+        )
+
+        if status == "error":
+            raise HTTPException(status_code=500, detail=result.get("reason", "Import failed"))
+
+        return result
+
+
+@app.delete("/admin/export/{filename}")
+def admin_export_delete(filename: str, user: OptionalUserDep = None):
+    """Delete an export."""
+    actor = getattr(user, "username", None)
+
+    with task_logging("admin.export_delete", actor=actor, trigger="ui") as task_log:
+        try:
+            result = backup_manager.delete_export(filename)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        task_log.add_success(filename=filename, status=result.get("status"))
+
+        if result.get("status") == "error":
+            raise HTTPException(status_code=404, detail=result.get("reason", "Export not found"))
+
         return result
 
 
@@ -1894,8 +2013,6 @@ def admin_backup_delete(filename: str, user: OptionalUserDep = None):
 def ui_config():
     theme = os.getenv("UI_THEME_DEFAULT", "silver-dark").strip() or "silver-dark"
     return {"theme_default": theme}
-
-
 
 
 def _build_sample_prompt(definition: ToolDefinition, args: Mapping[str, Any]) -> str:
@@ -1920,7 +2037,7 @@ def tools_run_sample(
     # AI/LangChain functionality has been disabled
     raise HTTPException(
         status_code=501,
-        detail="AI tool sampling functionality is currently disabled. LangChain dependencies have been removed."
+        detail="AI tool sampling functionality is currently disabled. LangChain dependencies have been removed.",
     )
 
 
@@ -2027,9 +2144,3 @@ def logs_tail(n: int = Query(200, ge=1, le=5000)) -> dict:
         return {"lines": [ln.rstrip("\n") for ln in lines]}
     except Exception:
         return {"lines": []}
-
-
-
-
-
-

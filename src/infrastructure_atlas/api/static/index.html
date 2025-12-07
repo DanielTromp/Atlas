@@ -1143,6 +1143,57 @@
                   </div>
                 </div>
               </div>
+
+              <hr style="margin: 2rem 0; border: none; border-top: 1px solid var(--border-color);" />
+
+              <!-- Export Section (Portable Data) -->
+              <div class="admin-backup-actions">
+                <h3>📦 Create Export (Portable Data)</h3>
+                <p class="admin-hint">
+                  Creates an encrypted archive of application data <strong>without server-specific configuration</strong>.
+                  Exports include the database and data files but exclude <code>.env</code> files.
+                  Safe to import on any server without overwriting its configuration.
+                </p>
+                <div class="backup-action-row">
+                  <button id="admin-export-create" class="btn" type="button">
+                    📦 Create Export
+                  </button>
+                  <span id="admin-export-create-status" class="form-status"></span>
+                </div>
+              </div>
+
+              <!-- Export List -->
+              <div class="admin-backup-list-section">
+                <h3>Available Exports</h3>
+                <div id="admin-export-list" class="admin-backup-list">
+                  <div class="backup-list-loading">Loading exports…</div>
+                </div>
+                <button id="admin-export-refresh" class="btn ghost" type="button">↻ Refresh List</button>
+              </div>
+
+              <!-- Import Export -->
+              <div class="admin-backup-restore-section">
+                <h3>Import Export</h3>
+                <p class="admin-hint">
+                  Import data from an export file. This will <strong>not</strong> overwrite your
+                  server's <code>.env</code> or other server-specific configuration.
+                </p>
+                <div class="restore-form">
+                  <label class="field column">
+                    <span>Export Filename</span>
+                    <input id="admin-import-filename" type="text" placeholder="atlas_export_20250101_120000.zip" />
+                  </label>
+                  <label class="field column">
+                    <span>Decryption Password (optional if using configured password)</span>
+                    <input id="admin-import-password" type="password" placeholder="Leave empty to use configured password" />
+                  </label>
+                  <div class="restore-actions">
+                    <button id="admin-import-preview" class="btn ghost" type="button">👁 Preview</button>
+                    <button id="admin-import-run" class="btn" type="button">📥 Import Export</button>
+                    <span id="admin-import-status" class="form-status"></span>
+                  </div>
+                </div>
+              </div>
             </section>
           </div>
         </div>
