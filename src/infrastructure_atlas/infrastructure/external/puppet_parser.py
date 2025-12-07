@@ -1,7 +1,7 @@
 """Parser for Puppet manifests to extract user and group definitions.
 
 This parser extracts user and group information from Puppet .pp files
-following the VoiceWorks/Enreach user management structure:
+following the VoiceWorks/user management structure:
 - site/user/manifests/virtual_users/*.pp - User definitions
 - site/user/manifests/virtual_groups/*.pp - Group definitions with members
 - site/user/manifests/groups/*_full.pp - Sudo access definitions
