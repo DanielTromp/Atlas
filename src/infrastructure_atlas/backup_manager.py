@@ -357,16 +357,18 @@ class LocalStorageProvider:
         return path.read_bytes()
 
     def list_backups(self) -> list[dict[str, Any]]:
-        """List available backups."""
+        """List available backups and exports."""
         if not self.backup_dir.exists():
             return []
 
         backups = []
-        # Include both .zip (new format) and .enc (legacy format)
-        all_backups = list(self.backup_dir.glob("atlas_backup_*.zip")) + list(
-            self.backup_dir.glob("atlas_backup_*.enc")
+        # Include both .zip (new format) and .enc (legacy format), and exports
+        all_files = (
+            list(self.backup_dir.glob("atlas_backup_*.zip"))
+            + list(self.backup_dir.glob("atlas_backup_*.enc"))
+            + list(self.backup_dir.glob("atlas_export_*.zip"))
         )
-        for path in sorted(all_backups, key=lambda p: p.name, reverse=True):
+        for path in sorted(all_files, key=lambda p: p.name, reverse=True):
             stat = path.stat()
             backups.append(
                 {
@@ -458,7 +460,7 @@ class SFTPStorageProvider:
             client.close()
 
     def list_backups(self) -> list[dict[str, Any]]:
-        """List available backups."""
+        """List available backups and exports."""
         client, sftp = self._connect()
         try:
             remote_dir = self.config.remote_path.rstrip("/")
@@ -466,9 +468,11 @@ class SFTPStorageProvider:
 
             try:
                 for attr in sftp.listdir_attr(remote_dir):
-                    if attr.filename.startswith("atlas_backup_") and (
-                        attr.filename.endswith(".zip") or attr.filename.endswith(".enc")
-                    ):
+                    # Include both backups and exports
+                    is_backup = attr.filename.startswith("atlas_backup_")
+                    is_export = attr.filename.startswith("atlas_export_")
+                    is_valid_ext = attr.filename.endswith(".zip") or attr.filename.endswith(".enc")
+                    if (is_backup or is_export) and is_valid_ext:
                         backups.append(
                             {
                                 "filename": attr.filename,
@@ -605,9 +609,11 @@ class WebDAVStorageProvider:
                 href = unquote(href_match.group(1))
                 filename = href.rstrip("/").split("/")[-1]
 
-                if not (
-                    filename.startswith("atlas_backup_") and (filename.endswith(".zip") or filename.endswith(".enc"))
-                ):
+                # Include both backups and exports
+                is_backup = filename.startswith("atlas_backup_")
+                is_export = filename.startswith("atlas_export_")
+                is_valid_ext = filename.endswith(".zip") or filename.endswith(".enc")
+                if not ((is_backup or is_export) and is_valid_ext):
                     continue
 
                 # Find size in this block
@@ -792,13 +798,15 @@ def restore_backup(
 
 
 def list_backups(config: BackupConfig | None = None) -> dict[str, Any]:
-    """List available backups."""
+    """List available backups (excludes exports)."""
     if config is None:
         config = _load_config()
 
     try:
         provider = _get_storage_provider(config)
-        backups = provider.list_backups()
+        all_files = provider.list_backups()
+        # Filter to only backup files (exclude exports)
+        backups = [f for f in all_files if f["filename"].startswith("atlas_backup_")]
 
         return {
             "status": "ok",
