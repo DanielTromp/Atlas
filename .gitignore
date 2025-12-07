@@ -100,8 +100,9 @@ personal/
 local/
 scratch/
 
-# Tests & docs (add back when ready for public)
+# Tests & internal development docs
 tests/
+dev/
 
 
 # ═══════════════════════════════════════════════════════════
