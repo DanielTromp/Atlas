@@ -5,7 +5,7 @@ from fastapi import APIRouter
 from infrastructure_atlas.infrastructure.logging import get_logger, setup_logging
 from infrastructure_atlas.infrastructure.modules import get_module_registry, initialize_modules
 
-from .routes import admin, auth, core, foreman, netbox, profile, puppet, search, tasks, tools, vcenter, zabbix
+from .routes import admin, auth, core, draft_tickets, foreman, netbox, profile, puppet, search, tasks, tools, vcenter, zabbix
 
 logger = get_logger(__name__)
 
@@ -31,12 +31,31 @@ def bootstrap_api() -> APIRouter:
     router.include_router(tools.router)
     router.include_router(search.router)
     router.include_router(tasks.router)
+    router.include_router(draft_tickets.router)
 
     # Chat routes (imported lazily to avoid circular import)
     from .routes import chat, export
 
     router.include_router(chat.router)
     router.include_router(export.router)
+
+    # AI Chat routes (new multi-provider chat system)
+    try:
+        from .routes import ai_chat
+
+        router.include_router(ai_chat.router)
+        logger.info("Enabled AI Chat API routes")
+    except ImportError as e:
+        logger.warning(f"AI Chat routes not available: {e}")
+
+    # AI Usage tracking routes
+    try:
+        from .routes import ai_usage
+
+        router.include_router(ai_usage.router)
+        logger.info("Enabled AI Usage API routes")
+    except ImportError as e:
+        logger.warning(f"AI Usage routes not available: {e}")
 
     # Conditional module routes
     if registry.is_enabled("vcenter"):

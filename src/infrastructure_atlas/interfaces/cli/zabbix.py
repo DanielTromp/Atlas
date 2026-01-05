@@ -185,7 +185,7 @@ def zabbix_dashboard_cli(
             groupids=gid_value_opt,
             hostids=host_value,
             unacknowledged=0,
-            suppressed=0,
+            suppressed=None,  # Don't filter by suppression - get all problems
             limit=limit,
             include_subgroups=include_subgroups_flag,
         )
@@ -249,23 +249,22 @@ def zabbix_problems_cli(
     severities: str = typer.Option("", "--severities", help="Comma list, e.g. 2,3,4 (defaults from .env)"),
     groupids: str = typer.Option("", "--groupids", help="Comma list group IDs (default from .env)"),
     include_all: bool = typer.Option(False, "--all", help="Include acknowledged (unacknowledged=0)"),
+    include_subgroups: bool = typer.Option(True, "--include-subgroups/--no-include-subgroups", help="Include subgroups when filtering by group IDs (default: True)"),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON payload instead of a table"),
 ):
-    """Fetch problems from Zabbix via JSON-RPC and print a summary."""
+    """Fetch problems from Zabbix via JSON-RPC and print a formatted table."""
     import requests as _rq
-    from rich import print as _print
 
-    from infrastructure_atlas.env import load_env as _load
-
-    _load()
+    load_env()
     base = os.getenv("ZABBIX_API_URL", "").strip() or os.getenv("ZABBIX_HOST", "").strip()
     if not base:
-        _print("[red]ZABBIX_API_URL or ZABBIX_HOST not set[/red]")
+        print("[red]ZABBIX_API_URL or ZABBIX_HOST not set[/red]")
         raise SystemExit(1)
     if not base.endswith("/api_jsonrpc.php"):
         base = base.rstrip("/") + "/api_jsonrpc.php"
     token = os.getenv("ZABBIX_API_TOKEN", "").strip()
     if not token:
-        _print("[yellow]Warning:[/yellow] ZABBIX_API_TOKEN not set; request may be unauthorized")
+        print("[yellow]Warning:[/yellow] ZABBIX_API_TOKEN not set; request may be unauthorized")
 
     def _rpc(method: str, params: dict) -> dict:
         body = {"jsonrpc": "2.0", "method": method, "params": params, "id": 1}
@@ -280,6 +279,29 @@ def zabbix_problems_cli(
         if data.get("error"):
             raise RuntimeError(f"Zabbix error: {data['error']}")
         return data.get("result", {})
+
+    def _expand_groupids(base_ids: list[int]) -> list[int]:
+        """Expand group IDs to include subgroups based on name prefixes."""
+        if not base_ids:
+            return base_ids
+        try:
+            all_groups = _rpc("hostgroup.get", {"output": ["groupid", "name"], "limit": 10000})
+        except Exception:
+            return base_ids
+        if not isinstance(all_groups, list):
+            return base_ids
+        id_to_name = {int(g.get("groupid", 0)): str(g.get("name", "")).strip() for g in all_groups if g.get("groupid")}
+        prefixes = [id_to_name.get(gid, "").strip() for gid in base_ids]
+        prefixes = [p for p in prefixes if p]
+        expanded = set(base_ids)
+        for g in all_groups:
+            gid = int(g.get("groupid", 0))
+            name = str(g.get("name", "")).strip()
+            for prefix in prefixes:
+                if name == prefix or name.startswith(prefix + "/"):
+                    expanded.add(gid)
+                    break
+        return sorted(expanded)
 
     # Params
     sev_list = []
@@ -302,6 +324,10 @@ def zabbix_problems_cli(
     elif os.getenv("ZABBIX_GROUP_ID", "").strip().isdigit():
         grp_list = [int(os.getenv("ZABBIX_GROUP_ID").strip())]
 
+    # Expand group IDs to include subgroups
+    if grp_list and include_subgroups:
+        grp_list = _expand_groupids(grp_list)
+
     params: dict[str, Any] = {
         "output": ["eventid", "name", "severity", "clock", "acknowledged", "r_eventid", "source", "object", "objectid"],
         "selectTags": "extend",
@@ -319,19 +345,84 @@ def zabbix_problems_cli(
     try:
         res = _rpc("problem.get", params)
     except Exception as ex:
-        _print(f"[red]Request failed:[/red] {ex}")
+        print(f"[red]Request failed:[/red] {ex}")
         raise SystemExit(1)
 
     items = res if isinstance(res, list) else []
     items.sort(key=lambda x: int(x.get("clock") or 0), reverse=True)
-    _print(f"[bold]Problems:[/bold] {len(items)} (showing up to {limit})")
-    from datetime import datetime as _dt
-    for it in items[: limit]:
+
+    # Fetch host info for each trigger
+    trig_ids = list({str(it.get("objectid", "")).strip() for it in items if it.get("objectid")})
+    host_by_trigger: dict[str, dict[str, str]] = {}
+    if trig_ids:
+        try:
+            trigs = _rpc("trigger.get", {"output": ["triggerid"], "selectHosts": ["hostid", "name"], "triggerids": trig_ids})
+            if isinstance(trigs, list):
+                for trig in trigs:
+                    tid = str(trig.get("triggerid", ""))
+                    hosts = trig.get("hosts", [])
+                    if isinstance(hosts, list) and hosts:
+                        h0 = hosts[0]
+                        host_by_trigger[tid] = {"hostid": str(h0.get("hostid", "")), "name": str(h0.get("name", ""))}
+        except Exception:
+            pass
+
+    if json_output:
+        output_items = []
+        for it in items[:limit]:
+            trig_id = str(it.get("objectid", ""))
+            host_info = host_by_trigger.get(trig_id, {})
+            output_items.append({
+                "eventid": it.get("eventid"),
+                "name": it.get("name"),
+                "severity": int(it.get("severity") or 0),
+                "clock": int(it.get("clock") or 0),
+                "acknowledged": int(it.get("acknowledged") or 0),
+                "host": host_info.get("name", ""),
+                "hostid": host_info.get("hostid", ""),
+            })
+        typer.echo(json.dumps({"items": output_items, "count": len(output_items)}, indent=2))
+        return
+
+    if not items:
+        print("[yellow]No problems found[/yellow]")
+        return
+
+    table = Table(title="Zabbix Problems")
+    table.add_column("Time", style="cyan")
+    table.add_column("Severity", style="magenta")
+    table.add_column("Status", style="green")
+    table.add_column("Host", style="blue")
+    table.add_column("Problem")
+    table.add_column("Duration", style="dim")
+
+    for it in items[:limit]:
         clk = int(it.get("clock") or 0)
-        ts = _dt.utcfromtimestamp(clk).strftime("%Y-%m-%d %H:%M:%S") if clk else "?"
+        time_text = _format_zabbix_time({"clock": clk}) if clk else "?"
         sev = int(it.get("severity") or 0)
-        name = it.get("name") or ""
-        _print(f"- [{ts}] sev={sev} {name}")
+        severity_text = _severity_label(sev)
+        acked = _safe_int(it.get("acknowledged"), 0)
+        status_raw = "RESOLVED" if str(it.get("r_eventid") or "0") not in {"0", "", "None"} else "PROBLEM"
+        if acked:
+            status_text = f"{status_raw} [dim](ack)[/dim]"
+        else:
+            status_text = status_raw
+        trig_id = str(it.get("objectid", ""))
+        host_info = host_by_trigger.get(trig_id, {})
+        host_name = host_info.get("name", "-")
+        problem_name = str(it.get("name") or "")
+        duration = _format_zabbix_duration(clk)
+        table.add_row(time_text, severity_text, status_text, host_name, problem_name, duration)
+
+    console.print(table)
+    summary_parts = [f"{min(len(items), limit)} shown"]
+    if len(items) > limit:
+        summary_parts.append(f"total {len(items)}")
+    if not include_all:
+        summary_parts.append("unacknowledged only")
+    if grp_list:
+        summary_parts.append(f"group(s) {','.join(map(str, grp_list[:3]))}{'+' if len(grp_list) > 3 else ''}")
+    print(f"[dim]{' — '.join(summary_parts)}[/dim]")
 
 
 @app.command("search")

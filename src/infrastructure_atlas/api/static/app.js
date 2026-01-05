@@ -183,6 +183,7 @@
   const $pageSuggestions = document.getElementById("page-suggestions");
   const $pageSuggestionDetail = document.getElementById("page-suggestion-detail");
   const $pageAdmin = document.getElementById("page-admin");
+  const $pageDrafts = document.getElementById("page-drafts");
   // Tasks elements
   const $tasksList = document.getElementById("tasks-list");
   const $tasksStatus = document.getElementById("tasks-status");
@@ -739,12 +740,15 @@
     'chat': document.getElementById('admin-panel-chat'),
     'export': document.getElementById('admin-panel-export'),
     'api': document.getElementById('admin-panel-api'),
+    'ai': document.getElementById('admin-panel-ai'),
     'vcenter': document.getElementById('admin-panel-vcenter'),
     'foreman': document.getElementById('admin-panel-foreman'),
     'puppet': document.getElementById('admin-panel-puppet'),
     'users': document.getElementById('admin-panel-users'),
     'suggestions': document.getElementById('admin-panel-suggestions'),
     'backup': document.getElementById('admin-panel-backup'),
+    'ai-usage': document.getElementById('admin-panel-ai-usage'),
+    'ai-activity': document.getElementById('admin-panel-ai-activity'),
   };
   const adminTabs = document.querySelectorAll('#admin-tabs .admin-tab');
   const $adminStatus = document.getElementById("admin-status");
@@ -879,7 +883,7 @@
   const $accountApiStatus = document.getElementById('account-api-status');
   const userMenuItems = document.querySelectorAll('[data-user-action]');
 
-  const defaultChatProviders = ['openai', 'openrouter', 'claude', 'gemini'];
+  const defaultChatProviders = ['azure_openai', 'openai', 'anthropic', 'openrouter', 'gemini'];
   const ACCOUNT_DATASET_PREF_KEY = 'account_pref_dataset';
 
   const chatProvidersState = {
@@ -1519,12 +1523,14 @@
 
   function providerLabel(id) {
     const map = {
+      azure_openai: 'Azure OpenAI',
       openai: 'OpenAI',
+      anthropic: 'Anthropic',
       openrouter: 'OpenRouter',
-      claude: 'Claude',
-      gemini: 'Gemini',
+      gemini: 'Google Gemini',
+      claude: 'Claude',  // Legacy alias
     };
-    return map[id] || id?.toUpperCase() || 'Provider';
+    return map[id] || id?.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || 'Provider';
   }
 
   function setUserMenu(open) {
@@ -1633,9 +1639,10 @@
 
   async function refreshChatProviders() {
     try {
-      const res = await fetch(`${API_BASE}/chat/providers`);
+      const res = await fetch(`${API_BASE}/ai/providers`);
       if (!res.ok) return null;
       const data = await res.json();
+      // New AI endpoint returns { providers: [...] }
       chatProvidersState.items = Array.isArray(data?.providers) ? data.providers : [];
       accountState.providers = chatProvidersState.items;
       renderAccountApiKeys();
@@ -4224,6 +4231,7 @@
       puppet: $pagePuppet,
       zhost: $pageZhost,
       tasks: $pageTasks,
+      drafts: $pageDrafts,
       suggestions: $pageSuggestions,
       'suggestion-detail': $pageSuggestionDetail,
       account: $pageAccount,
@@ -4300,6 +4308,8 @@
       loadTools();
     } else if (p === 'tasks') {
       loadTasks();
+    } else if (p === 'drafts') {
+      loadDraftTickets();
     } else if (p === 'chat') {
       fetchChatSessions();
       loadChatDefaults();
@@ -8463,10 +8473,298 @@
       e.preventDefault();
       const tab = btn.dataset.adminTab;
       setAdminTab(tab);
+      // Load AI provider status when switching to AI tab
+      if (tab === 'ai') {
+        loadAIProviderStatus();
+      }
     });
   });
 
   setAdminTab(adminState.activeTab);
+
+  // ---------------------------
+  // AI Provider Admin
+  // ---------------------------
+  async function loadAIProviderStatus() {
+    try {
+      const res = await fetch(`${API_BASE}/ai/providers`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const providers = data.providers || [];
+
+      providers.forEach(p => {
+        const providerKey = p.name.replace('_', '-');
+        const statusEl = document.getElementById(`admin-ai-${providerKey}-status`);
+        if (statusEl) {
+          if (p.configured) {
+            statusEl.textContent = '✓ Configured';
+            statusEl.className = 'admin-ai-status configured';
+          } else {
+            statusEl.textContent = 'Not configured';
+            statusEl.className = 'admin-ai-status not-configured';
+          }
+        }
+
+        // Set the current default model in the dropdown
+        const modelEl = document.getElementById(`admin-ai-${providerKey}-model`);
+        if (modelEl && p.default_model) {
+          // Check if the option exists, if so select it
+          const options = Array.from(modelEl.options);
+          const matchingOption = options.find(opt => opt.value === p.default_model);
+          if (matchingOption) {
+            modelEl.value = p.default_model;
+          } else {
+            // If the model isn't in the list, add it as a new option
+            const newOpt = document.createElement('option');
+            newOpt.value = p.default_model;
+            newOpt.textContent = p.default_model;
+            modelEl.insertBefore(newOpt, modelEl.firstChild);
+            modelEl.value = p.default_model;
+          }
+        }
+      });
+    } catch (e) {
+      console.error('Failed to load AI provider status', e);
+    }
+  }
+
+  async function saveAIProvider(provider, config) {
+    try {
+      const res = await fetch(`${API_BASE}/ai/config/${provider}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || 'Failed to save');
+      }
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  }
+
+  async function testAIProvider(provider) {
+    const statusEl = document.getElementById(`admin-ai-${provider.replace('_', '-')}-status`);
+    if (statusEl) {
+      statusEl.textContent = 'Testing...';
+      statusEl.className = 'admin-ai-status';
+    }
+    try {
+      const res = await fetch(`${API_BASE}/ai/providers/${provider}/test`, { method: 'POST' });
+      const data = await res.json();
+      if (statusEl) {
+        if (data.success) {
+          statusEl.textContent = '✓ Connected';
+          statusEl.className = 'admin-ai-status configured';
+        } else {
+          statusEl.textContent = '✗ ' + (data.error || 'Failed');
+          statusEl.className = 'admin-ai-status error';
+        }
+      }
+      return data;
+    } catch (e) {
+      if (statusEl) {
+        statusEl.textContent = '✗ Error';
+        statusEl.className = 'admin-ai-status error';
+      }
+      return { success: false, error: e.message };
+    }
+  }
+
+  // Azure OpenAI handlers
+  document.getElementById('admin-ai-azure-save')?.addEventListener('click', async () => {
+    const key = document.getElementById('admin-ai-azure-key')?.value;
+    const endpoint = document.getElementById('admin-ai-azure-endpoint')?.value;
+    const deployment = document.getElementById('admin-ai-azure-deployment')?.value;
+    const result = await saveAIProvider('azure_openai', { api_key: key, endpoint, deployment });
+    const statusEl = document.getElementById('admin-ai-azure-status');
+    if (statusEl) {
+      statusEl.textContent = result.success ? '✓ Saved' : '✗ ' + result.error;
+      statusEl.className = result.success ? 'admin-ai-status configured' : 'admin-ai-status error';
+    }
+  });
+  document.getElementById('admin-ai-azure-test')?.addEventListener('click', async () => {
+    const key = document.getElementById('admin-ai-azure-key')?.value;
+    const endpoint = document.getElementById('admin-ai-azure-endpoint')?.value;
+    const deployment = document.getElementById('admin-ai-azure-deployment')?.value;
+    if (key && endpoint && deployment) {
+      await saveAIProvider('azure_openai', { api_key: key, endpoint, deployment });
+    }
+    await testAIProvider('azure_openai');
+  });
+
+  // OpenRouter handlers
+  document.getElementById('admin-ai-openrouter-save')?.addEventListener('click', async () => {
+    const key = document.getElementById('admin-ai-openrouter-key')?.value;
+    const model = document.getElementById('admin-ai-openrouter-model')?.value;
+    const result = await saveAIProvider('openrouter', { api_key: key, default_model: model });
+    const statusEl = document.getElementById('admin-ai-openrouter-status');
+    if (statusEl) {
+      statusEl.textContent = result.success ? '✓ Saved' : '✗ ' + result.error;
+      statusEl.className = result.success ? 'admin-ai-status configured' : 'admin-ai-status error';
+    }
+  });
+  document.getElementById('admin-ai-openrouter-test')?.addEventListener('click', async () => {
+    // Save first, then test
+    const key = document.getElementById('admin-ai-openrouter-key')?.value;
+    const model = document.getElementById('admin-ai-openrouter-model')?.value;
+    if (key) {
+      await saveAIProvider('openrouter', { api_key: key, default_model: model });
+    }
+    await testAIProvider('openrouter');
+  });
+
+  // OpenAI handlers
+  document.getElementById('admin-ai-openai-save')?.addEventListener('click', async () => {
+    const key = document.getElementById('admin-ai-openai-key')?.value;
+    const model = document.getElementById('admin-ai-openai-model')?.value;
+    const result = await saveAIProvider('openai', { api_key: key, default_model: model });
+    const statusEl = document.getElementById('admin-ai-openai-status');
+    if (statusEl) {
+      statusEl.textContent = result.success ? '✓ Saved' : '✗ ' + result.error;
+      statusEl.className = result.success ? 'admin-ai-status configured' : 'admin-ai-status error';
+    }
+  });
+  document.getElementById('admin-ai-openai-test')?.addEventListener('click', async () => {
+    const key = document.getElementById('admin-ai-openai-key')?.value;
+    const model = document.getElementById('admin-ai-openai-model')?.value;
+    if (key) {
+      await saveAIProvider('openai', { api_key: key, default_model: model });
+    }
+    await testAIProvider('openai');
+  });
+
+  // Anthropic handlers
+  document.getElementById('admin-ai-anthropic-save')?.addEventListener('click', async () => {
+    const key = document.getElementById('admin-ai-anthropic-key')?.value;
+    const model = document.getElementById('admin-ai-anthropic-model')?.value;
+    const result = await saveAIProvider('anthropic', { api_key: key, default_model: model });
+    const statusEl = document.getElementById('admin-ai-anthropic-status');
+    if (statusEl) {
+      statusEl.textContent = result.success ? '✓ Saved' : '✗ ' + result.error;
+      statusEl.className = result.success ? 'admin-ai-status configured' : 'admin-ai-status error';
+    }
+  });
+  document.getElementById('admin-ai-anthropic-test')?.addEventListener('click', async () => {
+    const key = document.getElementById('admin-ai-anthropic-key')?.value;
+    const model = document.getElementById('admin-ai-anthropic-model')?.value;
+    if (key) {
+      await saveAIProvider('anthropic', { api_key: key, default_model: model });
+    }
+    await testAIProvider('anthropic');
+  });
+
+  // Gemini handlers
+  document.getElementById('admin-ai-gemini-save')?.addEventListener('click', async () => {
+    const key = document.getElementById('admin-ai-gemini-key')?.value;
+    const model = document.getElementById('admin-ai-gemini-model')?.value;
+    const result = await saveAIProvider('gemini', { api_key: key, default_model: model });
+    const statusEl = document.getElementById('admin-ai-gemini-status');
+    if (statusEl) {
+      statusEl.textContent = result.success ? '✓ Saved' : '✗ ' + result.error;
+      statusEl.className = result.success ? 'admin-ai-status configured' : 'admin-ai-status error';
+    }
+  });
+  document.getElementById('admin-ai-gemini-test')?.addEventListener('click', async () => {
+    const key = document.getElementById('admin-ai-gemini-key')?.value;
+    const model = document.getElementById('admin-ai-gemini-model')?.value;
+    if (key) {
+      await saveAIProvider('gemini', { api_key: key, default_model: model });
+    }
+    await testAIProvider('gemini');
+  });
+
+  // AI Default Settings handlers
+  const aiDefaultsConfig = {
+    provider: 'openrouter',
+    max_tokens: 16384,
+    temperature: 0.7,
+    system_prompt: '',
+    tools_enabled: true,
+    streaming_enabled: true,
+  };
+
+  async function loadAIDefaults() {
+    try {
+      const res = await fetch(`${API_BASE}/ai/settings`);
+      if (!res.ok) return;
+      const data = await res.json();
+      
+      if (data.default_provider) {
+        document.getElementById('admin-ai-default-provider').value = data.default_provider;
+      }
+      if (data.max_tokens) {
+        document.getElementById('admin-ai-max-tokens').value = data.max_tokens;
+      }
+      if (data.temperature !== undefined) {
+        document.getElementById('admin-ai-temperature').value = data.temperature;
+      }
+      if (data.system_prompt) {
+        document.getElementById('admin-ai-system-prompt').value = data.system_prompt;
+      }
+      document.getElementById('admin-ai-tools-enabled').checked = data.tools_enabled !== false;
+      document.getElementById('admin-ai-streaming-enabled').checked = data.streaming_enabled !== false;
+    } catch (e) {
+      console.error('Failed to load AI defaults', e);
+    }
+  }
+
+  async function saveAIDefaults() {
+    const settings = {
+      default_provider: document.getElementById('admin-ai-default-provider')?.value,
+      max_tokens: parseInt(document.getElementById('admin-ai-max-tokens')?.value) || 4096,
+      temperature: parseFloat(document.getElementById('admin-ai-temperature')?.value) || 0.7,
+      system_prompt: document.getElementById('admin-ai-system-prompt')?.value || '',
+      tools_enabled: document.getElementById('admin-ai-tools-enabled')?.checked ?? true,
+      streaming_enabled: document.getElementById('admin-ai-streaming-enabled')?.checked ?? true,
+    };
+    
+    const statusEl = document.getElementById('admin-ai-defaults-status');
+    try {
+      const res = await fetch(`${API_BASE}/ai/settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settings),
+      });
+      if (!res.ok) throw new Error('Failed to save');
+      if (statusEl) {
+        statusEl.textContent = '✓ Saved';
+        statusEl.className = 'admin-ai-status configured';
+      }
+    } catch (e) {
+      if (statusEl) {
+        statusEl.textContent = '✗ ' + e.message;
+        statusEl.className = 'admin-ai-status error';
+      }
+    }
+  }
+
+  function resetAIDefaults() {
+    document.getElementById('admin-ai-default-provider').value = 'openrouter';
+    document.getElementById('admin-ai-max-tokens').value = '4096';
+    document.getElementById('admin-ai-temperature').value = '0.7';
+    document.getElementById('admin-ai-system-prompt').value = '';
+    document.getElementById('admin-ai-tools-enabled').checked = true;
+    document.getElementById('admin-ai-streaming-enabled').checked = true;
+    
+    const statusEl = document.getElementById('admin-ai-defaults-status');
+    if (statusEl) {
+      statusEl.textContent = 'Reset (not saved)';
+      statusEl.className = 'admin-ai-status';
+    }
+  }
+
+  document.getElementById('admin-ai-defaults-save')?.addEventListener('click', saveAIDefaults);
+  document.getElementById('admin-ai-defaults-reset')?.addEventListener('click', resetAIDefaults);
+
+  // Load AI defaults when AI tab is first opened
+  const originalLoadAIProviderStatus = loadAIProviderStatus;
+  loadAIProviderStatus = async function() {
+    await originalLoadAIProviderStatus();
+    await loadAIDefaults();
+  };
 
   // ---------------------------
   // Admin settings
@@ -9172,6 +9470,12 @@
     if (tab === 'suggestions') {
       loadAdminSuggestionsConfig().catch(() => {});
     }
+    if (tab === 'ai-usage') {
+      loadAIUsageDashboard().catch(() => {});
+    }
+    if (tab === 'ai-activity') {
+      loadAIActivityLogs().catch(() => {});
+    }
   }
 
   // Suggestions admin config
@@ -9269,6 +9573,426 @@
 
   if ($adminSuggestionsMigrate) {
     $adminSuggestionsMigrate.addEventListener('click', migrateToAirtable);
+  }
+
+  // ============================================
+  // AI Usage Dashboard
+  // ============================================
+  const aiUsageState = {
+    dashboard: null,
+    modelConfigs: [],
+    pricing: [],
+    activityLogs: [],
+    activityTotal: 0,
+    activityOffset: 0,
+    activityLimit: 50,
+    activityFilters: {},
+    editingModel: null,
+  };
+
+  // AI Usage elements
+  const $aiUsageTodayCost = document.getElementById('ai-usage-today-cost');
+  const $aiUsageTodayRequests = document.getElementById('ai-usage-today-requests');
+  const $aiUsageWeekCost = document.getElementById('ai-usage-week-cost');
+  const $aiUsageWeekRequests = document.getElementById('ai-usage-week-requests');
+  const $aiUsageMonthCost = document.getElementById('ai-usage-month-cost');
+  const $aiUsageMonthRequests = document.getElementById('ai-usage-month-requests');
+  const $aiUsageTotalCost = document.getElementById('ai-usage-total-cost');
+  const $aiUsageTotalRequests = document.getElementById('ai-usage-total-requests');
+  const $aiUsageTopModelsBody = document.getElementById('ai-usage-top-models-body');
+  const $aiModelConfigBody = document.getElementById('ai-model-config-body');
+  const $aiPricingBody = document.getElementById('ai-pricing-body');
+  const $aiModelFormContainer = document.getElementById('ai-model-form-container');
+  const $aiModelForm = document.getElementById('ai-model-form');
+  const $aiModelFormTitle = document.getElementById('ai-model-form-title');
+  const $aiModelId = document.getElementById('ai-model-id');
+  const $aiModelProvider = document.getElementById('ai-model-provider');
+  const $aiModelModelId = document.getElementById('ai-model-model-id');
+  const $aiModelDisplayName = document.getElementById('ai-model-display-name');
+  const $aiModelPriceInput = document.getElementById('ai-model-price-input');
+  const $aiModelPriceOutput = document.getElementById('ai-model-price-output');
+  const $aiModelContext = document.getElementById('ai-model-context');
+  const $aiModelActive = document.getElementById('ai-model-active');
+  const $aiModelPreferred = document.getElementById('ai-model-preferred');
+  const $aiModelTools = document.getElementById('ai-model-tools');
+  const $aiModelStreaming = document.getElementById('ai-model-streaming');
+  const $aiModelVision = document.getElementById('ai-model-vision');
+  const $aiModelStatus = document.getElementById('ai-model-status');
+  const $aiModelAdd = document.getElementById('ai-model-add');
+  const $aiModelCancel = document.getElementById('ai-model-cancel');
+  const $aiModelLookup = document.getElementById('ai-model-lookup');
+
+  async function loadAIUsageDashboard() {
+    try {
+      const res = await fetch(`${API_BASE}/ai/usage/dashboard`);
+      if (!res.ok) throw new Error('Failed to load dashboard');
+      const data = await res.json();
+      aiUsageState.dashboard = data;
+      renderAIUsageDashboard(data);
+    } catch (err) {
+      console.error('Failed to load AI usage dashboard:', err);
+    }
+    // Also load model configs and pricing
+    loadAIModelConfigs().catch(() => {});
+    loadAIPricing().catch(() => {});
+  }
+
+  function renderAIUsageDashboard(data) {
+    // Today
+    if ($aiUsageTodayCost) $aiUsageTodayCost.textContent = `$${(data.today?.total_cost_usd || 0).toFixed(2)}`;
+    if ($aiUsageTodayRequests) $aiUsageTodayRequests.textContent = `${data.today?.total_requests || 0} requests`;
+    // Week
+    if ($aiUsageWeekCost) $aiUsageWeekCost.textContent = `$${(data.this_week?.total_cost_usd || 0).toFixed(2)}`;
+    if ($aiUsageWeekRequests) $aiUsageWeekRequests.textContent = `${data.this_week?.total_requests || 0} requests`;
+    // Month
+    if ($aiUsageMonthCost) $aiUsageMonthCost.textContent = `$${(data.this_month?.total_cost_usd || 0).toFixed(2)}`;
+    if ($aiUsageMonthRequests) $aiUsageMonthRequests.textContent = `${data.this_month?.total_requests || 0} requests`;
+    // Total
+    if ($aiUsageTotalCost) $aiUsageTotalCost.textContent = `$${(data.overall?.total_cost_usd || 0).toFixed(2)}`;
+    if ($aiUsageTotalRequests) $aiUsageTotalRequests.textContent = `${data.overall?.total_requests || 0} requests`;
+
+    // Top models
+    if ($aiUsageTopModelsBody) {
+      const models = data.top_models || [];
+      if (models.length === 0) {
+        $aiUsageTopModelsBody.innerHTML = '<tr><td colspan="5" class="empty">No usage data yet.</td></tr>';
+      } else {
+        $aiUsageTopModelsBody.innerHTML = models.map(m => `
+          <tr>
+            <td>${escapeHtml(m.provider)}</td>
+            <td>${escapeHtml(m.model)}</td>
+            <td>${m.request_count.toLocaleString()}</td>
+            <td>${m.total_tokens.toLocaleString()}</td>
+            <td class="cost">$${m.total_cost_usd.toFixed(4)}</td>
+          </tr>
+        `).join('');
+      }
+    }
+  }
+
+  async function loadAIModelConfigs() {
+    try {
+      const res = await fetch(`${API_BASE}/ai/usage/models?active_only=false`);
+      if (!res.ok) throw new Error('Failed to load model configs');
+      const data = await res.json();
+      aiUsageState.modelConfigs = data || [];
+      renderAIModelConfigs();
+    } catch (err) {
+      console.error('Failed to load AI model configs:', err);
+    }
+  }
+
+  function renderAIModelConfigs() {
+    if (!$aiModelConfigBody) return;
+    const configs = aiUsageState.modelConfigs;
+    if (configs.length === 0) {
+      $aiModelConfigBody.innerHTML = '<tr><td colspan="6" class="empty">No custom configurations. Using built-in pricing.</td></tr>';
+    } else {
+      $aiModelConfigBody.innerHTML = configs.map(c => `
+        <tr>
+          <td>${escapeHtml(c.provider)}</td>
+          <td>${escapeHtml(c.model_id)}</td>
+          <td>$${c.price_input_per_million.toFixed(3)}</td>
+          <td>$${c.price_output_per_million.toFixed(3)}</td>
+          <td>${c.is_active ? '<span class="status-ok">Active</span>' : '<span class="status-warn">Inactive</span>'}</td>
+          <td>
+            <button class="btn ghost small" onclick="editAIModelConfig('${c.id}')">Edit</button>
+            <button class="btn ghost small danger" onclick="deleteAIModelConfig('${c.id}')">Delete</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+  }
+
+  async function loadAIPricing() {
+    try {
+      const res = await fetch(`${API_BASE}/ai/usage/pricing`);
+      if (!res.ok) throw new Error('Failed to load pricing');
+      const data = await res.json();
+      aiUsageState.pricing = data.pricing || [];
+      renderAIPricing();
+    } catch (err) {
+      console.error('Failed to load AI pricing:', err);
+    }
+  }
+
+  function renderAIPricing() {
+    if (!$aiPricingBody) return;
+    const pricing = aiUsageState.pricing;
+    if (pricing.length === 0) {
+      $aiPricingBody.innerHTML = '<tr><td colspan="3" class="empty">No pricing data available.</td></tr>';
+    } else {
+      $aiPricingBody.innerHTML = pricing.map(p => `
+        <tr>
+          <td>${escapeHtml(p.model)}</td>
+          <td>$${p.price_input_per_million.toFixed(3)}</td>
+          <td>$${p.price_output_per_million.toFixed(3)}</td>
+        </tr>
+      `).join('');
+    }
+  }
+
+  function showAIModelForm(config = null) {
+    if (!$aiModelFormContainer) return;
+    aiUsageState.editingModel = config;
+    if ($aiModelFormTitle) $aiModelFormTitle.textContent = config ? 'Edit Model Configuration' : 'Add Model Configuration';
+    if ($aiModelId) $aiModelId.value = config?.id || '';
+    if ($aiModelProvider) $aiModelProvider.value = config?.provider || 'openrouter';
+    if ($aiModelModelId) $aiModelModelId.value = config?.model_id || '';
+    if ($aiModelDisplayName) $aiModelDisplayName.value = config?.display_name || '';
+    if ($aiModelPriceInput) $aiModelPriceInput.value = config?.price_input_per_million || 0;
+    if ($aiModelPriceOutput) $aiModelPriceOutput.value = config?.price_output_per_million || 0;
+    if ($aiModelContext) $aiModelContext.value = config?.context_window || '';
+    if ($aiModelActive) $aiModelActive.checked = config ? config.is_active : true;
+    if ($aiModelPreferred) $aiModelPreferred.checked = config?.is_preferred || false;
+    if ($aiModelTools) $aiModelTools.checked = config ? config.supports_tools : true;
+    if ($aiModelStreaming) $aiModelStreaming.checked = config ? config.supports_streaming : true;
+    if ($aiModelVision) $aiModelVision.checked = config?.supports_vision || false;
+    if ($aiModelStatus) $aiModelStatus.textContent = '';
+    $aiModelFormContainer.classList.remove('hidden');
+    $aiModelModelId?.focus();
+  }
+
+  function hideAIModelForm() {
+    if ($aiModelFormContainer) $aiModelFormContainer.classList.add('hidden');
+    aiUsageState.editingModel = null;
+  }
+
+  async function saveAIModelConfig(e) {
+    e.preventDefault();
+    const id = $aiModelId?.value;
+    const payload = {
+      provider: $aiModelProvider?.value,
+      model_id: $aiModelModelId?.value,
+      display_name: $aiModelDisplayName?.value || null,
+      price_input_per_million: parseFloat($aiModelPriceInput?.value) || 0,
+      price_output_per_million: parseFloat($aiModelPriceOutput?.value) || 0,
+      context_window: parseInt($aiModelContext?.value) || null,
+      is_active: $aiModelActive?.checked,
+      is_preferred: $aiModelPreferred?.checked,
+      supports_tools: $aiModelTools?.checked,
+      supports_streaming: $aiModelStreaming?.checked,
+      supports_vision: $aiModelVision?.checked,
+    };
+    if ($aiModelStatus) $aiModelStatus.textContent = 'Saving...';
+    try {
+      let res;
+      if (id) {
+        res = await fetch(`${API_BASE}/ai/usage/models/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } else {
+        res = await fetch(`${API_BASE}/ai/usage/models`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || 'Failed to save');
+      }
+      if ($aiModelStatus) $aiModelStatus.textContent = 'Saved!';
+      hideAIModelForm();
+      loadAIModelConfigs();
+    } catch (err) {
+      if ($aiModelStatus) $aiModelStatus.textContent = `Error: ${err.message}`;
+    }
+  }
+
+  async function lookupModelPricing() {
+    const modelId = $aiModelModelId?.value;
+    if (!modelId) return;
+    if ($aiModelStatus) $aiModelStatus.textContent = 'Looking up pricing...';
+    try {
+      const res = await fetch(`${API_BASE}/ai/usage/models/lookup?model_id=${encodeURIComponent(modelId)}`);
+      if (!res.ok) throw new Error('Lookup failed');
+      const data = await res.json();
+      if ($aiModelPriceInput) $aiModelPriceInput.value = data.price_input_per_million || 0;
+      if ($aiModelPriceOutput) $aiModelPriceOutput.value = data.price_output_per_million || 0;
+      if ($aiModelStatus) {
+        $aiModelStatus.textContent = data.found ? 'Pricing found!' : 'Using estimated pricing';
+      }
+    } catch (err) {
+      if ($aiModelStatus) $aiModelStatus.textContent = 'Lookup failed';
+    }
+  }
+
+  // Global functions for onclick handlers
+  window.editAIModelConfig = function(id) {
+    const config = aiUsageState.modelConfigs.find(c => c.id === id);
+    if (config) showAIModelForm(config);
+  };
+
+  window.deleteAIModelConfig = async function(id) {
+    if (!confirm('Delete this model configuration?')) return;
+    try {
+      const res = await fetch(`${API_BASE}/ai/usage/models/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Delete failed');
+      loadAIModelConfigs();
+    } catch (err) {
+      alert('Failed to delete: ' + err.message);
+    }
+  };
+
+  // Event listeners for AI Usage
+  if ($aiModelAdd) $aiModelAdd.addEventListener('click', () => showAIModelForm());
+  if ($aiModelCancel) $aiModelCancel.addEventListener('click', hideAIModelForm);
+  if ($aiModelForm) $aiModelForm.addEventListener('submit', saveAIModelConfig);
+  if ($aiModelLookup) $aiModelLookup.addEventListener('click', lookupModelPricing);
+
+  // ============================================
+  // AI Activity Log
+  // ============================================
+  const $aiActivityBody = document.getElementById('ai-activity-body');
+  const $aiActivityProvider = document.getElementById('ai-activity-provider');
+  const $aiActivityModel = document.getElementById('ai-activity-model');
+  const $aiActivityStartDate = document.getElementById('ai-activity-start-date');
+  const $aiActivityEndDate = document.getElementById('ai-activity-end-date');
+  const $aiActivityFilter = document.getElementById('ai-activity-filter');
+  const $aiActivityReset = document.getElementById('ai-activity-reset');
+  const $aiActivityRefresh = document.getElementById('ai-activity-refresh');
+  const $aiActivityExport = document.getElementById('ai-activity-export');
+  const $aiActivityStatus = document.getElementById('ai-activity-status');
+  const $aiActivityShowing = document.getElementById('ai-activity-showing');
+  const $aiActivityPrev = document.getElementById('ai-activity-prev');
+  const $aiActivityNext = document.getElementById('ai-activity-next');
+
+  async function loadAIActivityLogs() {
+    if (!$aiActivityBody) return;
+    $aiActivityBody.innerHTML = '<tr><td colspan="7" class="loading">Loading...</td></tr>';
+
+    const params = new URLSearchParams({
+      limit: aiUsageState.activityLimit,
+      offset: aiUsageState.activityOffset,
+    });
+    if (aiUsageState.activityFilters.provider) params.set('provider', aiUsageState.activityFilters.provider);
+    if (aiUsageState.activityFilters.model) params.set('model', aiUsageState.activityFilters.model);
+    if (aiUsageState.activityFilters.startDate) params.set('start_date', aiUsageState.activityFilters.startDate);
+    if (aiUsageState.activityFilters.endDate) params.set('end_date', aiUsageState.activityFilters.endDate);
+
+    try {
+      const res = await fetch(`${API_BASE}/ai/usage/activity?${params}`);
+      if (!res.ok) throw new Error('Failed to load activity');
+      const data = await res.json();
+      aiUsageState.activityLogs = data.items || [];
+      aiUsageState.activityTotal = data.total || 0;
+      renderAIActivityLogs();
+    } catch (err) {
+      console.error('Failed to load AI activity:', err);
+      $aiActivityBody.innerHTML = '<tr><td colspan="7" class="loading">Failed to load activity logs.</td></tr>';
+    }
+  }
+
+  function renderAIActivityLogs() {
+    if (!$aiActivityBody) return;
+    const logs = aiUsageState.activityLogs;
+    if (logs.length === 0) {
+      $aiActivityBody.innerHTML = '<tr><td colspan="7" class="loading">No activity logs found.</td></tr>';
+    } else {
+      $aiActivityBody.innerHTML = logs.map(log => {
+        const ts = log.created_at ? new Date(log.created_at).toLocaleString() : '-';
+        const tokens = `${log.tokens_prompt || 0}/${log.tokens_completion || 0}`;
+        const speed = log.tokens_per_second ? `${log.tokens_per_second.toFixed(1)} t/s` : '-';
+        const sessionId = log.session_id ? log.session_id.substring(0, 8) + '...' : '-';
+        return `
+          <tr>
+            <td>${escapeHtml(ts)}</td>
+            <td>${escapeHtml(log.provider)}/${escapeHtml(log.model)}</td>
+            <td>${tokens}</td>
+            <td class="cost">$${(log.cost_usd || 0).toFixed(6)}</td>
+            <td class="speed">${speed}</td>
+            <td>${escapeHtml(log.finish_reason || '-')}</td>
+            <td class="session-id" title="${escapeHtml(log.session_id || '')}">${sessionId}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    // Update pagination
+    const start = aiUsageState.activityOffset + 1;
+    const end = Math.min(aiUsageState.activityOffset + logs.length, aiUsageState.activityTotal);
+    if ($aiActivityShowing) {
+      $aiActivityShowing.textContent = `Showing ${start}-${end} of ${aiUsageState.activityTotal}`;
+    }
+    if ($aiActivityPrev) {
+      $aiActivityPrev.disabled = aiUsageState.activityOffset === 0;
+    }
+    if ($aiActivityNext) {
+      $aiActivityNext.disabled = end >= aiUsageState.activityTotal;
+    }
+  }
+
+  function applyActivityFilters() {
+    aiUsageState.activityFilters = {
+      provider: $aiActivityProvider?.value || '',
+      model: $aiActivityModel?.value || '',
+      startDate: $aiActivityStartDate?.value || '',
+      endDate: $aiActivityEndDate?.value || '',
+    };
+    aiUsageState.activityOffset = 0;
+    loadAIActivityLogs();
+  }
+
+  function resetActivityFilters() {
+    if ($aiActivityProvider) $aiActivityProvider.value = '';
+    if ($aiActivityModel) $aiActivityModel.value = '';
+    if ($aiActivityStartDate) $aiActivityStartDate.value = '';
+    if ($aiActivityEndDate) $aiActivityEndDate.value = '';
+    aiUsageState.activityFilters = {};
+    aiUsageState.activityOffset = 0;
+    loadAIActivityLogs();
+  }
+
+  async function exportActivityCSV() {
+    if ($aiActivityStatus) $aiActivityStatus.textContent = 'Exporting...';
+    const params = new URLSearchParams();
+    if (aiUsageState.activityFilters.provider) params.set('provider', aiUsageState.activityFilters.provider);
+    if (aiUsageState.activityFilters.model) params.set('model', aiUsageState.activityFilters.model);
+    if (aiUsageState.activityFilters.startDate) params.set('start_date', aiUsageState.activityFilters.startDate);
+    if (aiUsageState.activityFilters.endDate) params.set('end_date', aiUsageState.activityFilters.endDate);
+
+    try {
+      const res = await fetch(`${API_BASE}/ai/usage/activity/export?${params}`);
+      if (!res.ok) throw new Error('Export failed');
+      const blob = await res.blob();
+      const filename = res.headers.get('Content-Disposition')?.match(/filename=(.+)/)?.[1] || 'ai_activity.csv';
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      if ($aiActivityStatus) $aiActivityStatus.textContent = 'Exported!';
+      setTimeout(() => { if ($aiActivityStatus) $aiActivityStatus.textContent = ''; }, 2000);
+    } catch (err) {
+      if ($aiActivityStatus) $aiActivityStatus.textContent = 'Export failed';
+      console.error('Export failed:', err);
+    }
+  }
+
+  // Event listeners for AI Activity
+  if ($aiActivityFilter) $aiActivityFilter.addEventListener('click', applyActivityFilters);
+  if ($aiActivityReset) $aiActivityReset.addEventListener('click', resetActivityFilters);
+  if ($aiActivityRefresh) $aiActivityRefresh.addEventListener('click', () => loadAIActivityLogs());
+  if ($aiActivityExport) $aiActivityExport.addEventListener('click', exportActivityCSV);
+  if ($aiActivityPrev) {
+    $aiActivityPrev.addEventListener('click', () => {
+      if (aiUsageState.activityOffset > 0) {
+        aiUsageState.activityOffset = Math.max(0, aiUsageState.activityOffset - aiUsageState.activityLimit);
+        loadAIActivityLogs();
+      }
+    });
+  }
+  if ($aiActivityNext) {
+    $aiActivityNext.addEventListener('click', () => {
+      if (aiUsageState.activityOffset + aiUsageState.activityLimit < aiUsageState.activityTotal) {
+        aiUsageState.activityOffset += aiUsageState.activityLimit;
+        loadAIActivityLogs();
+      }
+    });
   }
 
   function resetAdminVCenterForm() {
@@ -10898,13 +11622,61 @@
     } catch {}
   }
   function setupChatPrefListeners() {
-    $chatProvider?.addEventListener('change', () => saveChatPrefs());
+    $chatProvider?.addEventListener('change', async () => {
+      saveChatPrefs();
+      await loadModelsForProvider($chatProvider.value);
+    });
     $chatModel?.addEventListener('change', () => saveChatPrefs());
     $chatModel?.addEventListener('blur', () => saveChatPrefs());
     $chatDataset?.addEventListener('change', () => saveChatPrefs());
     document.getElementById('chat-stream')?.addEventListener('change', () => saveChatPrefs());
     document.getElementById('chat-include-data')?.addEventListener('change', () => saveChatPrefs());
   }
+
+  async function loadModelsForProvider(providerName) {
+    if (!$chatModel || !providerName) return;
+
+    // Save current model selection
+    const savedModel = localStorage.getItem('chat_model') || '';
+    const currentModel = $chatModel.value || savedModel;
+
+    try {
+      const res = await fetch(`${API_BASE}/ai/providers/${encodeURIComponent(providerName)}/models`);
+      if (!res.ok) {
+        console.warn('Failed to load models for provider:', providerName);
+        return;
+      }
+      const models = await res.json();
+
+      // Clear existing options except "Default"
+      $chatModel.innerHTML = '<option value="">Default</option>';
+
+      // Add model options
+      if (Array.isArray(models)) {
+        models.forEach(model => {
+          const opt = document.createElement('option');
+          opt.value = model.id || model.name || '';
+          opt.textContent = model.name || model.id || '';
+          if (model.description) {
+            opt.title = model.description;
+          }
+          $chatModel.appendChild(opt);
+        });
+      }
+
+      // Restore saved model if it exists in the new list
+      if (currentModel) {
+        const options = Array.from($chatModel.options);
+        const matchingOption = options.find(opt => opt.value === currentModel);
+        if (matchingOption) {
+          $chatModel.value = currentModel;
+        }
+      }
+    } catch (err) {
+      console.error('Error loading models for provider:', err);
+    }
+  }
+
   async function loadChatDefaults() {
     try {
       const data = await refreshChatProviders();
@@ -10912,10 +11684,17 @@
       // Set default provider if none selected
       const dprov = data?.default_provider || 'openai';
       if ($chatProvider && !$chatProvider.value) $chatProvider.value = dprov;
-      // If model empty, set default for selected provider
+
+      // Load models for the selected provider
       const sel = $chatProvider?.value || dprov;
+      await loadModelsForProvider(sel);
+
+      // If model still empty, set default for selected provider
       const cfg = (data?.providers || []).find(p => p.id === sel);
-      if ($chatModel && !$chatModel.value && cfg && cfg.default_model) $chatModel.value = cfg.default_model;
+      if ($chatModel && !$chatModel.value && cfg && cfg.default_model) {
+        $chatModel.value = cfg.default_model;
+        saveChatPrefs();
+      }
     } catch {}
   }
   function formatTokenSummary(usage) {
@@ -11017,13 +11796,21 @@
     const sid = await ensureChatSession();
     if (!sid) return;
     try {
-      const res = await fetch(`${API_BASE}/chat/history?session_id=${encodeURIComponent(sid)}`);
+      // New AI endpoint: GET /ai/sessions/{id} returns session with messages
+      const res = await fetch(`${API_BASE}/ai/sessions/${encodeURIComponent(sid)}`);
       if (!res.ok) return;
       const data = await res.json();
       const msgs = Array.isArray(data?.messages) ? data.messages : [];
       clearChatLog();
       for (const m of msgs) {
-        if (m && typeof m.content === 'string' && typeof m.role === 'string') appendChat(m.role, m.content, m.usage || null);
+        if (m && typeof m.content === 'string' && typeof m.role === 'string') {
+          // Combine usage and cost from metadata
+          const meta = m.usage || {};
+          if (m.cost) {
+            meta.cost_usd = m.cost.cost_usd || m.cost.costUsd || 0;
+          }
+          appendChat(m.role, m.content, Object.keys(meta).length > 0 ? meta : null);
+        }
       }
     } catch (err) {
       console.error('Failed to load chat history', err);
@@ -11154,7 +11941,7 @@
     }
     
     try {
-      const res = await fetch(`${API_BASE}/chat/session/${encodeURIComponent(sessionId)}`, {
+      const res = await fetch(`${API_BASE}/ai/sessions/${encodeURIComponent(sessionId)}`, {
         method: 'DELETE',
       });
       
@@ -11208,10 +11995,12 @@
 
   async function createChatSession(name) {
     try {
-      const res = await fetch(`${API_BASE}/chat/session`, {
+      const prov = ($chatProvider?.value || 'azure_openai');
+      const mdl = ($chatModel?.value || '');
+      const res = await fetch(`${API_BASE}/ai/sessions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(name ? { name } : {}),
+        body: JSON.stringify({ title: name || undefined, provider: prov, model: mdl || undefined }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -11236,7 +12025,7 @@
     if (chatSessionsState.loading) return;
     chatSessionsState.loading = true;
     try {
-      const res = await fetch(`${API_BASE}/chat/sessions`);
+      const res = await fetch(`${API_BASE}/ai/sessions`);
       if (!res.ok) return;
       const data = await res.json();
       const sessions = Array.isArray(data?.sessions) ? data.sessions : [];
@@ -11271,10 +12060,8 @@
     if (!q) return;
     appendChat('user', q);
     if ($chatInput) $chatInput.value = '';
-    const prov = ($chatProvider?.value || 'openai');
+    const prov = ($chatProvider?.value || 'azure_openai');
     const mdl = ($chatModel?.value || '');
-    const datasetRaw = ($chatDataset?.value || 'merged');
-    const dataset = datasetRaw === 'all' ? 'merged' : datasetRaw;
     saveChatPrefs();
     const sid = await ensureChatSession();
     if (!sid) return;
@@ -11315,32 +12102,47 @@
       // Ignore queue status errors
     }
     try {
-      const includeData = !!document.getElementById('chat-include-data')?.checked;
+      const toolsEnabled = !!document.getElementById('chat-include-data')?.checked;
       const wantStream = !!document.getElementById('chat-stream')?.checked;
-      // Streaming verzoek naar /chat/stream, met fallback naar /chat/complete
-      const res = wantStream ? await fetch(`${API_BASE}/chat/stream`, {
+      
+      // Build request payload for new AI chat API
+      const requestPayload = {
+        message: messagePayload,
+        session_id: sid,
+        provider: prov,
+        model: mdl || undefined,
+        system_prompt: sys || undefined,
+        temperature: tempPref,
+        tools_enabled: toolsEnabled,
+      };
+      
+      // Streaming request to /ai/chat/stream (SSE format)
+      const res = wantStream ? await fetch(`${API_BASE}/ai/chat/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: prov, model: mdl, message: messagePayload, session_id: sid, system: sys, temperature: tempPref, include_context: includeData, dataset }),
+        body: JSON.stringify(requestPayload),
       }) : null;
+      
       if (!wantStream || !res || !res.ok || !res.body) {
         // Fallback to non-streaming
-        const res2 = await fetch(`${API_BASE}/chat/complete`, {
+        const res2 = await fetch(`${API_BASE}/ai/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ provider: prov, model: mdl, message: messagePayload, session_id: sid, system: sys, temperature: tempPref, include_context: includeData, dataset }),
+          body: JSON.stringify(requestPayload),
         });
         const data2 = await res2.json().catch(() => ({}));
         placeholder.remove();
         if (!res2.ok) {
           appendChat('assistant', data2?.detail || `Error: ${res2.status} ${res2.statusText}`);
         } else {
-          appendChat('assistant', data2?.reply || '(empty response)', data2?.usage || null);
+          // New AI chat returns { content, usage, ... }
+          appendChat('assistant', data2?.content || data2?.reply || '(empty response)', data2?.usage || null);
         }
         await fetchChatSessions();
         return;
       }
-      // Stream tonen
+      
+      // Stream handling (SSE format: "data: {...}\n\n")
       const messageDiv = document.createElement('div');
       messageDiv.className = 'chat-message assistant';
       
@@ -11361,40 +12163,68 @@
       let fullText = '';
       let usageMeta = null;
       let metaDiv = null;
+      let buffer = '';
+      let wasCommand = false;
       
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        const text = td.decode(value, { stream: true });
-        if (!text) continue;
-        gotAny = true;
-        fullText += text;
-
-        const match = fullText.match(/\[\[TOKENS (\{.*?\})\]\]/);
-        if (match) {
+        buffer += td.decode(value, { stream: true });
+        
+        // Parse SSE format: "data: {...}\n\n"
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // Keep incomplete line in buffer
+        
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const dataStr = line.slice(6);
+          if (dataStr === '[DONE]') continue;
+          
           try {
-            usageMeta = JSON.parse(match[1]);
-          } catch (_) {
-            usageMeta = null;
+            const data = JSON.parse(dataStr);
+            gotAny = true;
+            
+            if (data.type === 'content' && data.content) {
+              fullText += data.content;
+              bubble.innerHTML = parseMarkdown(fullText);
+              $chatMessages?.scrollTo(0, $chatMessages.scrollHeight);
+            } else if (data.type === 'command' && data.result) {
+              // Handle slash command result
+              wasCommand = true;
+              fullText = data.result.message || JSON.stringify(data.result);
+              bubble.innerHTML = parseMarkdown(fullText);
+            } else if (data.type === 'usage' && data.usage) {
+              usageMeta = data.usage;
+            } else if (data.type === 'tool_result') {
+              // Show tool execution status
+              const toolStatus = document.createElement('div');
+              toolStatus.className = 'chat-tool-status';
+              toolStatus.textContent = `🔧 ${data.tool_name}: ${data.success ? 'completed' : 'failed'}`;
+              bubble.appendChild(toolStatus);
+            } else if (data.type === 'error') {
+              fullText += `\n\n**Error:** ${data.error}`;
+              bubble.innerHTML = parseMarkdown(fullText);
+            }
+          } catch (parseErr) {
+            // If not JSON, treat as raw text (fallback)
+            fullText += dataStr;
+            bubble.innerHTML = parseMarkdown(fullText);
           }
-          fullText = fullText.replace(match[0], '').trimEnd();
         }
-
-        bubble.innerHTML = parseMarkdown(fullText);
-        $chatMessages?.scrollTo(0, $chatMessages.scrollHeight);
       }
-      // No chunks? Fallback to complete
+      
+      // No chunks? Fallback to non-streaming
       if (!gotAny) {
-        const res3 = await fetch(`${API_BASE}/chat/complete`, {
+        const res3 = await fetch(`${API_BASE}/ai/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ provider: prov, model: mdl, message: messagePayload, session_id: sid, system: sys, temperature: tempPref, include_context: includeData, dataset }),
+          body: JSON.stringify(requestPayload),
         });
         const data3 = await res3.json().catch(() => ({}));
         if (!res3.ok) {
           bubble.innerHTML = parseMarkdown(data3?.detail || `Error: ${res3.status} ${res3.statusText}`);
         } else {
-          bubble.innerHTML = parseMarkdown(data3?.reply || '');
+          bubble.innerHTML = parseMarkdown(data3?.content || data3?.reply || '');
           const usageText = formatTokenSummary(data3?.usage);
           if (usageText && messageDiv) {
             const metaDiv = document.createElement('div');
@@ -11411,8 +12241,19 @@
           messageDiv.appendChild(metaDiv);
         }
         metaDiv.textContent = formatTokenSummary(usageMeta);
+
+        // Show warning if response was truncated due to token limit
+        if (usageMeta.finish_reason === 'length') {
+          const warningDiv = document.createElement('div');
+          warningDiv.className = 'chat-token-warning';
+          warningDiv.innerHTML = '⚠️ Response truncated due to token limit. You can increase max tokens in Admin → AI Settings.';
+          messageDiv.appendChild(warningDiv);
+        }
       }
-      await fetchChatSessions();
+      // Don't refresh sessions for commands (they aren't saved to DB and would disappear)
+      if (!wasCommand) {
+        await fetchChatSessions();
+      }
     } catch (e) {
       placeholder.remove();
       
@@ -12537,9 +13378,7 @@
   loadChatConfig();
   const initialPage = parseHashPage();
   persistActivePage(initialPage);
-  if (typeof setupChatSidebarTabs === 'function') {
-    setupChatSidebarTabs();
-  }
+  // Note: setupChatSidebarTabs is called from showPage('chat') after chatSidebarState is initialized
   // Clean up any legacy ?view=... from the URL at startup
   try { updateURLDebounced(); } catch {}
   if (initialPage === 'chat') {
@@ -12554,7 +13393,245 @@
     try { fetchData(); } catch {}
   }
   // When switching to chat, ensure session and history are loaded
-  
+
+
+  // ---------------------------
+  // Draft Tickets
+  // ---------------------------
+  const draftsState = {
+    tickets: [],
+    currentTicket: null,
+    isNew: false,
+  };
+
+  const $draftsList = document.getElementById('drafts-list');
+  const $draftsCounts = document.getElementById('drafts-counts');
+  const $draftsFilterStatus = document.getElementById('drafts-filter-status');
+  const $draftsSearch = document.getElementById('drafts-search');
+  const $draftsNew = document.getElementById('drafts-new');
+  const $draftsRefresh = document.getElementById('drafts-refresh');
+  const $draftsModal = document.getElementById('drafts-modal');
+  const $draftsModalTitle = document.getElementById('drafts-modal-title');
+  const $draftsModalClose = document.getElementById('drafts-modal-close');
+  const $draftsForm = document.getElementById('drafts-form');
+  const $draftsFormId = document.getElementById('drafts-form-id');
+  const $draftsFormTitle = document.getElementById('drafts-form-title');
+  const $draftsFormDescription = document.getElementById('drafts-form-description');
+  const $draftsFormPriority = document.getElementById('drafts-form-priority');
+  const $draftsFormLabels = document.getElementById('drafts-form-labels');
+  const $draftsFormJiraKey = document.getElementById('drafts-form-jira-key');
+  const $draftsFormAiProposal = document.getElementById('drafts-form-ai-proposal');
+  const $draftsFormAiContent = document.getElementById('drafts-form-ai-content');
+  const $draftsBtnApprove = document.getElementById('drafts-btn-approve');
+  const $draftsBtnReject = document.getElementById('drafts-btn-reject');
+  const $draftsBtnDelete = document.getElementById('drafts-btn-delete');
+  const $draftsBtnSave = document.getElementById('drafts-btn-save');
+  const $draftsStatusActions = document.getElementById('drafts-modal-status-actions');
+
+  async function loadDraftTickets() {
+    const status = $draftsFilterStatus?.value || '';
+    const search = $draftsSearch?.value || '';
+    let url = `${API_BASE}/draft-tickets`;
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    if (search) params.append('q', search);
+    if (params.toString()) url += `?${params}`;
+
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      draftsState.tickets = await res.json();
+      renderDraftTickets();
+      loadDraftCounts();
+    } catch (err) {
+      console.error('Failed to load tickets:', err);
+      if ($draftsList) $draftsList.innerHTML = '<div class="drafts-empty">Failed to load tickets.</div>';
+    }
+  }
+
+  async function loadDraftCounts() {
+    try {
+      const res = await fetch(`${API_BASE}/draft-tickets/counts`);
+      if (!res.ok) return;
+      const counts = await res.json();
+      if ($draftsCounts) {
+        const proposed = $draftsCounts.querySelector('.proposed .count-value');
+        const approved = $draftsCounts.querySelector('.approved .count-value');
+        const pushed = $draftsCounts.querySelector('.pushed .count-value');
+        const rejected = $draftsCounts.querySelector('.rejected .count-value');
+        if (proposed) proposed.textContent = counts.proposed || 0;
+        if (approved) approved.textContent = counts.approved || 0;
+        if (pushed) pushed.textContent = counts.pushed || 0;
+        if (rejected) rejected.textContent = counts.rejected || 0;
+      }
+    } catch (err) {
+      console.error('Failed to load ticket counts:', err);
+    }
+  }
+
+  function renderDraftTickets() {
+    if (!$draftsList) return;
+    if (!draftsState.tickets.length) {
+      $draftsList.innerHTML = '<div class="drafts-empty">No tickets found. Click "New Ticket" to create one.</div>';
+      return;
+    }
+    $draftsList.innerHTML = draftsState.tickets.map(ticket => `
+      <div class="draft-card" data-ticket-id="${ticket.id}">
+        <div class="draft-card-header">
+          <h3 class="draft-card-title">${escapeHtml(ticket.suggested_title)}</h3>
+          <span class="draft-card-status ${ticket.status}">${ticket.status}</span>
+        </div>
+        ${ticket.suggested_description ? `<p class="draft-card-description">${escapeHtml(ticket.suggested_description)}</p>` : ''}
+        <div class="draft-card-meta">
+          <span class="meta-item">
+            <span class="draft-card-priority ${ticket.suggested_priority}">${ticket.suggested_priority}</span>
+          </span>
+          ${ticket.linked_jira_key ? `<span class="meta-item"><a href="${ticket.linked_jira_url}" target="_blank" rel="noopener">${ticket.linked_jira_key}</a></span>` : ''}
+          ${ticket.created_jira_key ? `<span class="meta-item">Created: <a href="${ticket.created_jira_url}" target="_blank" rel="noopener">${ticket.created_jira_key}</a></span>` : ''}
+          <span class="meta-item">${new Date(ticket.created_at).toLocaleDateString()}</span>
+        </div>
+        ${ticket.suggested_labels?.length ? `<div class="draft-card-labels">${ticket.suggested_labels.map(l => `<span class="draft-card-label">${escapeHtml(l)}</span>`).join('')}</div>` : ''}
+      </div>
+    `).join('');
+
+    // Add click handlers
+    $draftsList.querySelectorAll('.draft-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const id = card.getAttribute('data-ticket-id');
+        const ticket = draftsState.tickets.find(t => t.id === id);
+        if (ticket) openDraftModal(ticket);
+      });
+    });
+  }
+
+  function openDraftModal(ticket) {
+    draftsState.currentTicket = ticket;
+    draftsState.isNew = !ticket;
+
+    if ($draftsModalTitle) $draftsModalTitle.textContent = ticket ? 'Edit Ticket' : 'New Ticket';
+    if ($draftsFormId) $draftsFormId.value = ticket?.id || '';
+    if ($draftsFormTitle) $draftsFormTitle.value = ticket?.suggested_title || '';
+    if ($draftsFormDescription) $draftsFormDescription.value = ticket?.suggested_description || '';
+    if ($draftsFormPriority) $draftsFormPriority.value = ticket?.suggested_priority || 'medium';
+    if ($draftsFormLabels) $draftsFormLabels.value = ticket?.suggested_labels?.join(', ') || '';
+    if ($draftsFormJiraKey) $draftsFormJiraKey.value = ticket?.linked_jira_key || '';
+
+    // Show/hide AI proposal
+    if (ticket?.ai_proposal && Object.keys(ticket.ai_proposal).length > 0) {
+      if ($draftsFormAiProposal) $draftsFormAiProposal.hidden = false;
+      if ($draftsFormAiContent) $draftsFormAiContent.textContent = JSON.stringify(ticket.ai_proposal, null, 2);
+    } else {
+      if ($draftsFormAiProposal) $draftsFormAiProposal.hidden = true;
+    }
+
+    // Show/hide status actions based on current status
+    const canChangeStatus = ticket && ticket.status === 'proposed';
+    if ($draftsStatusActions) $draftsStatusActions.style.display = canChangeStatus ? 'flex' : 'none';
+    if ($draftsBtnDelete) $draftsBtnDelete.style.display = ticket ? 'block' : 'none';
+
+    if ($draftsModal) $draftsModal.hidden = false;
+  }
+
+  function closeDraftModal() {
+    if ($draftsModal) $draftsModal.hidden = true;
+    draftsState.currentTicket = null;
+    draftsState.isNew = false;
+  }
+
+  async function saveDraftTicket() {
+    const id = $draftsFormId?.value;
+    const payload = {
+      suggested_title: $draftsFormTitle?.value || '',
+      suggested_description: $draftsFormDescription?.value || null,
+      suggested_priority: $draftsFormPriority?.value || 'medium',
+      suggested_labels: ($draftsFormLabels?.value || '').split(',').map(l => l.trim()).filter(Boolean),
+      linked_jira_key: $draftsFormJiraKey?.value || null,
+    };
+
+    try {
+      let res;
+      if (id) {
+        res = await fetch(`${API_BASE}/draft-tickets/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } else {
+        res = await fetch(`${API_BASE}/draft-tickets`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      }
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+      closeDraftModal();
+      loadDraftTickets();
+    } catch (err) {
+      alert(`Failed to save: ${err.message}`);
+    }
+  }
+
+  async function updateDraftStatus(status) {
+    const id = draftsState.currentTicket?.id;
+    if (!id) return;
+
+    try {
+      const res = await fetch(`${API_BASE}/draft-tickets/${id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+      closeDraftModal();
+      loadDraftTickets();
+    } catch (err) {
+      alert(`Failed to update status: ${err.message}`);
+    }
+  }
+
+  async function deleteDraftTicket() {
+    const id = draftsState.currentTicket?.id;
+    if (!id) return;
+
+    if (!confirm('Are you sure you want to delete this ticket?')) return;
+
+    try {
+      const res = await fetch(`${API_BASE}/draft-tickets/${id}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || `HTTP ${res.status}`);
+      }
+      closeDraftModal();
+      loadDraftTickets();
+    } catch (err) {
+      alert(`Failed to delete: ${err.message}`);
+    }
+  }
+
+  // Draft tickets event listeners
+  $draftsNew?.addEventListener('click', () => openDraftModal(null));
+  $draftsRefresh?.addEventListener('click', () => loadDraftTickets());
+  $draftsModalClose?.addEventListener('click', closeDraftModal);
+  $draftsModal?.querySelector('[data-close-modal]')?.addEventListener('click', closeDraftModal);
+  $draftsBtnSave?.addEventListener('click', saveDraftTicket);
+  $draftsBtnApprove?.addEventListener('click', () => updateDraftStatus('approved'));
+  $draftsBtnReject?.addEventListener('click', () => updateDraftStatus('rejected'));
+  $draftsBtnDelete?.addEventListener('click', deleteDraftTicket);
+  $draftsFilterStatus?.addEventListener('change', () => loadDraftTickets());
+  $draftsSearch?.addEventListener('input', debounce(() => loadDraftTickets(), 300));
+
+  // Load drafts if initial page
+  if (initialPage === 'drafts') {
+    loadDraftTickets();
+  }
 
   // ---------------------------
   // User Management Event Listeners
@@ -12640,6 +13717,9 @@
         e.preventDefault();
         fetchData();
       }
+    }
+  });
+
   // ---------------------------
   // Token Usage Monitoring
   // ---------------------------
@@ -12818,8 +13898,16 @@
     if (monitoringState.refreshInterval) {
       clearInterval(monitoringState.refreshInterval);
     }
-    
+
     monitoringState.autoRefresh = true;
+    monitoringState.refreshInterval = setInterval(() => {
+      const currentPage = document.querySelector('.page.active')?.id?.replace('-page', '') || '';
+      if (currentPage === 'chat' || currentPage === 'admin') {
+        refreshMonitoringData();
+      }
+    }, 30000); // Refresh every 30 seconds
+  }
+
   // Handle monitoring dashboard toggle
   const $chatShowMonitoring = document.getElementById('chat-show-monitoring');
   $chatShowMonitoring?.addEventListener('change', () => {
@@ -12870,12 +13958,6 @@
       stopMonitoringAutoRefresh();
     }
   };
-    monitoringState.refreshInterval = setInterval(() => {
-      if (page === 'chat' || page === 'admin') {
-        refreshMonitoringData();
-      }
-    }, 30000); // Refresh every 30 seconds
-  }
 
   function stopMonitoringAutoRefresh() {
     if (monitoringState.refreshInterval) {
@@ -12885,25 +13967,11 @@
     monitoringState.autoRefresh = false;
   }
 
-  // Initialize monitoring when chat page is shown
-  const originalShowPage = showPage;
-  showPage = function(p) {
-    originalShowPage(p);
-    
-    if (p === 'chat') {
-      // Load initial monitoring data
-      refreshMonitoringData();
-      startMonitoringAutoRefresh();
-    } else {
-      stopMonitoringAutoRefresh();
-    }
-  };
-
   // ---------------------------
   // Enhanced Chat Sidebar Management
   // ---------------------------
   
-  const CHAT_SIDEBAR_TABS = ['sessions', 'tools'];
+  const CHAT_SIDEBAR_TABS = ['sessions', 'stats', 'tools', 'commands'];
 
   const chatSidebarState = {
     activeTab: CHAT_SIDEBAR_TABS[0],
@@ -12912,19 +13980,26 @@
 
   function normaliseChatSidebarTab(tabName) {
     if (!tabName) return CHAT_SIDEBAR_TABS[0];
-    const value = String(tabName).toLowerCase();
-    return CHAT_SIDEBAR_TABS.includes(value) ? value : CHAT_SIDEBAR_TABS[0];
+    const value = String(tabName).toLowerCase().trim();
+    // Check if it's in the allowed tabs list
+    if (CHAT_SIDEBAR_TABS.includes(value)) {
+      return value;
+    }
+    // Fallback to first tab if not found
+    return CHAT_SIDEBAR_TABS[0];
   }
 
   function switchChatSidebarTab(tabName, options = {}) {
     const { focusTab = false, skipPersist = false } = options;
-    const targetTab = normaliseChatSidebarTab(tabName);
+    // Don't normalize here - use the actual tab name to match panels
+    const targetTab = String(tabName).toLowerCase().trim();
     chatSidebarState.activeTab = targetTab;
 
     const tabButtons = document.querySelectorAll('.chat-sidebar-tab');
     let activeButton = null;
     tabButtons.forEach((btn) => {
-      const btnTab = normaliseChatSidebarTab(btn.getAttribute('data-tab'));
+      const btnTabAttr = btn.getAttribute('data-tab');
+      const btnTab = btnTabAttr ? String(btnTabAttr).toLowerCase().trim() : null;
       const isActive = btnTab === targetTab;
       btn.classList.toggle('active', isActive);
       btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
@@ -12934,7 +14009,8 @@
 
     const panels = document.querySelectorAll('.chat-sidebar-panel');
     panels.forEach((panel) => {
-      const panelTab = normaliseChatSidebarTab(panel.getAttribute('data-tab'));
+      const panelTabAttr = panel.getAttribute('data-tab');
+      const panelTab = panelTabAttr ? String(panelTabAttr).toLowerCase().trim() : null;
       const isActive = panelTab === targetTab;
       panel.classList.toggle('active', isActive);
       panel.toggleAttribute('hidden', !isActive);
@@ -12946,27 +14022,133 @@
     if (!skipPersist) {
       try { localStorage.setItem('chat_sidebar_tab', targetTab); } catch {}
     }
+    
+    // Load stats when stats tab is activated
+    if (targetTab === 'stats') {
+      loadChatStats();
+    }
+
+    // Refresh tools panel when tools tab is activated
+    if (targetTab === 'tools') {
+      if (!toolsState.items.length && !toolsState.loading) {
+        loadTools();
+      } else {
+        renderChatToolsPanel();
+      }
+    }
+
     return targetTab;
   }
 
-  // Setup sidebar tab event listeners
+  async function loadChatStats() {
+    const panel = document.getElementById('chat-stats-panel');
+    if (!panel) return;
+    
+    panel.innerHTML = '<div class="chat-stats-loading">Loading statistics...</div>';
+    
+    try {
+      const res = await fetch(`${API_BASE}/ai/stats`);
+      if (!res.ok) {
+        panel.innerHTML = '<div class="chat-stats-loading">Failed to load statistics</div>';
+        return;
+      }
+      const stats = await res.json();
+      
+      let html = '';
+      
+      // Overall stats
+      html += '<div class="chat-stats-section">';
+      html += '<h4>Overall Usage</h4>';
+      html += '<div class="chat-stats-grid">';
+      html += `<div class="chat-stat-card">
+        <div class="chat-stat-label">Sessions</div>
+        <div class="chat-stat-value">${stats.total_sessions || 0}</div>
+      </div>`;
+      html += `<div class="chat-stat-card">
+        <div class="chat-stat-label">Messages</div>
+        <div class="chat-stat-value">${stats.total_messages || 0}</div>
+      </div>`;
+      html += `<div class="chat-stat-card">
+        <div class="chat-stat-label">Total Tokens</div>
+        <div class="chat-stat-value">${formatNumber(stats.total_tokens || 0)}</div>
+        <div class="chat-stat-subvalue">${formatNumber(stats.total_prompt_tokens || 0)} prompt + ${formatNumber(stats.total_completion_tokens || 0)} completion</div>
+      </div>`;
+      html += `<div class="chat-stat-card">
+        <div class="chat-stat-label">Total Cost</div>
+        <div class="chat-stat-value">$${(stats.total_cost_usd || 0).toFixed(4)}</div>
+      </div>`;
+      html += '</div></div>';
+      
+      // By model
+      if (stats.by_model && Object.keys(stats.by_model).length > 0) {
+        html += '<div class="chat-stats-section">';
+        html += '<h4>Usage by Model</h4>';
+        html += '<table class="chat-stats-table">';
+        html += '<thead><tr><th>Model</th><th>Messages</th><th>Tokens</th><th>Cost</th></tr></thead><tbody>';
+        for (const [model, data] of Object.entries(stats.by_model)) {
+          html += `<tr>
+            <td>${escapeHtml(model)}</td>
+            <td>${data.messages || 0}</td>
+            <td>${formatNumber(data.total_tokens || 0)}</td>
+            <td>$${(data.cost_usd || 0).toFixed(4)}</td>
+          </tr>`;
+        }
+        html += '</tbody></table></div>';
+      }
+      
+      // By provider
+      if (stats.by_provider && Object.keys(stats.by_provider).length > 0) {
+        html += '<div class="chat-stats-section">';
+        html += '<h4>Usage by Provider</h4>';
+        html += '<table class="chat-stats-table">';
+        html += '<thead><tr><th>Provider</th><th>Messages</th><th>Tokens</th><th>Cost</th></tr></thead><tbody>';
+        for (const [provider, data] of Object.entries(stats.by_provider)) {
+          html += `<tr>
+            <td>${escapeHtml(provider)}</td>
+            <td>${data.messages || 0}</td>
+            <td>${formatNumber(data.total_tokens || 0)}</td>
+            <td>$${(data.cost_usd || 0).toFixed(4)}</td>
+          </tr>`;
+        }
+        html += '</tbody></table></div>';
+      }
+      
+      panel.innerHTML = html || '<div class="chat-stats-loading">No statistics available</div>';
+    } catch (e) {
+      console.error('Failed to load chat stats', e);
+      panel.innerHTML = '<div class="chat-stats-loading">Error loading statistics</div>';
+    }
+  }
+
+  function formatNumber(num) {
+    if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
+    if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
+    return num.toString();
+  }
+
+  // Setup sidebar tab event listeners using event delegation
   function setupChatSidebarTabs() {
-    const tabButtons = document.querySelectorAll('.chat-sidebar-tab');
-    if (!tabButtons.length) return;
-
     const tabContainer = document.querySelector('.chat-sidebar-tabs');
+    if (!tabContainer) {
+      console.warn('Chat sidebar tabs container not found');
+      return;
+    }
 
+    // Use event delegation on the container (only attach once)
     if (!chatSidebarState.tabsReady) {
-      tabContainer?.addEventListener('click', (event) => {
+      // Click handler using event delegation
+      tabContainer.addEventListener('click', (event) => {
         const btn = event.target.closest('.chat-sidebar-tab');
         if (!btn) return;
-        const tabName = btn.getAttribute('data-tab');
-        if (!tabName) return;
         event.preventDefault();
-        switchChatSidebarTab(tabName);
+        const tabName = btn.getAttribute('data-tab');
+        if (tabName) {
+          switchChatSidebarTab(tabName);
+        }
       });
 
-      tabContainer?.addEventListener('keydown', (event) => {
+      // Keyboard navigation
+      tabContainer.addEventListener('keydown', (event) => {
         const target = event.target.closest('.chat-sidebar-tab');
         if (!target) return;
 
@@ -13016,8 +14198,11 @@
     enhancedShowPage(p);
     
     if (p === 'chat') {
-      // Initialize sidebar tabs
-      setupChatSidebarTabs();
+      // Initialize sidebar tabs after a short delay to ensure DOM is ready
+      setTimeout(() => {
+        console.log('Setting up chat sidebar tabs...');
+        setupChatSidebarTabs();
+      }, 100);
       
       // Ensure persistent search options
       ensurePersistentSearchOptions();
@@ -13044,8 +14229,7 @@
   window.loadTokenUsageStats = loadTokenUsageStats;
   window.loadQueueStatus = loadQueueStatus;
   window.switchChatSidebarTab = switchChatSidebarTab;
+  window.setupChatSidebarTabs = setupChatSidebarTabs;
   window.ensurePersistentSearchOptions = ensurePersistentSearchOptions;
-    }
-  });
 })();
 

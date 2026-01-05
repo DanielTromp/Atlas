@@ -160,8 +160,8 @@ async def refresh_task_dataset(dataset_id: str, request: Request) -> dict[str, A
                     extra={
                         "event": "task_warning",
                         "return_code": rc,
-                        "dataset": dataset_id,
-                        "command": command_display,
+                        "dataset_id": dataset_id,
+                        "shell_command": command_display,
                     },
                 )
 

@@ -10,7 +10,9 @@ from __future__ import annotations
 
 from .config import get_database_url, get_engine, get_sessionmaker
 from .models import Base, GlobalAPIKey, SecureSetting, User, UserAPIKey, VCenterConfig
-from .setup import init_database
+
+# Note: init_database is NOT imported here to avoid circular imports with alembic.
+# Import it directly from infrastructure_atlas.db.setup when needed.
 
 __all__ = [
     "Base",
@@ -22,5 +24,4 @@ __all__ = [
     "get_database_url",
     "get_engine",
     "get_sessionmaker",
-    "init_database",
 ]

@@ -14,6 +14,12 @@ from infrastructure_atlas.domain.entities import (
 
 from .admin import AdminService, create_admin_service
 from .chat import DefaultChatHistoryService, create_chat_history_service
+from .draft_tickets import (
+    DraftTicketNotFoundError,
+    DraftTicketService,
+    DraftTicketValidationError,
+    create_draft_ticket_service,
+)
 from .foreman import ForemanService, create_foreman_service
 from .netbox import NetboxExportService
 from .puppet import PuppetService, create_puppet_service
@@ -50,6 +56,9 @@ __all__ = [
     "ChatHistoryService",
     "DefaultChatHistoryService",
     "DefaultUserService",
+    "DraftTicketNotFoundError",
+    "DraftTicketService",
+    "DraftTicketValidationError",
     "ForemanService",
     "NetboxExportService",
     "PuppetService",
@@ -57,6 +66,7 @@ __all__ = [
     "VCenterService",
     "create_admin_service",
     "create_chat_history_service",
+    "create_draft_ticket_service",
     "create_foreman_service",
     "create_puppet_service",
     "create_user_service",

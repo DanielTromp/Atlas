@@ -192,6 +192,66 @@ _TOOL_METADATA: dict[str, dict[str, Any]] = {
         "sample": {},
         "response_fields": ("enabled", "type", "configured", "target"),
     },
+    "ticket_list": {
+        "agent": "tickets",
+        "name": "List Tickets",
+        "summary": "List all ticket proposals in the staging area.",
+        "description": (
+            "Returns all tickets with their status, priority, and metadata. "
+            "Use to review pending proposals before pushing to Jira."
+        ),
+        "tags": ("tickets", "jira", "proposals"),
+        "ai_usage": "Check pending ticket proposals or review approved tickets ready for Jira.",
+        "examples": (
+            "Show all proposed tickets.",
+            "List tickets that have been approved.",
+        ),
+        "sample": {"status": "proposed"},
+        "response_fields": ("tickets[].id", "tickets[].suggested_title", "tickets[].status"),
+        "links": (ToolLink(label="Tickets UI", url="/app/#drafts"),),
+    },
+    "ticket_create": {
+        "agent": "tickets",
+        "name": "Create Ticket",
+        "summary": "Create a new ticket proposal for review.",
+        "description": (
+            "Stage a new ticket proposal with title, description, priority, and labels. "
+            "Tickets start in 'proposed' status and must be approved before pushing to Jira."
+        ),
+        "tags": ("tickets", "jira", "proposals"),
+        "ai_usage": "Propose infrastructure changes, report issues, or suggest improvements.",
+        "examples": (
+            "Create a ticket to upgrade the database server.",
+            "Propose a ticket for the memory leak investigation.",
+        ),
+        "sample": {"title": "Upgrade database server", "priority": "high", "labels": ["infrastructure", "database"]},
+        "response_fields": ("id", "suggested_title", "status"),
+    },
+    "ticket_get": {
+        "agent": "tickets",
+        "name": "Get Ticket",
+        "summary": "Get details of a specific ticket by ID.",
+        "description": ("Retrieve full ticket details including AI proposal, source context, and linked Jira issues."),
+        "tags": ("tickets", "jira"),
+        "ai_usage": "Review ticket details before approval or to check linked Jira issues.",
+        "examples": ("Get ticket details for review.",),
+        "sample": {"ticket_id": "abc-123"},
+        "response_fields": ("id", "suggested_title", "suggested_description", "status", "linked_jira_key"),
+    },
+    "ticket_search": {
+        "agent": "tickets",
+        "name": "Search Tickets",
+        "summary": "Search tickets by keyword in title and description.",
+        "description": ("Find tickets matching a search query across titles and descriptions."),
+        "tags": ("tickets", "search"),
+        "ai_usage": "Find related tickets before creating duplicates or to gather context.",
+        "examples": (
+            "Search for tickets about database issues.",
+            "Find tickets mentioning network outage.",
+        ),
+        "sample": {"query": "database"},
+        "response_fields": ("tickets[].id", "tickets[].suggested_title", "tickets[].status"),
+    },
 }
 
 _TOOL_REGISTRY = build_tool_registry()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
@@ -98,13 +99,90 @@ def _zbx_expand_groupids(base_group_ids: list[int]) -> list[int]:
     return list(expanded)
 
 
+@router.get("/groups")
+def zabbix_groups(
+    name: str = Query(..., description="Group name or pattern to search for (use * for wildcards)"),
+    limit: int = Query(50, ge=1, le=200),
+):
+    """Search Zabbix host groups by name."""
+    require_zabbix_enabled()
+
+    client = _zabbix_client()
+    params: dict[str, Any] = {
+        "output": ["groupid", "name"],
+        "sortfield": "name",
+        "limit": limit,
+        "search": {"name": name},
+        "searchWildcardsEnabled": True,
+    }
+
+    try:
+        result = client.rpc("hostgroup.get", params)
+    except ZabbixAuthError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    except ZabbixError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    groups = []
+    if isinstance(result, list):
+        for item in result:
+            groupid = item.get("groupid")
+            group_name = item.get("name", "")
+            if groupid and group_name:
+                groups.append({"groupid": int(groupid), "name": group_name})
+
+    return {"groups": groups, "count": len(groups)}
+
+
+@router.get("/host/search")
+def zabbix_host_search(
+    name: str = Query(..., description="Host name or pattern to search for"),
+    limit: int = Query(20, ge=1, le=200),
+):
+    """Search Zabbix hosts by name."""
+    require_zabbix_enabled()
+
+    client = _zabbix_client()
+    params: dict[str, Any] = {
+        "output": ["hostid", "host", "name", "status"],
+        "sortfield": "name",
+        "limit": limit,
+        "search": {"name": name},
+        "searchWildcardsEnabled": True,
+    }
+
+    try:
+        result = client.rpc("host.get", params)
+    except ZabbixAuthError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    except ZabbixError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    hosts = []
+    if isinstance(result, list):
+        for item in result:
+            hostid = item.get("hostid")
+            hostname = item.get("host", "")
+            display_name = item.get("name", hostname)
+            status = item.get("status", "0")
+            if hostid:
+                hosts.append({
+                    "hostid": int(hostid),
+                    "host": hostname,
+                    "name": display_name,
+                    "status": "enabled" if status == "0" else "disabled",
+                })
+
+    return {"hosts": hosts, "count": len(hosts)}
+
+
 @router.get("/problems")
 def zabbix_problems(
     severities: str | None = Query(None, description="Comma-separated severities 0..5 (e.g. '2,3,4')"),
     groupids: str | None = Query(None, description="Comma-separated group IDs"),
     hostids: str | None = Query(None, description="Comma-separated host IDs"),
     unacknowledged: int = Query(0, ge=0, le=1),
-    suppressed: int = Query(0, ge=0, le=1),
+    suppressed: int | None = Query(None, ge=0, le=1, description="Filter by suppression: None=all, 0=non-suppressed, 1=suppressed"),
     limit: int = Query(300, ge=1, le=2000),
     include_subgroups: int = Query(0, ge=0, le=1, description="When filtering by groupids, include all subgroup IDs"),
 ):
@@ -171,9 +249,11 @@ def zabbix_problems(
                 "suppressed": int(problem.suppressed),
                 "status": problem.status,
                 "host": problem.host_name,
+                "host_groups": [{"groupid": g.id, "name": g.name} for g in problem.host_groups],
                 "hostid": problem.host_id,
                 "host_url": problem.host_url,
                 "problem_url": problem.problem_url,
+                "duration": problem.duration,
             }
         )
     return {"items": rows, "count": len(rows)}
@@ -330,9 +410,11 @@ def zabbix_history(
                 "suppressed": int(problem.suppressed),
                 "status": problem.status,
                 "host": problem.host_name,
+                "host_groups": [{"groupid": g.id, "name": g.name} for g in problem.host_groups],
                 "hostid": problem.host_id,
                 "host_url": problem.host_url,
                 "problem_url": problem.problem_url,
+                "duration": problem.duration,
             }
         )
 

@@ -74,7 +74,8 @@ from infrastructure_atlas.application.services.suggestions import (
     get_suggestion_backend_type,
     migrate_csv_to_airtable,
 )
-from infrastructure_atlas.db import get_sessionmaker, init_database
+from infrastructure_atlas.db import get_sessionmaker
+from infrastructure_atlas.db.setup import init_database
 from infrastructure_atlas.db.models import (
     ChatMessage,
     ChatSession,

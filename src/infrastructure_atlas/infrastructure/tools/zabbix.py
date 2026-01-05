@@ -181,9 +181,11 @@ class ZabbixProblemsTool(AtlasTool):
                     "clock": problem.clock,
                     "clock_iso": problem.clock_iso,
                     "host": problem.host_name,
+                    "host_groups": [g.name for g in problem.host_groups],
                     "hostid": problem.host_id,
                     "host_url": problem.host_url,
                     "problem_url": problem.problem_url,
+                    "duration": problem.duration,
                     "tags": list(problem.tags),
                 }
             )
@@ -272,9 +274,11 @@ class ZabbixHistoryTool(AtlasTool):
                     "clock": problem.clock,
                     "clock_iso": problem.clock_iso,
                     "host": problem.host_name,
+                    "host_groups": [g.name for g in problem.host_groups],
                     "hostid": problem.host_id,
                     "host_url": problem.host_url,
                     "problem_url": problem.problem_url,
+                    "duration": problem.duration,
                     "tags": list(problem.tags),
                 }
             )

@@ -149,6 +149,7 @@ from .interfaces.cli import netbox as netbox_cli
 from .interfaces.cli import search as search_cli
 from .interfaces.cli import server as server_cli
 from .interfaces.cli import tasks as tasks_cli
+from .interfaces.cli import tickets as tickets_cli
 from .interfaces.cli import users as users_cli_module
 from .interfaces.cli import zabbix as zabbix_cli
 
@@ -167,6 +168,7 @@ def _register_cli_commands() -> None:
     app.add_typer(search_cli.app, name="search")
     app.add_typer(database_cli.app, name="db")
     app.add_typer(users_cli_module.app, name="users")
+    app.add_typer(tickets_cli.app, name="tickets")
 
     # Module-specific commands (conditional)
     if registry.is_enabled("netbox"):

@@ -10,6 +10,10 @@ from infrastructure_atlas.infrastructure.tools import (
     AdminBackupStatusTool,
     AdminConfigSurveyTool,
     ConfluenceSearchTool,
+    DraftTicketCreateTool,
+    DraftTicketGetTool,
+    DraftTicketListTool,
+    DraftTicketSearchTool,
     ExportRunTool,
     ExportStatusTool,
     JiraSearchTool,
@@ -38,5 +42,9 @@ def build_tool_registry() -> dict[str, BaseTool]:
         "export_status_overview": ExportStatusTool,
         "admin_config_overview": AdminConfigSurveyTool,
         "admin_backup_status": AdminBackupStatusTool,
+        "ticket_list": DraftTicketListTool,
+        "ticket_create": DraftTicketCreateTool,
+        "ticket_get": DraftTicketGetTool,
+        "ticket_search": DraftTicketSearchTool,
     }
     return {key: factory() for key, factory in factories.items()}

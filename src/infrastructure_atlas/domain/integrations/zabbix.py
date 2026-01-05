@@ -53,6 +53,8 @@ class ZabbixProblem:
     host_url: str | None
     problem_url: str | None
     tags: tuple[Mapping[str, JSONValue], ...]
+    host_groups: tuple[ZabbixHostGroup, ...] = ()
+    duration: str | None = None
 
 
 @dataclass(slots=True)

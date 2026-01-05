@@ -16,19 +16,21 @@ from infrastructure_atlas.interfaces.api.routes.commvault import (
 if __name__ == "__main__":
     errors = []
 
-    # Calculate since_hours based on cache age
-    # Default to 30 days, but extend if cache is older
-    since_hours = 30 * 24  # 30 days default
+    since_hours = 30 * 24  # 30 days default (fallback if no cache)
     try:
         cache = _load_commvault_backups()
         generated_at_str = cache.get("generated_at")
         if generated_at_str:
             generated_at = datetime.fromisoformat(generated_at_str.replace("Z", "+00:00"))
             age_hours = int((datetime.now(UTC) - generated_at).total_seconds() / 3600)
-            # Add 24 hours buffer to ensure we overlap with existing cache
-            since_hours = max(since_hours, age_hours + 24)
+            # If we have a cache, only fetch what we need plus a buffer
+            # Default to 24h minimum overlap to catch late-arriving jobs
+            since_hours = max(24, age_hours + 24)
             print(f"Cache is {age_hours} hours old, fetching last {since_hours} hours")
+        else:
+             print(f"Cache has no timestamp, performing full refresh ({since_hours} hours)")
     except Exception:
+        print(f"Cache not found or invalid, performing full refresh ({since_hours} hours)")
         pass
 
     # Refresh backups (with merge logic)

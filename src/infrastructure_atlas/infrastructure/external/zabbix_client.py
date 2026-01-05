@@ -19,6 +19,25 @@ from infrastructure_atlas.domain.integrations import (
 from infrastructure_atlas.domain.integrations.zabbix import JSONValue
 
 
+def _format_duration(clock: int) -> str:
+    """Format duration since problem started."""
+    now_ts = int(datetime.now(UTC).timestamp())
+    seconds = max(0, now_ts - max(0, clock))
+    days, remainder = divmod(seconds, 86_400)
+    hours, remainder = divmod(remainder, 3_600)
+    minutes, secs = divmod(remainder, 60)
+    parts: list[str] = []
+    if days:
+        parts.append(f"{days}d")
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    if not days and not hours and not minutes:
+        parts.append(f"{secs}s")
+    return " ".join(parts) if parts else "0s"
+
+
 def _safe_int(value: Any) -> int:
     try:
         return int(value)
@@ -209,6 +228,35 @@ class ZabbixClient:
                             "name": _val(first, "name"),
                         }
 
+        # Fetch host groups for all unique host IDs
+        host_groups_by_id: dict[str, tuple[ZabbixHostGroup, ...]] = {}
+        all_host_ids = list({str(v.get("hostid")) for v in host_by_trigger.values() if v.get("hostid")})
+        if all_host_ids:
+            try:
+                hosts_with_groups = self.rpc(
+                    "host.get",
+                    {
+                        "output": ["hostid"],
+                        "hostids": all_host_ids,
+                        "selectGroups": ["groupid", "name"],
+                    },
+                )
+            except ZabbixError:
+                hosts_with_groups = []
+            if isinstance(hosts_with_groups, Sequence):
+                for host_item in hosts_with_groups:
+                    hid = str(_val(host_item, "hostid") or "")
+                    groups_raw = host_item.get("groups") if isinstance(host_item, Mapping) else []
+                    if isinstance(groups_raw, Sequence):
+                        host_groups_by_id[hid] = tuple(
+                            ZabbixHostGroup(
+                                id=str(_val(g, "groupid") or ""),
+                                name=str(_val(g, "name") or ""),
+                            )
+                            for g in groups_raw
+                            if isinstance(g, Mapping) and _val(g, "name")
+                        )
+
         for item in res if isinstance(res, Sequence) else []:
             clock = int(_val(item, "clock") or 0)
             event_id = str(_val(item, "eventid") or "")
@@ -223,6 +271,9 @@ class ZabbixClient:
             host_url = f"{base_web}/zabbix.php?action=host.view&hostid={host_id}" if base_web and host_id else None
             problem_url = f"{base_web}/zabbix.php?action=problem.view&eventid={event_id}" if base_web and event_id else None
             status = "RESOLVED" if str(_val(item, "r_eventid") or "0") not in {"0", "", "None"} else "PROBLEM"
+            # Get host groups for this problem's host
+            problem_host_groups = host_groups_by_id.get(str(host_id), ()) if host_id else ()
+
             problems.append(
                 ZabbixProblem(
                     event_id=event_id,
@@ -239,6 +290,8 @@ class ZabbixClient:
                     host_url=host_url,
                     problem_url=problem_url,
                     tags=_tuple_tags(item.get("tags")),
+                    host_groups=problem_host_groups,
+                    duration=_format_duration(clock) if clock else None,
                 )
             )
         problems.sort(key=lambda p: p.clock, reverse=True)

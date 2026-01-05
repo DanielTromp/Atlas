@@ -65,6 +65,16 @@
             </button>
           </div>
           <nav class="sidebar-nav" id="pages" aria-label="Pages">
+            <div class="sidebar-group" data-page="chat">
+              <button class="tab sidebar-item" data-page="chat" type="button">
+                <span class="sidebar-item-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M8.625 12a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H8.25m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H12m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 0 1-2.555-.337A5.972 5.972 0 0 1 5.41 20.97a5.969 5.969 0 0 1-.474-.065 4.48 4.48 0 0 0 .978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25Z"></path>
+                  </svg>
+                </span>
+                <span class="sidebar-item-label">AI Chat</span>
+              </button>
+            </div>
             <div class="sidebar-group" data-page="search">
               <button class="tab sidebar-item" data-page="search" type="button">
                 <span class="sidebar-item-icon" aria-hidden="true">
@@ -103,6 +113,16 @@
                   </svg>
                 </span>
                 <span class="sidebar-item-label">Jira</span>
+              </button>
+            </div>
+            <div class="sidebar-group" data-page="drafts">
+              <button class="tab sidebar-item" data-page="drafts" type="button">
+                <span class="sidebar-item-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"></path>
+                  </svg>
+                </span>
+                <span class="sidebar-item-label">Tickets</span>
               </button>
             </div>
             <div class="sidebar-group" data-page="confluence">
@@ -276,6 +296,88 @@
           </div>
         </header>
         <main class="main" id="main-content">
+      <!-- AI Chat Page -->
+      <section class="page" id="page-chat" hidden>
+        <div class="panel panel-chat">
+          <div class="chat-layout">
+            <div class="chat-main">
+              <div class="chat-header">
+                <h2>AI Chat</h2>
+                <div class="chat-controls">
+                  <label class="field">
+                    <span>Provider</span>
+                    <select id="chat-provider">
+                      <option value="azure_openai">Azure OpenAI</option>
+                      <option value="openai">OpenAI</option>
+                      <option value="anthropic">Anthropic</option>
+                      <option value="openrouter">OpenRouter</option>
+                      <option value="gemini">Google Gemini</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>Model</span>
+                    <select id="chat-model">
+                      <option value="">Default</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <input id="chat-stream" type="checkbox" checked />
+                    <span>Stream</span>
+                  </label>
+                  <label class="field">
+                    <input id="chat-include-data" type="checkbox" />
+                    <span>Enable tools</span>
+                  </label>
+                  <button id="chat-new" class="btn" type="button">New chat</button>
+                </div>
+              </div>
+              <div id="chat-messages" class="chat-messages"></div>
+              <div class="chat-input-area">
+                <textarea id="chat-input" class="chat-input" placeholder="Ask me anything about your infrastructure..." rows="2"></textarea>
+                <button id="chat-send" class="btn chat-send" type="button">Send</button>
+              </div>
+            </div>
+            <aside class="chat-sidebar">
+              <div class="chat-sidebar-header">
+                <nav class="chat-sidebar-tabs" role="tablist">
+                  <button type="button" class="chat-sidebar-tab active" data-tab="sessions" role="tab" onclick="switchChatSidebarTab('sessions')">Sessions</button>
+                  <button type="button" class="chat-sidebar-tab" data-tab="stats" role="tab" onclick="switchChatSidebarTab('stats')">Stats</button>
+                  <button type="button" class="chat-sidebar-tab" data-tab="tools" role="tab" onclick="switchChatSidebarTab('tools')">Tools</button>
+                  <button type="button" class="chat-sidebar-tab" data-tab="commands" role="tab" onclick="switchChatSidebarTab('commands')">Commands</button>
+                </nav>
+              </div>
+              <div class="chat-sidebar-panels">
+                <div class="chat-sidebar-panel active" data-tab="sessions">
+                  <div id="chat-sessions" class="chat-sessions"></div>
+                </div>
+                <div class="chat-sidebar-panel" data-tab="stats" hidden>
+                  <div id="chat-stats-panel" class="chat-stats-panel">
+                    <div class="chat-stats-loading">Loading statistics...</div>
+                  </div>
+                </div>
+                <div class="chat-sidebar-panel" data-tab="tools" hidden>
+                  <div id="chat-tools-panel" class="chat-tools-panel">
+                    <div id="chat-tools-list" class="chat-tools-list">Tools will load automatically.</div>
+                  </div>
+                </div>
+                <div class="chat-sidebar-panel" data-tab="commands" hidden>
+                  <div class="chat-commands-list">
+                    <div class="chat-command-item"><code>/help</code> - Show available commands</div>
+                    <div class="chat-command-item"><code>/tools</code> - List available tools</div>
+                    <div class="chat-command-item"><code>/models</code> - Show available models</div>
+                    <div class="chat-command-item"><code>/providers</code> - List configured providers</div>
+                    <div class="chat-command-item"><code>/clear</code> - Clear conversation history</div>
+                    <div class="chat-command-item"><code>/search &lt;query&gt;</code> - Search infrastructure</div>
+                    <div class="chat-command-item"><code>/alerts</code> - Get current alerts</div>
+                    <div class="chat-command-item"><code>/status</code> - Get system status</div>
+                  </div>
+                </div>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </section>
+
       <!-- Search Page -->
       <section class="page" id="page-search" hidden>
         <div class="panel">
@@ -804,12 +906,15 @@
             <button class="admin-tab" data-admin-tab="net-atlassian">NetBox &amp; Atlassian</button>
             <button class="admin-tab" data-admin-tab="export">Export</button>
             <button class="admin-tab" data-admin-tab="api">API &amp; UI</button>
+            <button class="admin-tab" data-admin-tab="ai">AI Chat</button>
             <button class="admin-tab" data-admin-tab="vcenter">vCenter</button>
             <button class="admin-tab" data-admin-tab="foreman">Foreman</button>
             <button class="admin-tab" data-admin-tab="puppet">Puppet</button>
             <button class="admin-tab" data-admin-tab="users">Users</button>
             <button class="admin-tab" data-admin-tab="suggestions">Suggestions</button>
             <button class="admin-tab" data-admin-tab="backup">Backup</button>
+            <button class="admin-tab" data-admin-tab="ai-usage">AI Usage</button>
+            <button class="admin-tab" data-admin-tab="ai-activity">API Activity</button>
           </nav>
           <div id="admin-settings" class="admin-panels">
             <section id="admin-panel-zabbix" class="admin-panel active" data-admin-tab="zabbix">
@@ -823,6 +928,231 @@
             </section>
             <section id="admin-panel-api" class="admin-panel" data-admin-tab="api">
               <div id="admin-settings-api" class="admin-settings-group"></div>
+            </section>
+            <section id="admin-panel-ai" class="admin-panel" data-admin-tab="ai">
+              <div class="admin-ai-section">
+                <!-- Default Chat Settings -->
+                <div class="admin-ai-defaults">
+                  <h3>Default Chat Settings</h3>
+                  <p class="admin-hint">Configure default parameters for AI chat. These can be overridden per conversation.</p>
+                  
+                  <div class="admin-ai-defaults-grid">
+                    <label class="field column">
+                      <span>Default Provider</span>
+                      <select id="admin-ai-default-provider">
+                        <option value="openrouter">OpenRouter</option>
+                        <option value="azure_openai">Azure OpenAI</option>
+                        <option value="openai">OpenAI</option>
+                        <option value="anthropic">Anthropic</option>
+                        <option value="gemini">Google Gemini</option>
+                      </select>
+                    </label>
+                    
+                    <label class="field column">
+                      <span>Max Tokens</span>
+                      <input id="admin-ai-max-tokens" type="number" min="100" max="128000" step="100" value="16384" placeholder="16384" />
+                      <small>Maximum response length (100-128000)</small>
+                    </label>
+                    
+                    <label class="field column">
+                      <span>Temperature</span>
+                      <input id="admin-ai-temperature" type="number" min="0" max="2" step="0.1" value="0.7" placeholder="0.7" />
+                      <small>Creativity (0 = focused, 2 = creative)</small>
+                    </label>
+                    
+                    <label class="field column">
+                      <span>System Prompt</span>
+                      <textarea id="admin-ai-system-prompt" rows="3" placeholder="Optional: Custom instructions for the AI assistant..."></textarea>
+                    </label>
+                    
+                    <div class="admin-ai-toggles">
+                      <label class="toggle-field">
+                        <input id="admin-ai-tools-enabled" type="checkbox" checked />
+                        <span>Enable Tool Calling</span>
+                        <small>Allow AI to use Atlas tools (search, export, etc.)</small>
+                      </label>
+                      
+                      <label class="toggle-field">
+                        <input id="admin-ai-streaming-enabled" type="checkbox" checked />
+                        <span>Enable Streaming</span>
+                        <small>Stream responses in real-time</small>
+                      </label>
+                    </div>
+                  </div>
+                  
+                  <div class="admin-ai-actions" style="margin-top: 12px;">
+                    <button id="admin-ai-defaults-save" class="btn" type="button">Save Defaults</button>
+                    <button id="admin-ai-defaults-reset" class="btn ghost" type="button">Reset to Defaults</button>
+                    <span id="admin-ai-defaults-status" class="admin-ai-status"></span>
+                  </div>
+                </div>
+
+                <hr class="admin-ai-divider" />
+
+                <h3>AI Provider Configuration</h3>
+                <p class="admin-hint">Configure API keys for AI chat providers. Keys are stored securely and used for chat completions.</p>
+                
+                <div class="admin-ai-providers" id="admin-ai-providers">
+                  <!-- Azure OpenAI -->
+                  <div class="admin-ai-provider" data-provider="azure_openai">
+                    <div class="admin-ai-provider-header">
+                      <h4>Azure OpenAI</h4>
+                      <span id="admin-ai-azure-status" class="admin-ai-status"></span>
+                    </div>
+                    <div class="admin-ai-provider-form">
+                      <label class="field column">
+                        <span>API Key</span>
+                        <input id="admin-ai-azure-key" type="password" placeholder="Azure OpenAI API Key" />
+                      </label>
+                      <label class="field column">
+                        <span>Endpoint</span>
+                        <input id="admin-ai-azure-endpoint" type="url" placeholder="https://your-resource.openai.azure.com/" />
+                      </label>
+                      <label class="field column">
+                        <span>Deployment Name</span>
+                        <input id="admin-ai-azure-deployment" type="text" placeholder="gpt-4o-mini" />
+                      </label>
+                      <div class="admin-ai-actions">
+                        <button id="admin-ai-azure-save" class="btn" type="button">Save</button>
+                        <button id="admin-ai-azure-test" class="btn ghost" type="button">Test</button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- OpenRouter -->
+                  <div class="admin-ai-provider" data-provider="openrouter">
+                    <div class="admin-ai-provider-header">
+                      <h4>OpenRouter</h4>
+                      <span id="admin-ai-openrouter-status" class="admin-ai-status"></span>
+                    </div>
+                    <div class="admin-ai-provider-form">
+                      <label class="field column">
+                        <span>API Key</span>
+                        <input id="admin-ai-openrouter-key" type="password" placeholder="OpenRouter API Key (sk-or-...)" />
+                      </label>
+                      <label class="field column">
+                        <span>Default Model</span>
+                        <select id="admin-ai-openrouter-model">
+                          <option value="openai/gpt-5-mini">GPT-5 Mini</option>
+                          <option value="openai/gpt-5-nano">GPT-5 Nano</option>
+                          <option value="openai/gpt-5.2">GPT-5.2</option>
+                          <option value="openai/gpt-4o-mini">GPT-4o Mini</option>
+                          <option value="openai/gpt-4o">GPT-4o</option>
+                          <option value="openai/gpt-oss-120b">GPT-OSS 120B</option>
+                          <option value="anthropic/claude-opus-4.5">Claude Opus 4.5</option>
+                          <option value="anthropic/claude-sonnet-4.5">Claude Sonnet 4.5</option>
+                          <option value="anthropic/claude-haiku-4.5">Claude Haiku 4.5</option>
+                          <option value="anthropic/claude-sonnet-4">Claude Sonnet 4</option>
+                          <option value="anthropic/claude-3.5-sonnet">Claude 3.5 Sonnet</option>
+                          <option value="anthropic/claude-3.5-haiku">Claude 3.5 Haiku</option>
+                          <option value="google/gemini-2.5-flash">Gemini 2.5 Flash</option>
+                          <option value="google/gemini-pro-1.5">Gemini 1.5 Pro</option>
+                          <option value="google/gemini-flash-1.5">Gemini 1.5 Flash</option>
+                          <option value="x-ai/grok-4.1-fast">Grok 4.1 Fast</option>
+                          <option value="meta-llama/llama-3.1-70b-instruct">Llama 3.1 70B</option>
+                          <option value="mistralai/mistral-large">Mistral Large</option>
+                          <option value="deepseek/deepseek-v3.2">DeepSeek v3.2</option>
+                          <option value="deepseek/deepseek-chat">DeepSeek Chat</option>
+                        </select>
+                      </label>
+                      <div class="admin-ai-actions">
+                        <button id="admin-ai-openrouter-save" class="btn" type="button">Save</button>
+                        <button id="admin-ai-openrouter-test" class="btn ghost" type="button">Test</button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- OpenAI -->
+                  <div class="admin-ai-provider" data-provider="openai">
+                    <div class="admin-ai-provider-header">
+                      <h4>OpenAI</h4>
+                      <span id="admin-ai-openai-status" class="admin-ai-status"></span>
+                    </div>
+                    <div class="admin-ai-provider-form">
+                      <label class="field column">
+                        <span>API Key</span>
+                        <input id="admin-ai-openai-key" type="password" placeholder="OpenAI API Key (sk-...)" />
+                      </label>
+                      <label class="field column">
+                        <span>Default Model</span>
+                        <select id="admin-ai-openai-model">
+                          <option value="gpt-4o-mini">GPT-4o Mini</option>
+                          <option value="gpt-4o">GPT-4o</option>
+                          <option value="gpt-4-turbo">GPT-4 Turbo</option>
+                          <option value="gpt-3.5-turbo">GPT-3.5 Turbo</option>
+                        </select>
+                      </label>
+                      <div class="admin-ai-actions">
+                        <button id="admin-ai-openai-save" class="btn" type="button">Save</button>
+                        <button id="admin-ai-openai-test" class="btn ghost" type="button">Test</button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Anthropic -->
+                  <div class="admin-ai-provider" data-provider="anthropic">
+                    <div class="admin-ai-provider-header">
+                      <h4>Anthropic (Claude)</h4>
+                      <span id="admin-ai-anthropic-status" class="admin-ai-status"></span>
+                    </div>
+                    <div class="admin-ai-provider-form">
+                      <label class="field column">
+                        <span>API Key</span>
+                        <input id="admin-ai-anthropic-key" type="password" placeholder="Anthropic API Key" />
+                      </label>
+                      <label class="field column">
+                        <span>Default Model</span>
+                        <select id="admin-ai-anthropic-model">
+                          <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet</option>
+                          <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku</option>
+                          <option value="claude-3-opus-20240229">Claude 3 Opus</option>
+                        </select>
+                      </label>
+                      <div class="admin-ai-actions">
+                        <button id="admin-ai-anthropic-save" class="btn" type="button">Save</button>
+                        <button id="admin-ai-anthropic-test" class="btn ghost" type="button">Test</button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Google Gemini -->
+                  <div class="admin-ai-provider" data-provider="gemini">
+                    <div class="admin-ai-provider-header">
+                      <h4>Google Gemini</h4>
+                      <span id="admin-ai-gemini-status" class="admin-ai-status"></span>
+                    </div>
+                    <div class="admin-ai-provider-form">
+                      <label class="field column">
+                        <span>API Key</span>
+                        <input id="admin-ai-gemini-key" type="password" placeholder="Google AI API Key" />
+                      </label>
+                      <label class="field column">
+                        <span>Default Model</span>
+                        <select id="admin-ai-gemini-model">
+                          <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+                          <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                          <option value="gemini-pro">Gemini Pro</option>
+                        </select>
+                      </label>
+                      <div class="admin-ai-actions">
+                        <button id="admin-ai-gemini-save" class="btn" type="button">Save</button>
+                        <button id="admin-ai-gemini-test" class="btn ghost" type="button">Test</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="admin-ai-info">
+                  <h4>Quick Setup</h4>
+                  <p>Get API keys from:</p>
+                  <ul>
+                    <li><a href="https://openrouter.ai/keys" target="_blank" rel="noopener">OpenRouter</a> - Access multiple models with one key</li>
+                    <li><a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">OpenAI</a> - GPT-4, GPT-4o models</li>
+                    <li><a href="https://console.anthropic.com/" target="_blank" rel="noopener">Anthropic</a> - Claude models</li>
+                    <li><a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">Google AI Studio</a> - Gemini models</li>
+                  </ul>
+                </div>
+              </div>
             </section>
             <section id="admin-panel-vcenter" class="admin-panel" data-admin-tab="vcenter">
               <div class="admin-vcenter-header">
@@ -1195,6 +1525,247 @@
                 </div>
               </div>
             </section>
+
+            <!-- AI Usage Panel -->
+            <section id="admin-panel-ai-usage" class="admin-panel" data-admin-tab="ai-usage">
+              <div class="admin-ai-usage">
+                <h3>AI Usage Dashboard</h3>
+                <p class="admin-hint">Monitor API usage, costs, and manage model configurations.</p>
+
+                <!-- Usage Stats Summary -->
+                <div class="ai-usage-summary">
+                  <div class="ai-usage-cards" id="ai-usage-cards">
+                    <div class="ai-usage-card">
+                      <span class="card-label">Today</span>
+                      <span class="card-value" id="ai-usage-today-cost">$0.00</span>
+                      <span class="card-detail" id="ai-usage-today-requests">0 requests</span>
+                    </div>
+                    <div class="ai-usage-card">
+                      <span class="card-label">This Week</span>
+                      <span class="card-value" id="ai-usage-week-cost">$0.00</span>
+                      <span class="card-detail" id="ai-usage-week-requests">0 requests</span>
+                    </div>
+                    <div class="ai-usage-card">
+                      <span class="card-label">This Month</span>
+                      <span class="card-value" id="ai-usage-month-cost">$0.00</span>
+                      <span class="card-detail" id="ai-usage-month-requests">0 requests</span>
+                    </div>
+                    <div class="ai-usage-card">
+                      <span class="card-label">Total</span>
+                      <span class="card-value" id="ai-usage-total-cost">$0.00</span>
+                      <span class="card-detail" id="ai-usage-total-requests">0 requests</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Top Models -->
+                <div class="ai-usage-top-models">
+                  <h4>Top Models (Last 30 Days)</h4>
+                  <table class="ai-usage-table" id="ai-usage-top-models-table">
+                    <thead>
+                      <tr>
+                        <th>Provider</th>
+                        <th>Model</th>
+                        <th>Requests</th>
+                        <th>Tokens</th>
+                        <th>Cost</th>
+                      </tr>
+                    </thead>
+                    <tbody id="ai-usage-top-models-body">
+                      <tr><td colspan="5" class="loading">Loading...</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <hr class="admin-ai-divider" />
+
+                <!-- Model Configuration -->
+                <div class="ai-model-config">
+                  <div class="ai-model-config-header">
+                    <h4>Custom Model Configurations</h4>
+                    <button id="ai-model-add" class="btn" type="button">+ Add Model</button>
+                  </div>
+                  <p class="admin-hint">Override pricing or configure custom models. These settings take priority over built-in pricing.</p>
+
+                  <table class="ai-usage-table" id="ai-model-config-table">
+                    <thead>
+                      <tr>
+                        <th>Provider</th>
+                        <th>Model ID</th>
+                        <th>Input $/1M</th>
+                        <th>Output $/1M</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="ai-model-config-body">
+                      <tr><td colspan="6" class="empty">No custom configurations. Using built-in pricing.</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <!-- Add/Edit Model Form -->
+                <div id="ai-model-form-container" class="ai-model-form hidden">
+                  <h4 id="ai-model-form-title">Add Model Configuration</h4>
+                  <form id="ai-model-form">
+                    <input type="hidden" id="ai-model-id" />
+                    <div class="ai-model-form-grid">
+                      <label class="field column">
+                        <span>Provider</span>
+                        <select id="ai-model-provider" required>
+                          <option value="openrouter">OpenRouter</option>
+                          <option value="openai">OpenAI</option>
+                          <option value="anthropic">Anthropic</option>
+                          <option value="azure_openai">Azure OpenAI</option>
+                          <option value="gemini">Google Gemini</option>
+                        </select>
+                      </label>
+                      <label class="field column">
+                        <span>Model ID</span>
+                        <input id="ai-model-model-id" type="text" placeholder="openai/gpt-4o-mini" required />
+                      </label>
+                      <label class="field column">
+                        <span>Display Name (optional)</span>
+                        <input id="ai-model-display-name" type="text" placeholder="GPT-4o Mini" />
+                      </label>
+                      <label class="field column">
+                        <span>Input Price ($/1M tokens)</span>
+                        <input id="ai-model-price-input" type="number" step="0.001" min="0" value="0" />
+                      </label>
+                      <label class="field column">
+                        <span>Output Price ($/1M tokens)</span>
+                        <input id="ai-model-price-output" type="number" step="0.001" min="0" value="0" />
+                      </label>
+                      <label class="field column">
+                        <span>Context Window</span>
+                        <input id="ai-model-context" type="number" min="0" placeholder="128000" />
+                      </label>
+                    </div>
+                    <div class="ai-model-toggles">
+                      <label class="toggle-field">
+                        <input id="ai-model-active" type="checkbox" checked />
+                        <span>Active</span>
+                      </label>
+                      <label class="toggle-field">
+                        <input id="ai-model-preferred" type="checkbox" />
+                        <span>Preferred</span>
+                      </label>
+                      <label class="toggle-field">
+                        <input id="ai-model-tools" type="checkbox" checked />
+                        <span>Supports Tools</span>
+                      </label>
+                      <label class="toggle-field">
+                        <input id="ai-model-streaming" type="checkbox" checked />
+                        <span>Supports Streaming</span>
+                      </label>
+                      <label class="toggle-field">
+                        <input id="ai-model-vision" type="checkbox" />
+                        <span>Supports Vision</span>
+                      </label>
+                    </div>
+                    <div class="ai-model-actions">
+                      <button type="button" id="ai-model-lookup" class="btn ghost">Lookup Pricing</button>
+                      <button type="submit" class="btn">Save</button>
+                      <button type="button" id="ai-model-cancel" class="btn ghost">Cancel</button>
+                      <span id="ai-model-status" class="form-status"></span>
+                    </div>
+                  </form>
+                </div>
+
+                <hr class="admin-ai-divider" />
+
+                <!-- Built-in Pricing Reference -->
+                <div class="ai-pricing-reference">
+                  <h4>Built-in Pricing Reference</h4>
+                  <p class="admin-hint">Default pricing used when no custom configuration exists.</p>
+                  <table class="ai-usage-table" id="ai-pricing-table">
+                    <thead>
+                      <tr>
+                        <th>Model</th>
+                        <th>Input $/1M</th>
+                        <th>Output $/1M</th>
+                      </tr>
+                    </thead>
+                    <tbody id="ai-pricing-body">
+                      <tr><td colspan="3" class="loading">Loading...</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <!-- API Activity Panel -->
+            <section id="admin-panel-ai-activity" class="admin-panel" data-admin-tab="ai-activity">
+              <div class="admin-ai-activity">
+                <h3>API Activity Log</h3>
+                <p class="admin-hint">Historical log of all AI API calls. Similar to OpenRouter's activity page.</p>
+
+                <!-- Filters -->
+                <div class="ai-activity-filters">
+                  <label class="field">
+                    <span>Provider</span>
+                    <select id="ai-activity-provider">
+                      <option value="">All Providers</option>
+                      <option value="openrouter">OpenRouter</option>
+                      <option value="openai">OpenAI</option>
+                      <option value="anthropic">Anthropic</option>
+                      <option value="azure_openai">Azure OpenAI</option>
+                      <option value="gemini">Google Gemini</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>Model</span>
+                    <input id="ai-activity-model" type="text" placeholder="Filter by model..." />
+                  </label>
+                  <label class="field">
+                    <span>Start Date</span>
+                    <input id="ai-activity-start-date" type="date" />
+                  </label>
+                  <label class="field">
+                    <span>End Date</span>
+                    <input id="ai-activity-end-date" type="date" />
+                  </label>
+                  <button id="ai-activity-filter" class="btn">Filter</button>
+                  <button id="ai-activity-reset" class="btn ghost">Reset</button>
+                </div>
+
+                <!-- Activity Actions -->
+                <div class="ai-activity-actions">
+                  <button id="ai-activity-refresh" class="btn ghost">↻ Refresh</button>
+                  <button id="ai-activity-export" class="btn">📥 Export CSV</button>
+                  <span id="ai-activity-status" class="form-status"></span>
+                </div>
+
+                <!-- Activity Table -->
+                <div class="ai-activity-table-container">
+                  <table class="ai-activity-table" id="ai-activity-table">
+                    <thead>
+                      <tr>
+                        <th>Timestamp</th>
+                        <th>Provider/Model</th>
+                        <th>Tokens</th>
+                        <th>Cost</th>
+                        <th>Speed</th>
+                        <th>Finish</th>
+                        <th>Session</th>
+                      </tr>
+                    </thead>
+                    <tbody id="ai-activity-body">
+                      <tr><td colspan="7" class="loading">Loading...</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <!-- Pagination -->
+                <div class="ai-activity-pagination">
+                  <span id="ai-activity-showing">Showing 0-0 of 0</span>
+                  <div class="pagination-controls">
+                    <button id="ai-activity-prev" class="btn ghost" disabled>← Previous</button>
+                    <button id="ai-activity-next" class="btn ghost" disabled>Next →</button>
+                  </div>
+                </div>
+              </div>
+            </section>
           </div>
         </div>
       </section>
@@ -1379,6 +1950,101 @@
           </div>
           <div id="tasks-status" class="tasks-status">Loading…</div>
           <div id="tasks-list" class="tasks-list"></div>
+        </div>
+      </section>
+
+      <!-- Tickets Page -->
+      <section class="page" id="page-drafts" hidden>
+        <div class="panel panel-drafts">
+          <div class="drafts-header">
+            <h2>Tickets</h2>
+            <p class="drafts-lead">Ticket proposals staged for review before pushing to Jira.</p>
+            <div class="drafts-actions">
+              <button id="drafts-new" class="btn" type="button">New Ticket</button>
+              <button id="drafts-refresh" class="btn ghost" type="button">Refresh</button>
+            </div>
+          </div>
+          <div id="drafts-counts" class="drafts-counts">
+            <span class="count-item proposed"><span class="count-value">0</span> Proposed</span>
+            <span class="count-item approved"><span class="count-value">0</span> Approved</span>
+            <span class="count-item pushed"><span class="count-value">0</span> Pushed</span>
+            <span class="count-item rejected"><span class="count-value">0</span> Rejected</span>
+          </div>
+          <div class="drafts-toolbar">
+            <label class="field">
+              <span>Status</span>
+              <select id="drafts-filter-status">
+                <option value="">All</option>
+                <option value="proposed">Proposed</option>
+                <option value="approved">Approved</option>
+                <option value="pushed">Pushed</option>
+                <option value="rejected">Rejected</option>
+              </select>
+            </label>
+            <label class="field grow">
+              <span>Search</span>
+              <input id="drafts-search" type="text" placeholder="Search by title or description" />
+            </label>
+          </div>
+          <div id="drafts-list" class="drafts-list">
+            <div class="drafts-empty">Loading tickets...</div>
+          </div>
+        </div>
+        <!-- Ticket Detail Modal -->
+        <div id="drafts-modal" class="drafts-modal" hidden>
+          <div class="drafts-modal-backdrop" data-close-modal></div>
+          <div class="drafts-modal-content">
+            <div class="drafts-modal-header">
+              <h3 id="drafts-modal-title">Ticket</h3>
+              <button id="drafts-modal-close" class="btn ghost" type="button">Close</button>
+            </div>
+            <div class="drafts-modal-body">
+              <form id="drafts-form" class="drafts-form">
+                <input type="hidden" id="drafts-form-id" />
+                <label class="field">
+                  <span>Title</span>
+                  <input type="text" id="drafts-form-title" required />
+                </label>
+                <label class="field">
+                  <span>Description</span>
+                  <textarea id="drafts-form-description" rows="4"></textarea>
+                </label>
+                <div class="drafts-form-row">
+                  <label class="field">
+                    <span>Priority</span>
+                    <select id="drafts-form-priority">
+                      <option value="low">Low</option>
+                      <option value="medium" selected>Medium</option>
+                      <option value="high">High</option>
+                      <option value="critical">Critical</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>Labels (comma-separated)</span>
+                    <input type="text" id="drafts-form-labels" placeholder="bug, enhancement" />
+                  </label>
+                </div>
+                <label class="field">
+                  <span>Link to Jira Issue</span>
+                  <input type="text" id="drafts-form-jira-key" placeholder="INFRA-1234" />
+                </label>
+                <div id="drafts-form-ai-proposal" class="drafts-ai-proposal" hidden>
+                  <h4>AI Proposal</h4>
+                  <pre id="drafts-form-ai-content"></pre>
+                </div>
+              </form>
+            </div>
+            <div class="drafts-modal-footer">
+              <div class="drafts-modal-actions-left" id="drafts-modal-status-actions">
+                <button type="button" id="drafts-btn-approve" class="btn success">Approve</button>
+                <button type="button" id="drafts-btn-reject" class="btn danger">Reject</button>
+              </div>
+              <div class="drafts-modal-actions-right">
+                <button type="button" id="drafts-btn-delete" class="btn ghost danger">Delete</button>
+                <button type="button" id="drafts-btn-save" class="btn">Save</button>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
 

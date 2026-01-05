@@ -17,9 +17,10 @@ from . import (
     zabbix,
 )
 
-# Note: chat and export are imported lazily in __init__.py to avoid circular imports
+# Note: chat, export, and ai_chat are imported lazily in __init__.py to avoid circular imports
 __all__ = [
     "admin",
+    "ai_chat",
     "auth",
     "commvault",
     "confluence",

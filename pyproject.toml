@@ -29,6 +29,8 @@ dependencies = [
   "pyvmomi>=8.0.2",
   "pyairtable>=2.3",
   "pyzipper>=0.3.6",
+  "langchain-core>=1.2.0",
+  "langchain>=1.1.3",
 ]
 
 [project.scripts]
@@ -100,9 +102,12 @@ ignore = [
 "src/infrastructure_atlas/api/app.py" = ["PLR0913", "PLR0911"]
 "src/infrastructure_atlas/cli.py" = ["PLR0913"]
 "src/infrastructure_atlas/interfaces/api/routes/puppet.py" = ["PLR0913"]
+"src/infrastructure_atlas/interfaces/api/routes/ai_chat.py" = ["PLR0913"]
 "src/infrastructure_atlas/application/chat_agents/enhanced_runtime.py" = ["PLR0913"]
 "src/infrastructure_atlas/application/chat_agents/runtime.py" = ["PLR0911"]
 "src/infrastructure_atlas/application/exporter/netbox.py" = ["PLR0913"]
 "src/infrastructure_atlas/infrastructure/external/confluence_client.py" = ["PLR0913"]
 "src/infrastructure_atlas/infrastructure/external/zabbix_client.py" = ["PLR0913"]
 "src/infrastructure_atlas/infrastructure/rate_limiting.py" = ["PLR0911"]
+# AI module - provider implementations need many args for flexible API
+"src/infrastructure_atlas/ai/**/*.py" = ["PLR0913", "PLR0911", "RUF012", "PLW0603", "RUF022"]
