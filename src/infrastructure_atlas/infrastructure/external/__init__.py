@@ -11,6 +11,7 @@ from .commvault_client import (
     CommvaultResponseError,
 )
 from .confluence_client import ConfluenceClient, ConfluenceClientConfig
+from .esxi_client import ESXiClient
 from .foreman_client import (
     ForemanAPIError,
     ForemanAuthError,
@@ -61,6 +62,7 @@ __all__ = [
     "CommvaultResponseError",
     "ConfluenceClient",
     "ConfluenceClientConfig",
+    "ESXiClient",
     "ForemanAPIError",
     "ForemanAuthError",
     "ForemanClient",

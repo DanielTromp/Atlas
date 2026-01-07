@@ -11,6 +11,7 @@ class VCenterConfigCreate(BaseModel):
     username: str = Field(..., min_length=1)
     password: str = Field(..., min_length=1)
     verify_ssl: bool = True
+    is_esxi: bool = False
 
 
 class VCenterConfigUpdate(BaseModel):
@@ -19,6 +20,7 @@ class VCenterConfigUpdate(BaseModel):
     username: str | None = Field(default=None, min_length=1)
     password: str | None = Field(default=None, min_length=1)
     verify_ssl: bool | None = None
+    is_esxi: bool | None = None
 
 
 __all__ = ["VCenterConfigCreate", "VCenterConfigUpdate"]

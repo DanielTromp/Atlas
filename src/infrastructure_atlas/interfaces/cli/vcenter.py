@@ -45,6 +45,45 @@ def _select_configs(service, names: Iterable[str], ids: Iterable[str], refresh_a
     return selected
 
 
+@app.command("add")
+def add_config(
+    name: Annotated[str, typer.Option("--name", "-n", help="Name for the vCenter/ESXi configuration", prompt=True)],
+    base_url: Annotated[str, typer.Option("--url", "-u", help="Base URL (e.g. https://vcenter.example.com)", prompt=True)],
+    username: Annotated[str, typer.Option("--user", "-U", help="Username for authentication", prompt=True)],
+    password: Annotated[str, typer.Option("--password", "-P", help="Password for authentication", prompt=True, hide_input=True)],
+    verify_ssl: Annotated[bool, typer.Option("--verify-ssl/--no-verify-ssl", help="Enable/disable SSL certificate verification")] = True,
+    is_esxi: Annotated[bool, typer.Option("--esxi/--vcenter", help="Specify if this is a standalone ESXi host")] = False,
+):
+    """Add a new vCenter or ESXi host configuration."""
+    init_database()
+    SessionLocal = Sessionmaker()
+    try:
+        with SessionLocal as session:
+            service = create_vcenter_service(session)
+            try:
+                entity = service.create_config(
+                    name=name,
+                    base_url=base_url,
+                    username=username,
+                    password=password,
+                    verify_ssl=verify_ssl,
+                    is_esxi=is_esxi,
+                )
+                print(f"[green]Successfully added configuration:[/green] {entity.name} ({entity.id})")
+                if is_esxi:
+                    print("[dim]Type: Standalone ESXi Host[/dim]")
+                else:
+                    print("[dim]Type: vCenter Server[/dim]")
+            except ValueError as exc:
+                print(f"[red]Error:[/red] {exc}")
+                raise typer.Exit(1)
+            except Exception as exc:
+                print(f"[red]Unexpected error:[/red] {exc}")
+                raise typer.Exit(1)
+    finally:
+        SessionLocal.close()
+
+
 @app.command("refresh")
 def refresh_inventory(
     name: Annotated[

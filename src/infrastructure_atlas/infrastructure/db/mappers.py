@@ -98,6 +98,7 @@ def vcenter_config_to_entity(record: models.VCenterConfig) -> VCenterConfigEntit
         base_url=record.base_url,
         username=record.username,
         verify_ssl=record.verify_ssl,
+        is_esxi=record.is_esxi,
         password_secret=record.password_secret,
         created_at=record.created_at,
         updated_at=record.updated_at,

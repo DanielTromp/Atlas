@@ -130,6 +130,7 @@ class VCenterConfig(Base):
     username: Mapped[str] = mapped_column(String(128), nullable=False)
     password_secret: Mapped[str] = mapped_column(String(128), nullable=False)
     verify_ssl: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_esxi: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False

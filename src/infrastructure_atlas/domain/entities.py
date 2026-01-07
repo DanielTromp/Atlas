@@ -95,6 +95,7 @@ class VCenterConfigEntity:
     base_url: str
     username: str
     verify_ssl: bool
+    is_esxi: bool
     password_secret: str
     created_at: datetime
     updated_at: datetime

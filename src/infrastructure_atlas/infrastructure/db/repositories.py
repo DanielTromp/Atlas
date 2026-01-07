@@ -185,6 +185,7 @@ class SqlAlchemyVCenterConfigRepository(VCenterConfigRepository):
         username: str,
         password_secret: str,
         verify_ssl: bool,
+        is_esxi: bool = False,
     ):
         record = models.VCenterConfig(
             id=config_id,
@@ -193,6 +194,7 @@ class SqlAlchemyVCenterConfigRepository(VCenterConfigRepository):
             username=username,
             password_secret=password_secret,
             verify_ssl=verify_ssl,
+            is_esxi=is_esxi,
         )
         self._session.add(record)
         self._session.flush()
@@ -208,6 +210,7 @@ class SqlAlchemyVCenterConfigRepository(VCenterConfigRepository):
         username: str | None = None,
         verify_ssl: bool | None = None,
         password_secret: str | None = None,
+        is_esxi: bool | None = None,
     ):
         record = self._session.get(models.VCenterConfig, config_id)
         if record is None:
@@ -222,6 +225,8 @@ class SqlAlchemyVCenterConfigRepository(VCenterConfigRepository):
             record.verify_ssl = verify_ssl
         if password_secret is not None:
             record.password_secret = password_secret
+        if is_esxi is not None:
+            record.is_esxi = is_esxi
         self._session.add(record)
         self._session.flush()
         self._session.refresh(record)

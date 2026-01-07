@@ -17,6 +17,7 @@ class VCenterConfigDTO(DomainModel):
     base_url: str
     username: str
     verify_ssl: bool
+    is_esxi: bool
     has_credentials: bool
     last_refresh: datetime | None = None
     vm_count: int | None = None
@@ -87,6 +88,7 @@ def vcenter_config_to_dto(
         base_url=entity.base_url,
         username=entity.username,
         verify_ssl=entity.verify_ssl,
+        is_esxi=entity.is_esxi,
         has_credentials=bool(has_credentials if has_credentials is not None else entity.password_secret),
         last_refresh=last_refresh,
         vm_count=vm_count,

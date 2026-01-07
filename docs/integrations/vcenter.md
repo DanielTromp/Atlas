@@ -21,7 +21,31 @@ vCenter instances are configured through the web UI Admin section or CLI API.
 
 Credentials are stored encrypted in the database when `ATLAS_SECRET_KEY` is configured.
 
+## Standalone ESXi Hosts
+
+You can also add standalone ESXi hosts. This uses the same vCenter integration but connects directly to the host via the SOAP API.
+
+1.  Use the `add` command (see below) with the `--esxi` flag.
+2.  Or via the API, set `"is_esxi": true`.
+
 ## CLI Commands
+
+## CLI Commands
+
+### Add Configuration
+
+```bash
+uv run atlas vcenter add [OPTIONS]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--name` / `-n` | Configuration name |
+| `--url` / `-u` | Base URL (e.g. `https://esxi-host.example.com`) |
+| `--user` / `-U` | Username |
+| `--password` / `-P` | Password |
+| `--esxi` | **Flag to indicate standalone ESXi host** |
+| `--no-verify-ssl` | Disable SSL verification |
 
 ### Refresh Inventory
 

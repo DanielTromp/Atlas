@@ -53,6 +53,7 @@ def create_config(admin: AdminUserDep, payload: CreateBody, service: VCenterServ
             username=payload.username,
             password=payload.password,
             verify_ssl=payload.verify_ssl,
+            is_esxi=payload.is_esxi,
         )
     except SecretStoreUnavailable as exc:  # pragma: no cover - depends on deployment config
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -71,6 +72,7 @@ def update_config(admin: AdminUserDep, config_id: str, payload: UpdateBody, serv
             username=payload.username,
             password=payload.password,
             verify_ssl=payload.verify_ssl,
+            is_esxi=payload.is_esxi,
         )
     except SecretStoreUnavailable as exc:  # pragma: no cover - depends on deployment config
         raise HTTPException(status_code=503, detail=str(exc)) from exc

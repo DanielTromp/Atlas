@@ -21,6 +21,7 @@ from infrastructure_atlas.domain.integrations.vcenter import VCenterVM
 from infrastructure_atlas.env import project_root
 from infrastructure_atlas.infrastructure.db.repositories import SqlAlchemyVCenterConfigRepository
 from infrastructure_atlas.infrastructure.external import (
+    ESXiClient,
     VCenterAuthError,
     VCenterClient,
     VCenterClientConfig,
@@ -339,14 +340,17 @@ def _build_vm_link(
     *,
     server_guid: str | None = None,
     instance_uuid: str | None = None,
+    is_esxi: bool = False,
 ) -> str | None:
     if not base_url or not vm_id:
         return None
     vm_ref = _normalize_text(str(vm_id))
     if not vm_ref:
         return None
-    guid_ref = _normalize_text(server_guid) or _normalize_text(instance_uuid) or vm_ref
     root = base_url.rstrip("/")
+    if is_esxi:
+        return f"{root}/ui/#/host/vms/{vm_ref}"
+    guid_ref = _normalize_text(server_guid) or _normalize_text(instance_uuid) or vm_ref
     return f"{root}/ui/app/vm;nav=h/urn:vmomi:VirtualMachine:{vm_ref}:{guid_ref}/summary"
 
 
@@ -405,6 +409,7 @@ def _build_vm(  # noqa: PLR0913
     *,
     base_url: str | None = None,
     server_guid: str | None = None,
+    is_esxi: bool = False,
 ) -> VCenterVM:
     vm_identifier = summary.get("vm") if isinstance(summary, Mapping) else None
     vm_id = str(vm_identifier or detail.get("vm") if isinstance(detail, Mapping) else "").strip()
@@ -582,7 +587,13 @@ def _build_vm(  # noqa: PLR0913
 
     ip_addresses = tuple(sorted(ip_set))
     mac_addresses = tuple(sorted(mac_set))
-    vcenter_url = _build_vm_link(base_url, vm_id, server_guid=server_guid, instance_uuid=instance_uuid)
+    vcenter_url = _build_vm_link(
+        base_url,
+        vm_identifier,
+        server_guid=server_guid,
+        instance_uuid=instance_uuid,
+        is_esxi=is_esxi,
+    )
 
     attr_map: dict[str, str] = {}
     if isinstance(custom_attributes, Mapping):
@@ -868,6 +879,7 @@ class VCenterService:
         username: str,
         password: str,
         verify_ssl: bool,
+        is_esxi: bool = False,
     ) -> VCenterConfigEntity:
         normalised_name = _normalise_name(name)
         normalised_url = _normalise_base_url(base_url)
@@ -886,6 +898,7 @@ class VCenterService:
                 username=normalised_username,
                 password_secret=secret_name,
                 verify_ssl=bool(verify_ssl),
+                is_esxi=bool(is_esxi),
             )
         except IntegrityError as exc:
             self.session.rollback()
@@ -915,6 +928,7 @@ class VCenterService:
         username: str | None = None,
         password: str | None = None,
         verify_ssl: bool | None = None,
+        is_esxi: bool | None = None,
     ) -> VCenterConfigEntity:
         repo = self._repo_instance()
         config = repo.get(config_id)
@@ -930,6 +944,8 @@ class VCenterService:
             update_data["username"] = _normalise_username(username)
         if verify_ssl is not None:
             update_data["verify_ssl"] = bool(verify_ssl)
+        if is_esxi is not None:
+            update_data["is_esxi"] = bool(is_esxi)
 
         try:
             entity = repo.update(config_id, **update_data)
@@ -1140,9 +1156,14 @@ class VCenterService:
         vms: list[VCenterVM] = []
         metadata: dict[str, Any] = {}
 
-        with VCenterClient(client_config) as client:
+        # Choose client class based on configuration
+        client_cls = ESXiClient if config.is_esxi else VCenterClient
+        is_esxi = config.is_esxi
+
+        with client_cls(client_config) as client:
             summaries = client.list_vms()
-            server_guid = client.get_server_guid()
+            # server_guid is only available on vCenter
+            server_guid = client.get_server_guid() if not is_esxi and hasattr(client, "get_server_guid") else None
             vm_payloads: list[
                 tuple[
                     Mapping[str, Any],
@@ -1186,15 +1207,16 @@ class VCenterService:
                     )
 
                 placement_info: Mapping[str, Any] | None = None
-                try:
-                    placement_info = client.get_vm_placement(str(vm_identifier)) if vm_identifier else None
-                except VCenterClientError:
-                    logger.debug(
-                        "Failed to fetch placement for VM %s on vCenter %s",
-                        vm_identifier,
-                        config.name,
-                        exc_info=True,
-                    )
+                if not is_esxi:
+                    try:
+                        placement_info = client.get_vm_placement(str(vm_identifier)) if vm_identifier else None
+                    except VCenterClientError:
+                        logger.debug(
+                            "Failed to fetch placement for VM %s on vCenter %s",
+                            vm_identifier,
+                            config.name,
+                            exc_info=True,
+                        )
 
                 instance_uuid = None
                 if isinstance(detail, Mapping):
@@ -1216,56 +1238,66 @@ class VCenterService:
                     )
 
                 custom_attrs: Mapping[str, Any] | None = None
-                try:
-                    custom_attrs = client.list_vm_custom_attributes(str(vm_identifier))
-                except VCenterClientError:
-                    logger.debug(
-                        "Failed to load custom attributes for VM %s on vCenter %s",
-                        vm_identifier,
-                        config.name,
-                        exc_info=True,
-                    )
+                if not is_esxi:
+                    try:
+                        custom_attrs = client.list_vm_custom_attributes(str(vm_identifier))
+                    except VCenterClientError:
+                        logger.debug(
+                            "Failed to load custom attributes for VM %s on vCenter %s",
+                            vm_identifier,
+                            config.name,
+                            exc_info=True,
+                        )
 
                 tag_names: tuple[str, ...] | None = None
-                try:
-                    tag_names = client.list_vm_tags(str(vm_identifier))
-                except VCenterClientError:
-                    logger.debug(
-                        "Failed to load tags for VM %s on vCenter %s",
-                        vm_identifier,
-                        config.name,
-                        exc_info=True,
-                    )
+                if not is_esxi:
+                    try:
+                        tag_names = client.list_vm_tags(str(vm_identifier))
+                    except VCenterClientError:
+                        logger.debug(
+                            "Failed to load tags for VM %s on vCenter %s",
+                            vm_identifier,
+                            config.name,
+                            exc_info=True,
+                        )
 
                 guest_identity: Mapping[str, Any] | None = None
-                try:
-                    guest_identity = client.get_vm_guest_identity(str(vm_identifier))
-                except VCenterClientError:
-                    logger.debug(
-                        "Failed to load guest identity for VM %s on vCenter %s",
-                        vm_identifier,
-                        config.name,
-                        exc_info=True,
-                    )
+                if not is_esxi:
+                    try:
+                        guest_identity = client.get_vm_guest_identity(str(vm_identifier))
+                    except VCenterClientError:
+                        logger.debug(
+                            "Failed to load guest identity for VM %s on vCenter %s",
+                            vm_identifier,
+                            config.name,
+                            exc_info=True,
+                        )
+                # ESXi client puts identity in detail response
 
                 tools_info: Mapping[str, Any] | None = None
-                try:
-                    tools_info = client.get_vm_tools(str(vm_identifier))
-                except VCenterClientError:
-                    logger.debug(
-                        "Failed to load VMware Tools info for VM %s on vCenter %s",
-                        vm_identifier,
-                        config.name,
-                        exc_info=True,
-                    )
+                if not is_esxi:
+                    try:
+                        tools_info = client.get_vm_tools(str(vm_identifier))
+                    except VCenterClientError:
+                        logger.debug(
+                            "Failed to load VMware Tools info for VM %s on vCenter %s",
+                            vm_identifier,
+                            config.name,
+                            exc_info=True,
+                        )
+                # ESXi client puts tools info in detail response
 
                 snapshots: list[Mapping[str, Any]] = []
                 try:
-                    # Try REST API first
-                    snapshots = client.get_vm_snapshots(str(vm_identifier))
-                    # If REST API returns empty and we have instance_uuid, try pyVmomi
-                    if not snapshots and instance_uuid:
-                        snapshots = client.get_vm_snapshots_vim(instance_uuid)
+                    # For ESXi, get_vm_snapshots logic is inside the client
+                    if is_esxi:
+                        snapshots = client.get_vm_snapshots(str(vm_identifier))
+                    else:
+                        # Try REST API first
+                        snapshots = client.get_vm_snapshots(str(vm_identifier))
+                        # If REST API returns empty and we have instance_uuid, try pyVmomi
+                        if not snapshots and instance_uuid:
+                            snapshots = client.get_vm_snapshots_vim(instance_uuid)
                 except VCenterClientError:
                     logger.warning(
                         "Failed to load snapshots for VM %s on vCenter %s",
@@ -1283,12 +1315,15 @@ class VCenterService:
 
                 disks: list[Mapping[str, Any]] = []
                 try:
-                    # Use pyVmomi for disks as REST API doesn't return detailed info
-                    if instance_uuid:
-                        disks = client.get_vm_disks_vim(instance_uuid)
-                    # Fallback to REST API if pyVmomi fails
-                    if not disks:
+                    if is_esxi:
                         disks = client.get_vm_disks(str(vm_identifier))
+                    else:
+                        # Use pyVmomi for disks as REST API doesn't return detailed info
+                        if instance_uuid:
+                            disks = client.get_vm_disks_vim(instance_uuid)
+                        # Fallback to REST API if pyVmomi fails
+                        if not disks:
+                            disks = client.get_vm_disks(str(vm_identifier))
                 except VCenterClientError:
                     logger.warning(
                         "Failed to load disks for VM %s on vCenter %s",
@@ -1305,7 +1340,7 @@ class VCenterService:
                     )
 
                 placement_from_vim: Mapping[str, str] = {}
-                if not placement_info and instance_uuid:
+                if not is_esxi and not placement_info and instance_uuid:
                     placement_from_vim = client.get_vm_placement_vim(instance_uuid)
 
                 detail_payload: Mapping[str, Any] | None = detail
@@ -1356,33 +1391,20 @@ class VCenterService:
                 folder_ids.update(_collect_reference_ids(_extract_placement_raw(detail_payload, "folder"), ("folder",)))
 
             def _safe_lookup(name: str, loader, ids: set[str]) -> dict[str, str]:
-                if not ids:
-                    try:
-                        return loader()
-                    except VCenterClientError:
-                        logger.debug("Failed to load %s list from vCenter", name, exc_info=True)
-                        return {}
+                if not ids or is_esxi: # Skip lookups for ESXi
+                    return {}
                 try:
-                    mapping = loader()
+                    return loader()
                 except VCenterClientError:
                     logger.debug("Failed to load %s list from vCenter", name, exc_info=True)
                     return {}
-                result: dict[str, str] = {}
-                for identifier in ids:
-                    if identifier in mapping:
-                        result[identifier] = mapping[identifier]
-                        continue
-                    lowered = identifier.lower()
-                    if lowered in mapping:
-                        result[identifier] = mapping[lowered]
-                return result
 
             lookups = {
-                "hosts": _safe_lookup("host", client.list_hosts, host_ids),
-                "clusters": _safe_lookup("cluster", client.list_clusters, cluster_ids),
-                "datacenters": _safe_lookup("datacenter", client.list_datacenters, datacenter_ids),
-                "resource_pools": _safe_lookup("resource pool", client.list_resource_pools, resource_pool_ids),
-                "folders": _safe_lookup("folder", client.list_folders, folder_ids),
+                "hosts": _safe_lookup("host", client.list_hosts if not is_esxi else None, host_ids),
+                "clusters": _safe_lookup("cluster", client.list_clusters if not is_esxi else None, cluster_ids),
+                "datacenters": _safe_lookup("datacenter", client.list_datacenters if not is_esxi else None, datacenter_ids),
+                "resource_pools": _safe_lookup("resource pool", client.list_resource_pools if not is_esxi else None, resource_pool_ids),
+                "folders": _safe_lookup("folder", client.list_folders if not is_esxi else None, folder_ids),
             }
 
             for summary, detail, guest_interfaces, custom_attrs, tag_names, guest_identity, tools_info, snapshots, disks in vm_payloads:
@@ -1400,6 +1422,7 @@ class VCenterService:
                         disks,
                         base_url=config.base_url,
                         server_guid=server_guid,
+                        is_esxi=config.is_esxi,
                     )
                 except Exception:
                     vm_identifier = summary.get("vm") if isinstance(summary, Mapping) else None
