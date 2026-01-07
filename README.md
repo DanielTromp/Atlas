@@ -139,6 +139,30 @@ infrastructure-atlas/
 └── scripts/                    # Utility scripts
 ```
 
+## MCP Server
+
+This repository includes a [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that allows Claude to inspect your infrastructure.
+
+### Installation
+
+The MCP server is located in `mcp-server/`.
+
+1.  **Install dependencies:**
+    ```bash
+    cd mcp-server
+    npm install
+    ```
+
+2.  **Install to Claude Desktop:**
+    ```bash
+    npm run install:mcp
+    ```
+    This automatically updates your `claude_desktop_config.json`.
+
+3.  **Restart Claude Desktop.**
+
+For more details, see [mcp-server/README.md](mcp-server/README.md).
+
 ## Development
 
 ```bash

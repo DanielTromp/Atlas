@@ -453,4 +453,38 @@ def search_aggregate(
     except Exception as ex:
         out["netbox"] = {"error": str(ex)}
 
+    # Commvault: jobs matching client_name or subclient_name (last 24h by default, or just recent list)
+    try:
+        from infrastructure_atlas.interfaces.api.routes.commvault import _load_commvault_backups
+
+        backups_data = _load_commvault_backups()
+        jobs = backups_data.get("jobs", [])
+        
+        cv_matches = []
+        ql = q.lower().strip()
+        # Search limit
+        cv_limit = 50
+        
+        for job in jobs:
+            c_name = str(job.get("client_name") or "").lower()
+            sc_name = str(job.get("subclient_name") or "").lower()
+            plan = str(job.get("plan_name") or "").lower()
+            
+            if ql in c_name or ql in sc_name or ql in plan:
+                cv_matches.append({
+                    "job_id": job.get("job_id"),
+                    "client": job.get("client_name"),
+                    "type": job.get("job_type"),
+                    "status": job.get("status"),
+                    "start_time": job.get("start_time"),
+                    "end_time": job.get("end_time"),
+                    "plan": job.get("plan_name"),
+                })
+                if len(cv_matches) >= cv_limit:
+                    break
+        
+        out["commvault"] = {"total": len(cv_matches), "jobs": cv_matches}
+    except Exception as ex:
+        out["commvault"] = {"error": str(ex)}
+
     return out

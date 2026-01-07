@@ -400,6 +400,28 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     request.state.user = None
                     request.state.permissions = frozenset()
 
+
+
+        # Check for Bearer token and try to resolve to a UserAPIKey
+        if request.state.user is None:
+            token = _get_bearer_token(request)
+            if token:
+                with SessionLocal() as db:
+                    # Look up key by strict match
+                    stmt = select(UserAPIKey).where(UserAPIKey.secret == token)
+                    key_record = db.execute(stmt).scalar_one_or_none()
+                    if key_record:
+                        user = db.get(User, key_record.user_id)
+                        if user and user.is_active:
+                            perms_record = db.get(RolePermission, user.role)
+                            perms = frozenset((perms_record.permissions or []) if perms_record else [])
+                            request.state.user = user
+                            request.state.permissions = perms
+                            try:
+                                user.permissions = perms
+                            except Exception:
+                                pass
+
         # Public endpoints
         if path in ("/favicon.ico", "/favicon.png", "/health"):
             return await call_next(request)
@@ -420,9 +442,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if path.startswith("/auth/"):
             return await call_next(request)
 
-        # API protection via Bearer token; allow UI session as alternative
+        # API protection via Bearer token; allow UI session/UserAPIKey as alternative
         if API_TOKEN and _is_api_path(path):
-            if _has_bearer_token(request) or _has_ui_session(request):
+            if _has_bearer_token(request) or request.state.user is not None:
                 return await call_next(request)
             # Unauthorized
             return JSONResponse({"detail": "Unauthorized"}, status_code=401, headers={"WWW-Authenticate": "Bearer"})
@@ -433,11 +455,17 @@ class AuthMiddleware(BaseHTTPMiddleware):
 def _has_bearer_token(request: Request) -> bool:
     if not API_TOKEN:
         return False
+    token = _get_bearer_token(request)
+    if not token:
+        return False
+    return secrets.compare_digest(token, API_TOKEN)
+
+
+def _get_bearer_token(request: Request) -> str | None:
     auth = request.headers.get("Authorization", "")
     if not auth.lower().startswith("bearer "):
-        return False
-    token = auth[7:].strip()
-    return secrets.compare_digest(token, API_TOKEN)
+        return None
+    return auth[7:].strip()
 
 
 def _has_ui_session(request: Request) -> bool:
@@ -1457,6 +1485,14 @@ try:
     app.include_router(monitoring_router)
 except ImportError:
     logger.warning("Monitoring routes not available - optional dependencies missing")
+
+# Include Zabbix routes
+try:
+    from infrastructure_atlas.interfaces.api.routes.zabbix import router as zabbix_router
+
+    app.include_router(zabbix_router)
+except ImportError:
+    logger.warning("Zabbix routes not available - optional dependencies missing")
 
 # Re-export functions for CLI compatibility (these live in route modules but CLI imports from app.py)
 from infrastructure_atlas.interfaces.api.routes.jira import jira_search  # noqa: E402, F401

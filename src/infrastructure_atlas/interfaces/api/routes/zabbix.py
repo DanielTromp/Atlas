@@ -259,6 +259,28 @@ def zabbix_problems(
     return {"items": rows, "count": len(rows)}
 
 
+@router.get("/alerts")
+def zabbix_alerts(
+    severities: str | None = Query(None, description="Comma-separated severities 0..5 (e.g. '2,3,4')"),
+    groupids: str | None = Query(None, description="Comma-separated group IDs"),
+    hostids: str | None = Query(None, description="Comma-separated host IDs"),
+    unacknowledged: int = Query(0, ge=0, le=1),
+    suppressed: int | None = Query(None, ge=0, le=1, description="Filter by suppression: None=all, 0=non-suppressed, 1=suppressed"),
+    limit: int = Query(300, ge=1, le=2000),
+    include_subgroups: int = Query(0, ge=0, le=1, description="When filtering by groupids, include all subgroup IDs"),
+):
+    """Alias for /problems to match MCP tool expectations."""
+    return zabbix_problems(
+        severities=severities,
+        groupids=groupids,
+        hostids=hostids,
+        unacknowledged=unacknowledged,
+        suppressed=suppressed,
+        limit=limit,
+        include_subgroups=include_subgroups,
+    )
+
+
 @router.get("/host")
 def zabbix_host(hostid: int = Query(..., description="Host ID")):
     """Return extended information about a single host for debugging/analysis."""

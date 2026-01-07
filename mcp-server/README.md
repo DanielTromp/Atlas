@@ -1,312 +1,70 @@
-# Atlas MCP Server
+# Infrastructure Atlas MCP Server
 
-Model Context Protocol (MCP) server for Infrastructure Atlas. This server enables Claude and other MCP clients to interact with your Atlas infrastructure management API.
+An [MCP](https://modelcontextprotocol.io) server that integrates with your Infrastructure Atlas dashboard, allowing Claude to inspect vCenter, NetBox, Zabbix, Jira, and Confluence.
+
+This server is written in TypeScript and integrates directly with the Atlas API.
 
 ## Features
 
-The Atlas MCP server provides tools and resources for:
+- **Portal Authentication**: Securely authenticates with your local Atlas instance via the browser.
+- **vCenter Integration**: List instances and retrieve VM details.
+- **Tools**:
+    - `atlas_vcenter_list_instances`
+    - `atlas_vcenter_get_vms`
+    - `atlas_netbox_search`
+    - `atlas_zabbix_alerts`
+    - `atlas_jira_search`
+    - `atlas_confluence_search`
+    - `atlas_search`
+    - `atlas_commvault_info`
 
-- **vCenter Management**: List instances, get VM inventories, refresh data
-- **NetBox Inventory**: Search devices, VMs, and infrastructure records
-- **Zabbix Monitoring**: Query current alerts and problems
-- **Jira Integration**: Search issues across projects
-- **Confluence Knowledge**: Search documentation and pages
-- **Performance Monitoring**: View Atlas metrics, token usage, and health status
-- **Tools Catalog**: Access the full catalog of available Atlas agents
+## Prerequisites
+
+- Node.js (v18 or higher)
+- Running instance of Infrastructure Atlas API
 
 ## Installation
 
-### Option 1: Install from source (development)
+You can automatically configure Claude Desktop to use this server.
 
-```bash
-cd mcp-server
-uv pip install -e .
-```
-
-### Option 2: Install with pip
-
-```bash
-pip install -e mcp-server/
-```
-
-## Quick Setup
-
-### Automated Setup (Recommended)
-
-Run the setup script to automatically configure Claude Desktop:
-
-```bash
-cd mcp-server
-export ATLAS_API_URL=http://127.0.0.1:8000
-export ATLAS_API_TOKEN=your_token_here
-python setup_claude.py
-```
-
-The script will:
-- Detect your Claude Desktop configuration location
-- Add the Atlas MCP server configuration
-- Set up environment variables
-
-After running the script, restart Claude Desktop.
-
-## Manual Configuration
-
-### 1. Set up environment variables
-
-Create a `.env` file in the `mcp-server` directory:
-
-```bash
-# Atlas API connection
-ATLAS_API_URL=http://127.0.0.1:8000
-ATLAS_API_TOKEN=your_api_token_here
-
-# Optional: SSL verification (default: true)
-ATLAS_VERIFY_SSL=true
-```
-
-Or set environment variables directly:
-
-```bash
-export ATLAS_API_URL=https://atlas.example.com
-export ATLAS_API_TOKEN=your_token
-```
-
-### 2. Configure Claude Desktop
-
-Add the MCP server to your Claude Desktop configuration file:
-
-**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-
-**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
-
-```json
-{
-  "mcpServers": {
-    "atlas": {
-      "command": "uv",
-      "args": [
-        "run",
-        "--directory",
-        "/path/to/Atlas/mcp-server",
-        "atlas-mcp"
-      ],
-      "env": {
-        "ATLAS_API_URL": "http://127.0.0.1:8000",
-        "ATLAS_API_TOKEN": "your_api_token_here"
-      }
-    }
-  }
-}
-```
-
-Or if installed globally:
-
-```json
-{
-  "mcpServers": {
-    "atlas": {
-      "command": "atlas-mcp",
-      "env": {
-        "ATLAS_API_URL": "http://127.0.0.1:8000",
-        "ATLAS_API_TOKEN": "your_api_token_here"
-      }
-    }
-  }
-}
-```
-
-### 3. Restart Claude Desktop
-
-After updating the configuration, restart Claude Desktop to load the MCP server.
-
-## Available Tools
-
-### vCenter Operations
-
-- **atlas_vcenter_list_instances**: List all configured vCenter instances with status
-- **atlas_vcenter_get_vms**: Get VMs from a specific vCenter (with optional refresh)
-- **atlas_vcenter_refresh**: Force refresh vCenter inventory from live API
-
-### Infrastructure Inventory
-
-- **atlas_netbox_search**: Search NetBox for devices, VMs, or all records
-
-### Monitoring & Alerting
-
-- **atlas_zabbix_alerts**: Get current Zabbix alerts with severity/group filters
-
-### Atlassian Integration
-
-- **atlas_jira_search**: Search Jira issues with filters
-- **atlas_confluence_search**: Search Confluence pages and documentation
-
-### Cross-System Search
-
-- **atlas_search_aggregate**: Search across all systems simultaneously (Zabbix, Jira, Confluence, vCenter, NetBox)
-
-### Performance & Metrics
-
-- **atlas_monitoring_stats**: Get token usage and rate limiting statistics
-- **atlas_performance_metrics**: Get comprehensive health and performance data
-- **atlas_tools_catalog**: View all available Atlas tools and agents
-
-## Available Resources
-
-Resources provide read-only access to Atlas data:
-
-- `atlas://vcenter/instances` - List of vCenter instances
-- `atlas://monitoring/performance` - Current performance metrics
-- `atlas://tools/catalog` - Full tools catalog
-
-## Usage Examples
-
-Once configured in Claude Desktop, you can ask Claude to:
-
-### Infrastructure Queries
-
-> "Show me all vCenter instances in Atlas"
-
-> "Get the VMs from vCenter config abc-123"
-
-> "Search NetBox for devices matching 'edge01'"
-
-### Monitoring
-
-> "What are the current high-severity Zabbix alerts?"
-
-> "Show me unacknowledged alerts in Zabbix group 42"
-
-### Documentation & Issues
-
-> "Search Confluence for SIP trunk documentation"
-
-> "Find open Jira issues in the SYS project"
-
-### Cross-System Search
-
-> "Search all systems for 'vw746'"
-
-> "Find any mentions of 'core-router' across Atlas"
-
-### Performance
-
-> "What's the performance status of Atlas right now?"
-
-> "Show token usage for the last 24 hours"
-
-## Development
-
-### Running Tests
-
-```bash
-cd mcp-server
-uv run pytest
-```
-
-### Code Quality
-
-```bash
-# Format code
-uv run ruff format .
-
-# Lint code
-uv run ruff check .
-```
-
-### Running the Server Standalone
-
-For testing, you can run the MCP server directly:
-
-```bash
-cd mcp-server
-export ATLAS_API_URL=http://127.0.0.1:8000
-export ATLAS_API_TOKEN=your_token
-uv run atlas-mcp
-```
-
-The server communicates via stdio and expects MCP protocol messages on stdin.
-
-## Troubleshooting
-
-### Connection Issues
-
-1. Ensure Atlas API is running:
+1. Navigate to this directory:
    ```bash
-   uv run atlas api serve --host 127.0.0.1 --port 8000
+   cd mcp-server-ts
    ```
 
-2. Verify API token is correct and set in environment
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
 
-3. Check SSL verification settings if using HTTPS
+3. Run the installation script:
+   ```bash
+   npm run install:mcp
+   ```
+   This will update your `~/Library/Application Support/Claude/claude_desktop_config.json` to point to this server.
 
-### Claude Desktop Not Finding Tools
+4. Restart Claude Desktop.
 
-1. Check Claude Desktop logs:
-   - macOS: `~/Library/Logs/Claude/mcp-server-atlas.log`
-   - Windows: `%APPDATA%\Claude\Logs\mcp-server-atlas.log`
+## Uninstallation
 
-2. Verify the path in `claude_desktop_config.json` is absolute
+To remove the server configuration from Claude Desktop:
 
-3. Ensure environment variables are set in the config
+1. Run the uninstallation script:
+   ```bash
+   npm run uninstall:mcp
+   ```
 
-### API Errors
+2. Restart Claude Desktop.
 
-- Check Atlas API is accessible: `curl http://127.0.0.1:8000/health`
-- Verify authentication token is valid
-- Check Atlas API logs for errors
+## Usage
 
-## Architecture
+Once installed and Claude Desktop is restarted:
 
-```
-┌─────────────────┐
-│  Claude Desktop │
-└────────┬────────┘
-         │ MCP Protocol (stdio)
-         │
-┌────────▼────────┐
-│  Atlas MCP      │
-│    Server       │
-└────────┬────────┘
-         │ HTTP/HTTPS
-         │
-┌────────▼────────┐
-│  Atlas API      │
-│  (FastAPI)      │
-└────────┬────────┘
-         │
-    ┌────▼────┐
-    │ vCenter │
-    │ NetBox  │
-    │ Zabbix  │
-    │ Jira    │
-    │etc.     │
-    └─────────┘
-```
+1. You will see "Infrastructure Atlas" in the available MCP servers.
+2. When you use a tool for the first time, it will open your browser to authenticate with the Atlas Portal.
+3. After logging in, you will be redirected back to a local callback server which saves your token.
+4. Subsequent requests will use this stored token.
 
-## Security Notes
+## Configuration
 
-- **API Token**: Store your `ATLAS_API_TOKEN` securely. Do not commit it to version control.
-- **SSL Verification**: Keep `ATLAS_VERIFY_SSL=true` in production environments.
-- **Network Access**: Ensure the MCP server can reach your Atlas API (firewall rules, VPN, etc.)
-
-## License
-
-MIT
-
-## Contributing
-
-Contributions welcome! Please follow the Atlas project's coding standards:
-
-- Python 3.11+
-- 4-space indentation
-- Maximum line length: 120 characters
-- Use ruff for formatting and linting
-- All code and comments in English
-
-## Support
-
-For issues or questions:
-
-1. Check Atlas API documentation: `docs/` directory
-2. Review Atlas CLAUDE.md for project guidelines
-3. File issues on the Atlas GitHub repository
+Configuration is stored in `~/.config/atlas/mcp-config.json`. You typically do not need to edit this manually.

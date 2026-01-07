@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -16,7 +16,7 @@ from infrastructure_atlas.application.services import DefaultUserService
 from infrastructure_atlas.db import get_sessionmaker
 from infrastructure_atlas.db.models import User
 from infrastructure_atlas.infrastructure.db import mappers
-from infrastructure_atlas.interfaces.api.dependencies import CurrentUserDep, get_user_service
+from infrastructure_atlas.interfaces.api.dependencies import CurrentUserDep, OptionalUserDep, get_user_service
 
 router = APIRouter()
 SessionLocal = get_sessionmaker()
@@ -490,7 +490,7 @@ def auth_me(
 
 
 @router.get("/auth/login")
-def auth_login_form(request: Request, next_url: str | None = None):
+def auth_login_form(request: Request, next_url: str | None = Query(default=None, alias="next")):
     """Display login form."""
     n = next_url or "/app/"
     # If already logged in, redirect to target
@@ -539,6 +539,65 @@ def auth_logout(request: Request):
     except Exception:
         pass
     return RedirectResponse(url="/auth/login")
+
+
+@router.get("/auth/authorize-mcp")
+def auth_mcp_authorize(
+    request: Request,
+    callback: str,
+    current_user: OptionalUserDep,
+):
+    """Authorize MCP server by generating a new API key."""
+    # Ensure fully authenticated via session (already enforced by CurrentUserDep + middleware, but logic check)
+    if not current_user:
+        # construct relative URL to avoid strict validation in login endpoint
+        relative_next = f"{request.url.path}?{request.url.query}"
+        return RedirectResponse(url=f"/auth/login?next={relative_next}")
+
+    # Generate token
+    import secrets
+    token = secrets.token_urlsafe(32)
+    
+    # Store in DB
+    from infrastructure_atlas.db.models import UserAPIKey
+    
+    with SessionLocal() as db:
+        # Check if key exists for this provider (mcp)
+        provider = "mcp"
+        
+        stmt = select(UserAPIKey).where(
+            UserAPIKey.user_id == current_user.id,
+            UserAPIKey.provider == provider
+        )
+        existing_key = db.execute(stmt).scalar_one_or_none()
+        
+        if existing_key:
+            existing_key.secret = token
+            # Update updated_at explicitly if needed, but SQLAlchemy handles it usually
+            # We just need to commit
+            db.add(existing_key)
+        else:
+            new_key = UserAPIKey(
+                user_id=current_user.id,
+                provider=provider,
+                label="MCP Server",
+                secret=token
+            )
+            db.add(new_key)
+        db.commit()
+
+    # Redirect to callback
+    from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
+    
+    # helper to append query param
+    url_parts = list(urlparse(callback))
+    query = dict(parse_qs(url_parts[4]))
+    query['token'] = token
+    query['username'] = current_user.username
+    url_parts[4] = urlencode(query, doseq=True)
+    redirect_url = urlunparse(url_parts)
+    
+    return RedirectResponse(url=redirect_url)
 
 
 __all__ = ["router"]

@@ -1179,6 +1179,44 @@ def _load_commvault_server_data(
     return summary_payload, metrics_payload, jobs, stats
 
 
+@router.get("/server-info")
+def commvault_server_info(
+    hostname: str = Query(..., description="Client hostname or ID"),
+    limit: int = Query(25, ge=1, le=500),
+    hours: int = Query(24, ge=1, le=720),
+    retained_only: int = Query(0, ge=0, le=1),
+):
+    """Get summarized Commvault job info for a specific client/hostname."""
+    try:
+        summary, metrics, jobs, stats = _load_commvault_server_data(
+            hostname,
+            job_limit=limit,
+            since_hours=hours,
+            retained_only=bool(retained_only),
+            refresh_cache=False,
+        )
+        return {
+            "summary": summary,
+            "metrics": metrics,
+            "stats": stats,
+            "jobs": [
+                {
+                    "job_id": j.get("job_id"),
+                    "status": j.get("status"),
+                    "start_time": j.get("start_time"),
+                    "type": j.get("job_type"),
+                    "plan": j.get("plan_name"),
+                    "app_size": j.get("size_of_application_bytes"),
+                }
+                for j in jobs
+            ],
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 def _format_iso_human(value: str | None) -> str:
     """Format ISO datetime as human-readable."""
     if not value:
