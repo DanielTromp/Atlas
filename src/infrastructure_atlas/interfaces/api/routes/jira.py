@@ -8,6 +8,7 @@ from typing import Any
 
 import requests
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 
 from infrastructure_atlas.infrastructure.modules import get_module_registry
 
@@ -275,3 +276,104 @@ def jira_search(
     else:
         total = len(out)
     return {"total": total, "issues": out, "jql": jql_str, "endpoint": used_endpoint}
+
+
+# Remote Link Models
+class ConfluenceRemoteLinkReq(BaseModel):
+    page_id: str
+    title: str | None = None
+    relationship: str = "Wiki Page"
+
+
+@router.get("/issue/{key}/remotelink")
+def get_remote_links(key: str):
+    """Get remote links for an issue."""
+    require_jira_enabled()
+    sess, base = _jira_session()
+    
+    url = f"{base}/rest/api/3/issue/{key}/remotelink"
+    try:
+        r = sess.get(url, timeout=30)
+        if r.status_code == 404:
+            raise HTTPException(status_code=404, detail=f"Issue {key} not found")
+        r.raise_for_status()
+        return r.json()
+    except requests.HTTPError as ex:
+        raise HTTPException(status_code=ex.response.status_code, detail=str(ex))
+    except Exception as ex:
+        raise HTTPException(status_code=502, detail=f"Jira error: {ex}")
+
+
+@router.post("/issue/{key}/remotelink/confluence")
+def create_confluence_remotelink(key: str, req: ConfluenceRemoteLinkReq):
+    """Create a remote link to a Confluence page."""
+    require_jira_enabled()
+    sess, base = _jira_session()
+
+    # Configuration constants from requirements
+    # These could be moved to env/config in the future if they change
+    APP_ID = "c040a8bc-dafc-3073-aee9-8b0b4ba30eb0" 
+    APP_NAME = "System Confluence"
+    BASE_URL = "https://enreach-services.atlassian.net" # Could derive from config but prompt specified specific details
+    
+    # Construct the Jira Remote Link payload
+    # GlobalID format: appId=...&pageId=...
+    global_id = f"appId={APP_ID}&pageId={req.page_id}"
+    page_url = f"{BASE_URL}/wiki/pages/viewpage.action?pageId={req.page_id}"
+    title = req.title or f"Confluence Page {req.page_id}"
+    
+    payload = {
+        "globalId": global_id,
+        "application": {
+            "type": "com.atlassian.confluence",
+            "name": APP_NAME
+        },
+        "relationship": req.relationship,
+        "object": {
+            "url": page_url,
+            "title": title,
+            "icon": {
+                "url16x16": f"{BASE_URL}/wiki/favicon.ico",
+                "title": "Confluence"
+            }
+        }
+    }
+
+    url = f"{base}/rest/api/3/issue/{key}/remotelink"
+    try:
+        r = sess.post(url, json=payload, timeout=30)
+        r.raise_for_status()
+        res_json = r.json()
+        return {
+            "success": True, 
+            "linkId": res_json.get("id"),
+            "self": res_json.get("self"),
+            "url": page_url
+        }
+    except requests.HTTPError as ex:
+        # Check for duplicates or other specific errors if Jira returns useful msg
+        detail = str(ex)
+        if ex.response is not None:
+             detail = ex.response.text
+        raise HTTPException(status_code=ex.response.status_code if ex.response else 500, detail=detail)
+    except Exception as ex:
+        raise HTTPException(status_code=502, detail=f"Jira error: {ex}")
+
+
+@router.delete("/issue/{key}/remotelink/{link_id}")
+def delete_remote_link(key: str, link_id: str):
+    """Delete a remote link."""
+    require_jira_enabled()
+    sess, base = _jira_session()
+    
+    url = f"{base}/rest/api/3/issue/{key}/remotelink/{link_id}"
+    try:
+        r = sess.delete(url, timeout=30)
+        if r.status_code == 404:
+             raise HTTPException(status_code=404, detail="Link or Issue not found")
+        r.raise_for_status()
+        return {"success": True, "message": "Link deleted"}
+    except requests.HTTPError as ex:
+        raise HTTPException(status_code=ex.response.status_code, detail=str(ex))
+    except Exception as ex:
+        raise HTTPException(status_code=502, detail=f"Jira error: {ex}")

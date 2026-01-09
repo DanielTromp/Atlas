@@ -223,6 +223,44 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     },
                     required: ["jql"]
                 }
+
+            },
+            {
+                name: "createJiraRemoteLink",
+                description: "Create a remote link from a Jira issue to a Confluence page",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                         issueIdOrKey: { type: "string", description: "Jira issue key (e.g., ESD-123)" },
+                         confluencePageId: { type: "string", description: "Confluence page ID" },
+                         title: { type: "string", description: "Link title (optional)" },
+                         relationship: { type: "string", description: "Relationship type (default: 'Wiki Page')", default: "Wiki Page" }
+                    },
+                    required: ["issueIdOrKey", "confluencePageId"]
+                }
+            },
+            {
+                name: "getJiraRemoteLinks",
+                description: "Get remote links for a Jira issue",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        issueIdOrKey: { type: "string", description: "Jira issue key" }
+                    },
+                    required: ["issueIdOrKey"]
+                }
+            },
+            {
+                name: "deleteJiraRemoteLink",
+                description: "Delete a remote link from a Jira issue",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        issueIdOrKey: { type: "string", description: "Jira issue key" },
+                        linkId: { type: "string", description: "ID of the remote link to delete" }
+                    },
+                    required: ["issueIdOrKey", "linkId"]
+                }
             },
             {
                 name: "atlas_confluence_search",
@@ -328,6 +366,41 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 const response = await api.get("/jira/search", { 
                     params: { jql: params.jql, limit: params.limit, expand: "names" } 
                 });
+                 return {
+                    content: [{
+                        type: "text",
+                        text: JSON.stringify(response.data, null, 2)
+                    }]
+                };
+
+            }
+            case "createJiraRemoteLink": {
+                const params = request.params.arguments as any;
+                const response = await api.post(`/jira/issue/${params.issueIdOrKey}/remotelink/confluence`, { 
+                    page_id: params.confluencePageId,
+                    title: params.title,
+                    relationship: params.relationship
+                });
+                 return {
+                    content: [{
+                        type: "text",
+                        text: JSON.stringify(response.data, null, 2)
+                    }]
+                };
+            }
+            case "getJiraRemoteLinks": {
+                const params = request.params.arguments as any;
+                const response = await api.get(`/jira/issue/${params.issueIdOrKey}/remotelink`);
+                 return {
+                    content: [{
+                        type: "text",
+                        text: JSON.stringify(response.data, null, 2)
+                    }]
+                };
+            }
+            case "deleteJiraRemoteLink": {
+                const params = request.params.arguments as any;
+                const response = await api.delete(`/jira/issue/${params.issueIdOrKey}/remotelink/${params.linkId}`);
                  return {
                     content: [{
                         type: "text",
