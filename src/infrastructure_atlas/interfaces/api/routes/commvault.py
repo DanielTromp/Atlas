@@ -828,12 +828,23 @@ def _match_cached_commvault_client(identifier: str, clients: list[dict[str, Any]
         raise HTTPException(status_code=404, detail=f"No cached client with ID {client_id} found")
 
     needle = ident.casefold()
+
+    def _merge_clients(candidates: list[dict[str, Any]]) -> dict[str, Any]:
+        """Merge multiple client records into one virtual client."""
+        if not candidates:
+            raise ValueError("No candidates to merge")
+        first = candidates[0]
+        merged = dict(first)
+        # Use the union of all name variants to ensure we match jobs for any of the clients
+        all_variants = set()
+        for c in candidates:
+            all_variants.update(c.get("name_variants", set()) or set())
+        merged["name_variants"] = all_variants
+        return merged
+
     exact = [entry for entry in clients if needle in entry["name_variants"]]
-    if len(exact) == 1:
-        return exact[0]
-    if len(exact) > 1:
-        names = ", ".join(sorted({entry["display_name"] or entry["name"] or str(entry["client_id"]) for entry in exact}))
-        raise HTTPException(status_code=409, detail=f"Ambiguous client '{identifier}'. Matches: {names}")
+    if len(exact) >= 1:
+        return _merge_clients(exact)
 
     matches = [
         entry
@@ -842,10 +853,9 @@ def _match_cached_commvault_client(identifier: str, clients: list[dict[str, Any]
     ]
     if not matches:
         raise HTTPException(status_code=404, detail=f"No cached client matching '{identifier}' found")
-    if len(matches) > 1:
-        names = ", ".join(sorted({entry["display_name"] or entry["name"] or str(entry["client_id"]) for entry in matches}))
-        raise HTTPException(status_code=409, detail=f"Ambiguous client '{identifier}'. Matches: {names}")
-    return matches[0]
+    
+    # Merge fuzzy matches as well
+    return _merge_clients(matches)
 
 
 def _job_matches_cached_client(job: Mapping[str, Any], client_record: dict[str, Any]) -> bool:
@@ -2229,28 +2239,55 @@ def commvault_servers_search(
         return {"results": []}
 
     matches: list[dict[str, Any]] = []
+    seen_names: set[str] = set()
+    
     for record in clients:
         variants = record.get("name_variants") or set()
         client_id = record.get("client_id")
+        name = record.get("name")
+        display_name = record.get("display_name")
+        
+        # Determine the "primary" name we want to show
+        primary_name = display_name or name or ""
+        primary_key = primary_name.lower().strip()
+        
+        should_add = False
+        
         if needle.isdigit() and client_id == int(needle):
+            should_add = True
+            # For ID match, we might want to show it even if name is seen?
+            # But the goal is "clean hostnames". If I search by ID, I probably want that specific one.
+            # Let's assume ID search overrides dedup or we just dedup by name anyway.
+            # If I search 1478, I get "server". If I search 1597, I get "server".
+            # If they map to the same name, we might only want one. 
+            # But if I search by specific unique ID, I expect that specific result.
+            
+            # Use specific logic for ID match: exact return
             matches = [
                 {
                     "client_id": client_id,
-                    "name": record.get("name"),
-                    "display_name": record.get("display_name"),
+                    "name": name,
+                    "display_name": display_name,
                     "job_count": record.get("job_count", 0),
                 }
             ]
-            break
-        if any(needle in variant for variant in variants if variant):
-            matches.append(
-                {
-                    "client_id": client_id,
-                    "name": record.get("name"),
-                    "display_name": record.get("display_name"),
-                    "job_count": record.get("job_count", 0),
-                }
-            )
+            break 
+             
+        elif any(needle in variant for variant in variants if variant):
+            should_add = True
+            
+        if should_add:
+            if primary_key not in seen_names:
+                seen_names.add(primary_key)
+                matches.append(
+                    {
+                        "client_id": client_id,
+                        "name": name,
+                        "display_name": display_name,
+                        "job_count": record.get("job_count", 0),
+                    }
+                )
+        
         if len(matches) >= limit:
             break
 

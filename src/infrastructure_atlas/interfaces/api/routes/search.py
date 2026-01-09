@@ -467,13 +467,24 @@ def search_aggregate(
         
         for job in jobs:
             c_name = str(job.get("client_name") or "").lower()
+            dest_name = str(job.get("destination_client_name") or "").lower()
             sc_name = str(job.get("subclient_name") or "").lower()
             plan = str(job.get("plan_name") or "").lower()
             
-            if ql in c_name or ql in sc_name or ql in plan:
+            # Prefer destination_client_name for matching logic if we want to "see" it by that name
+            # But we should search across all fields.
+            # The user wants: "search isn't looking at the client_name but at the destination_client_name"
+            # implying that if I search for "dest_name", I should find it.
+            # And also "I want to see all the backups that are related to the server when I do a search"
+            
+            if ql in c_name or ql in dest_name or ql in sc_name or ql in plan:
+                # Use destination client name as the primary display name if available
+                display_client = job.get("destination_client_name") or job.get("client_name")
+                
                 cv_matches.append({
                     "job_id": job.get("job_id"),
-                    "client": job.get("client_name"),
+                    "client": display_client,
+                    "original_client": job.get("client_name"),
                     "type": job.get("job_type"),
                     "status": job.get("status"),
                     "start_time": job.get("start_time"),
