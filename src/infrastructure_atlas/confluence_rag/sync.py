@@ -64,62 +64,101 @@ class ConfluenceSyncEngine:
                 self._update_sync_state(space, "failed", str(e))
     
     async def _sync_space(
-        self, 
-        space_key: str, 
+        self,
+        space_key: str,
         incremental: bool = True,
         since: datetime | None = None,
         ancestor_id: str | None = None
     ):
         """Sync a single space"""
-        
+        import sys
+
         pages_processed = 0
+        pages_skipped = 0
+        pages_failed = 0
         chunks_created = 0
-        
+        seen_page_ids: set[str] = set()  # Track pages to avoid duplicates
+
         async for page_data in self.confluence.get_pages_in_space(
             space_key=space_key,
             labels=self.settings.watched_labels,
             updated_after=since if incremental else None,
             ancestor_id=ancestor_id
         ):
+            page_num = pages_processed + pages_skipped + pages_failed + 1
+            page_id = page_data.get("id", "?")
+            page_title = page_data.get("title", "Unknown")[:50]
+
+            # Skip if we've already processed this page in this session
+            if page_id in seen_page_ids:
+                print(f"[{page_num}] {page_title} - DUPLICATE, skipping", flush=True)
+                continue
+            seen_page_ids.add(page_id)
+
             try:
-                # Parse page metadata
+                # Progress: fetching
+                print(f"[{page_num}] {page_title}", flush=True)
+
                 page = self._parse_page_data(page_data, space_key)
-                
-                # Fetch full content
-                html_content = await self.confluence.export_page_html(page.page_id)
-                raw_content = page_data.get("body", {}).get("storage", {}).get("value", "")
-                
+
+                # Fetch full content (export_view for Docling processing)
+                print(f"  -> Exporting HTML...", end="", flush=True)
+                html_content, html_warning = await self.confluence.export_page_html(page.page_id)
+
+                if html_warning:
+                    print(f" {len(html_content):,} chars ({html_warning})", flush=True)
+                else:
+                    print(f" {len(html_content):,} chars", flush=True)
+
+                # Skip pages with no content
+                if not html_content.strip():
+                    print(f"  -> SKIPPED: empty page", flush=True)
+                    pages_skipped += 1
+                    continue
+
                 # Chunk the page
-                logger.info(f"Chunking page {page.page_id} (HTML len: {len(html_content)}, Raw len: {len(raw_content)})")
-                chunks = self.chunker.chunk_page(page, html_content, raw_content)
-                logger.info(f"Generated {len(chunks)} chunks")
-                
+                print(f"  -> Chunking...", end="", flush=True)
+                chunks = self.chunker.chunk_page(page, html_content, "")
+                print(f" {len(chunks)} chunks", flush=True)
+
                 # Generate embeddings
+                print(f"  -> Embedding...", end="", flush=True)
                 chunks_with_embeddings = self.embeddings.embed_chunks(
-                    chunks, 
+                    chunks,
                     show_progress=False
                 )
-                
+                print(f" done", flush=True)
+
                 # Store in database
-                await self._store_page_and_chunks(page, raw_content, chunks_with_embeddings)
-                
+                print(f"  -> Storing...", end="", flush=True)
+                await self._store_page_and_chunks(page, chunks_with_embeddings)
+                print(f" done", flush=True)
+
                 pages_processed += 1
                 chunks_created += len(chunks)
-                
-                logger.debug(f"Processed page: {page.title} ({len(chunks)} chunks)")
-                
+
+                # Periodic checkpoint to prevent DB bloat (every 50 pages)
+                if pages_processed % 50 == 0:
+                    conn = self.db.connect()
+                    conn.execute("CHECKPOINT")
+                    print(f"  [checkpoint at {pages_processed} pages]", flush=True)
+
             except Exception as e:
-                logger.error(f"Failed to process page {page_data.get('id')}: {e}")
+                pages_failed += 1
+                print(f"  -> ERROR: {e}", file=sys.stderr, flush=True)
                 continue
-        
-        logger.info(
-            f"Space {space_key} sync complete: "
-            f"{pages_processed} pages, {chunks_created} chunks"
-        )
+
+        summary_parts = [f"{pages_processed} pages", f"{chunks_created} chunks"]
+        if pages_skipped:
+            summary_parts.append(f"{pages_skipped} skipped")
+        if pages_failed:
+            summary_parts.append(f"{pages_failed} failed")
+
+        print(f"\nSpace {space_key} complete: {', '.join(summary_parts)}", flush=True)
+
     async def _store_page_and_chunks(
         self,
         page: ConfluencePage,
-        raw_content: str,
         chunks: list[ChunkWithEmbedding]
     ):
         """Store page and chunks in database.
@@ -157,42 +196,35 @@ class ConfluenceSyncEngine:
         # Step 2: Upsert page and insert new chunks in a new transaction
         conn.execute("BEGIN TRANSACTION")
         try:
-            # Upsert page
+            # Upsert page (raw_content removed to eliminate base64 image bloat)
             conn.execute("""
                 INSERT INTO pages (
                     page_id, space_key, title, url, labels, version,
-                    updated_at, updated_by, parent_id, ancestors,
-                    synced_at, raw_content
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    updated_at, updated_by, parent_id, ancestors, synced_at
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                 ON CONFLICT (page_id) DO UPDATE SET
                     title = EXCLUDED.title,
                     labels = EXCLUDED.labels,
                     version = EXCLUDED.version,
                     updated_at = EXCLUDED.updated_at,
-                    synced_at = EXCLUDED.synced_at,
-                    raw_content = EXCLUDED.raw_content
+                    synced_at = EXCLUDED.synced_at
             """, [
                 page.page_id, page.space_key, page.title, page.url,
                 page.labels, page.version, page.updated_at, page.updated_by,
-                page.parent_id, page.ancestors, datetime.now(), raw_content
+                page.parent_id, page.ancestors, datetime.now()
             ])
 
             # Insert chunks
             for chunk in chunks:
-                span_start = chunk.text_spans[0].start_char if chunk.text_spans else None
-                span_end = chunk.text_spans[0].end_char if chunk.text_spans else None
-
                 conn.execute("""
                     INSERT INTO chunks (
-                        chunk_id, page_id, content, original_content,
-                        context_path, chunk_type, token_count, position_in_page,
-                        heading_context, text_span_start, text_span_end, metadata
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                        chunk_id, page_id, content, context_path, chunk_type,
+                        token_count, position_in_page, heading_context, metadata
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                 """, [
                     chunk.chunk_id, chunk.page_id, chunk.content,
-                    chunk.original_content, chunk.context_path, chunk.chunk_type.value,
+                    chunk.context_path, chunk.chunk_type.value,
                     chunk.token_count, chunk.position_in_page, chunk.heading_context,
-                    span_start, span_end,
                     json.dumps(chunk.metadata)
                 ])
 
@@ -219,29 +251,24 @@ class ConfluenceSyncEngine:
         except:
              updated_at = datetime.now()  # Fallback
 
-        # _links.webui is usually relative to the context root (e.g. /wiki/spaces/...)
-        # or sometimes just /spaces/... depending on instance.
-        # We assume base_url is configured as ".../wiki"
-        # We cleanse base_url of any API suffixes just in case
-        base_clean = self.confluence.base_url
-        for suffix in ["/rest/api", "/v1"]:
-            if base_clean.endswith(suffix):
-                try:
-                    base_clean = base_clean.removesuffix(suffix)
-                except AttributeError:
-                    base_clean = base_clean[:-len(suffix)]
-        
-        # If webui starts with /, join carefully
+        # Build the page URL from _links.webui
+        # webui is typically "/spaces/SPACE/pages/ID/Title" (relative path)
+        # base_url is typically "https://company.atlassian.net" (no /wiki)
         webui = data["_links"]["webui"]
-        if webui.startswith("/wiki/"):
-                # if webui already has context, and base has it too, avoid double
-                if base_clean.endswith("/wiki"):
-                    try:
-                        base_clean = base_clean.removesuffix("/wiki")
-                    except AttributeError:
-                        base_clean = base_clean[:-5] # remove /wiki
-        
-        url = webui if webui.startswith("http") else f"{base_clean}{webui}"
+
+        if webui.startswith("http"):
+            # Already absolute URL
+            url = webui
+        else:
+            # Build absolute URL: base + /wiki + webui path
+            base = self.confluence.base_url.rstrip("/")
+            # Ensure /wiki is included (Confluence Cloud uses /wiki context)
+            if webui.startswith("/wiki/"):
+                url = f"{base}{webui}"
+            elif webui.startswith("/"):
+                url = f"{base}/wiki{webui}"
+            else:
+                url = f"{base}/wiki/{webui}"
 
         return ConfluencePage(
             page_id=data["id"],

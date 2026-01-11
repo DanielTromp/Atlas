@@ -7,7 +7,7 @@ SCHEMA_SETUP_STMTS = [
     "INSTALL vss;",
     "LOAD vss;",
 
-    # Pages metadata
+    # Pages metadata (raw_content removed to avoid base64 image bloat)
     """
     CREATE TABLE IF NOT EXISTS pages (
         page_id VARCHAR PRIMARY KEY,
@@ -20,27 +20,23 @@ SCHEMA_SETUP_STMTS = [
         updated_by VARCHAR,
         parent_id VARCHAR,
         ancestors VARCHAR[],
-        synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        raw_content TEXT
+        synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     """,
     "CREATE INDEX IF NOT EXISTS idx_pages_space ON pages (space_key);",
     "CREATE INDEX IF NOT EXISTS idx_pages_updated ON pages (updated_at);",
 
-    # Chunks with original content for quotes
+    # Chunks for search and quotes (original_content removed - same as content)
     """
     CREATE TABLE IF NOT EXISTS chunks (
         chunk_id VARCHAR PRIMARY KEY,
         page_id VARCHAR NOT NULL REFERENCES pages(page_id),
         content TEXT NOT NULL,
-        original_content TEXT NOT NULL,
         context_path VARCHAR[],
         chunk_type VARCHAR,
         token_count INTEGER,
         position_in_page INTEGER,
         heading_context VARCHAR,
-        text_span_start INTEGER,
-        text_span_end INTEGER,
         metadata JSON,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );

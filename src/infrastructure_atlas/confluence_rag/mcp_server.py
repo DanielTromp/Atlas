@@ -119,7 +119,7 @@ class AtlasConfluenceMCPServer:
             Get statistics about the Confluence RAG cache.
             """
             conn = self.db.connect()
-            
+
             try:
                 stats = conn.execute("""
                     SELECT
@@ -128,16 +128,119 @@ class AtlasConfluenceMCPServer:
                         (SELECT COUNT(*) FROM chunk_embeddings) as total_embeddings,
                         (SELECT MAX(synced_at) FROM pages) as last_sync
                 """).fetchone()
-                
+
                 result = "## Confluence RAG Cache Statistics\n\n"
                 result += f"- **Total Pages**: {stats[0]}\n"
                 result += f"- **Total Chunks**: {stats[1]}\n"
                 result += f"- **Total Embeddings**: {stats[2]}\n"
                 result += f"- **Last Sync**: {stats[3]}\n"
-                
+
                 return result
             except:
                 return "Cache empty or not initialized"
+
+        @self.server.tool()
+        async def generate_guide_from_docs(
+            query: str,
+            max_pages: int = 5
+        ) -> str:
+            """
+            Search documentation and return FULL content from cached pages.
+
+            Use this to generate comprehensive guides from internal documentation.
+            Returns complete page content (not just snippets) - no need to fetch
+            from Confluence separately.
+
+            Args:
+                query: What to search for (e.g., "configure MS Defender", "CEPH tenants")
+                max_pages: Maximum number of relevant pages to include (default 5)
+            """
+            config = SearchConfig(
+                top_k=max_pages * 3,  # Get more results to group by page
+                include_citations=False
+            )
+
+            response = await self.search.search(query, config)
+
+            if not response.results:
+                return f"No documentation found for: {query}"
+
+            # Group results by page and get full page content
+            conn = self.db.connect()
+            seen_pages = set()
+            pages_content = []
+
+            for result in response.results:
+                page_id = result.page.page_id
+                if page_id in seen_pages:
+                    continue
+                seen_pages.add(page_id)
+
+                if len(seen_pages) > max_pages:
+                    break
+
+                # Get ALL chunks for this page (full content)
+                chunks = conn.execute("""
+                    SELECT content, heading_context
+                    FROM chunks
+                    WHERE page_id = $1
+                    ORDER BY position_in_page
+                """, [page_id]).fetchall()
+
+                page_content = self._format_page_for_guide(result.page, chunks)
+                pages_content.append(page_content)
+
+            # Build comprehensive guide
+            output = f"# Documentation: {query}\n\n"
+            output += f"*Found {len(pages_content)} relevant pages from internal documentation*\n\n"
+            output += "---\n\n"
+
+            for content in pages_content:
+                output += content
+                output += "\n---\n\n"
+
+            return output
+
+        @self.server.tool()
+        async def get_doc_content(
+            page_title: str
+        ) -> str:
+            """
+            Get full content of a documentation page by title (from RAG cache).
+
+            Use this when you know the exact page title and want full content
+            without fetching from Confluence.
+            """
+            conn = self.db.connect()
+
+            # Fuzzy match on title
+            page = conn.execute(
+                "SELECT * FROM pages WHERE title ILIKE $1 LIMIT 1",
+                [f"%{page_title}%"]
+            ).fetchone()
+
+            if not page:
+                # Try word matching
+                words = page_title.split()
+                if len(words) > 1:
+                    pattern = '%' + '%'.join(words) + '%'
+                    page = conn.execute(
+                        "SELECT * FROM pages WHERE title ILIKE $1 LIMIT 1",
+                        [pattern]
+                    ).fetchone()
+
+            if not page:
+                return f"Page not found: {page_title}"
+
+            columns = [desc[0] for desc in conn.description]
+            page_dict = dict(zip(columns, page))
+
+            chunks = conn.execute(
+                "SELECT content, heading_context FROM chunks WHERE page_id = $1 ORDER BY position_in_page",
+                [page_dict["page_id"]]
+            ).fetchall()
+
+            return self._format_page(page_dict, chunks)
     
     def _format_search_results(self, response: SearchResponse) -> str:
         """Format search results for Claude output"""
@@ -176,7 +279,7 @@ class AtlasConfluenceMCPServer:
         output += f"**Updated:** {page['updated_at']} by {page['updated_by']}\n"
         output += f"**URL:** {page['url']}\n\n"
         output += "---\n\n"
-        
+
         current_heading = None
         for chunk in chunks:
             # chunk is (content, heading_context)
@@ -184,9 +287,26 @@ class AtlasConfluenceMCPServer:
                 current_heading = chunk[1]
                 if current_heading:
                     output += f"## {current_heading}\n\n"
-            
+
             output += f"{chunk[0]}\n\n"
-        
+
+        return output
+
+    def _format_page_for_guide(self, page, chunks: list) -> str:
+        """Format a page for guide output (from SearchResult.page)"""
+        output = f"## {page.title}\n\n"
+        output += f"*Source: {page.space_key} • Updated: {page.updated_at}*\n\n"
+
+        current_heading = None
+        for chunk in chunks:
+            # chunk is (content, heading_context)
+            if chunk[1] != current_heading:
+                current_heading = chunk[1]
+                if current_heading:
+                    output += f"### {current_heading}\n\n"
+
+            output += f"{chunk[0]}\n\n"
+
         return output
     
     async def run(self):

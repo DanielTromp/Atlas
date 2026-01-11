@@ -44,31 +44,48 @@ class ConfluenceClient:
             cql_parts.append(f'lastModified > "{date_str}"')
         
         cql = ' AND '.join(cql_parts)
-        # Log the generated CQL for debugging
-        print(f"DEBUG: Executing CQL: {cql}")
-        
-        start = 0
-        limit = 50
-        
-        while True:
-            response = await self.client.get(
-                "/content/search",
-                params={
-                    "cql": cql,
-                    "start": start,
-                    "limit": limit,
-                    "expand": "version,ancestors,metadata.labels,body.storage"
-                }
-            )
+        # Add ORDER BY to ensure consistent pagination
+        cql += ' ORDER BY id ASC'
+
+        # Confluence Cloud uses cursor-based pagination, not offset-based
+        # We must follow _links.next URL, not increment start parameter
+        next_path: str | None = "/content/search"
+        params: dict | None = {
+            "cql": cql,
+            "limit": 50,
+            "expand": "version,ancestors,metadata.labels,body.storage"
+        }
+
+        while next_path:
+            # For first request, use params; for subsequent, next_path has cursor embedded
+            if params:
+                response = await self.client.get(next_path, params=params)
+                params = None  # Clear params, subsequent requests use next_path directly
+            else:
+                response = await self.client.get(next_path)
+
             response.raise_for_status()
             data = response.json()
-            
-            for page in data["results"]:
-                yield page
-            
-            if len(data["results"]) < limit:
+
+            results = data.get("results", [])
+            if not results:
                 break
-            start += limit
+
+            for page in results:
+                yield page
+
+            # Get next page URL (contains cursor parameter)
+            # The path is like "/rest/api/content/search?cursor=..."
+            # We need to strip "/rest/api" since base_url already includes it
+            raw_next = data.get("_links", {}).get("next")
+            if raw_next:
+                # Strip the /rest/api prefix since our client base_url is /wiki/rest/api
+                if raw_next.startswith("/rest/api/"):
+                    next_path = raw_next[len("/rest/api"):]
+                else:
+                    next_path = raw_next
+            else:
+                next_path = None
     
     async def get_page_content(self, page_id: str) -> dict:
         """Fetch full page content"""
@@ -81,22 +98,39 @@ class ConfluenceClient:
         response.raise_for_status()
         return response.json()
     
-    async def export_page_html(self, page_id: str) -> str:
-        """Export page as HTML for Docling processing"""
+    async def export_page_html(self, page_id: str) -> tuple[str, str | None]:
+        """Export page as HTML for Docling processing.
+
+        Returns:
+            Tuple of (html_content, warning_message)
+            warning_message is None if content was retrieved successfully
+        """
         response = await self.client.get(
             f"/content/{page_id}",
-            params={"expand": "body.export_view"}
+            params={"expand": "body.export_view,body.view,body.storage"}
         )
         response.raise_for_status()
-        body = response.json()["body"]
-        if "export_view" in body:
-             return body["export_view"]["value"]
-        # Fallback to storage or view if export_view not available
-        if "view" in body:
-             return body["view"]["value"]
-        if "storage" in body:
-             return body["storage"]["value"]
-        return ""
+        data = response.json()
+
+        body = data.get("body", {})
+
+        # Try export_view first (best for Docling)
+        if "export_view" in body and body["export_view"].get("value"):
+            return body["export_view"]["value"], None
+
+        # Fallback to view
+        if "view" in body and body["view"].get("value"):
+            return body["view"]["value"], "using view fallback"
+
+        # Fallback to storage (raw Confluence XML)
+        if "storage" in body and body["storage"].get("value"):
+            return body["storage"]["value"], "using storage fallback"
+
+        # No content found - check why
+        page_type = data.get("type", "unknown")
+        status = data.get("status", "unknown")
+
+        return "", f"no body content (type={page_type}, status={status})"
 
     async def close(self):
         await self.client.aclose()

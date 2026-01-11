@@ -124,16 +124,13 @@ class HybridSearchEngine:
         sql = """
             WITH semantic_results AS (
                 -- Vector similarity search
-                SELECT 
+                SELECT
                     c.chunk_id,
                     c.page_id,
                     c.content,
-                    c.original_content,
                     c.context_path,
                     c.chunk_type,
                     c.heading_context,
-                    c.text_span_start,
-                    c.text_span_end,
                     c.metadata,
                     1 - array_cosine_distance(ce.embedding, $1::FLOAT[768]) as similarity,
                     ROW_NUMBER() OVER (ORDER BY array_cosine_distance(ce.embedding, $1::FLOAT[768])) as sem_rank
@@ -144,16 +141,13 @@ class HybridSearchEngine:
             ),
             keyword_results AS (
                 -- Full-text search with DuckDB FTS
-                SELECT 
+                SELECT
                     c.chunk_id,
                     c.page_id,
                     c.content,
-                    c.original_content,
                     c.context_path,
                     c.chunk_type,
                     c.heading_context,
-                    c.text_span_start,
-                    c.text_span_end,
                     c.metadata,
                     fts_main_chunks.match_bm25(chunk_id, $3) as bm25_score,
                     ROW_NUMBER() OVER (ORDER BY fts_main_chunks.match_bm25(chunk_id, $3) DESC) as kw_rank
@@ -167,12 +161,9 @@ class HybridSearchEngine:
                     COALESCE(s.chunk_id, k.chunk_id) as chunk_id,
                     COALESCE(s.page_id, k.page_id) as page_id,
                     COALESCE(s.content, k.content) as content,
-                    COALESCE(s.original_content, k.original_content) as original_content,
                     COALESCE(s.context_path, k.context_path) as context_path,
                     COALESCE(s.chunk_type, k.chunk_type) as chunk_type,
                     COALESCE(s.heading_context, k.heading_context) as heading_context,
-                    COALESCE(s.text_span_start, k.text_span_start) as text_span_start,
-                    COALESCE(s.text_span_end, k.text_span_end) as text_span_end,
                     COALESCE(s.metadata, k.metadata) as metadata,
                     s.similarity,
                     k.bm25_score,
@@ -271,17 +262,13 @@ class HybridSearchEngine:
             chunk_id=row["chunk_id"],
             page_id=row["page_id"],
             content=row["content"],
-            original_content=row["original_content"],
+            original_content=row["content"],  # Same as content now
             context_path=row["context_path"] or [],
-            chunk_type=ChunkType(row["chunk_type"]),
+            chunk_type=ChunkType(row["chunk_type"]) if row["chunk_type"] else ChunkType.PROSE,
             token_count=0,  # Not needed for search results
             position_in_page=0,
             heading_context=row["heading_context"],
-            text_spans=[TextSpan(
-                start_char=row["text_span_start"] or 0,
-                end_char=row["text_span_end"] or 0,
-                original_text=row["original_content"]
-            )] if row.get("text_span_start") is not None else [],
+            text_spans=[],  # Removed from schema
             metadata=json.loads(row["metadata"]) if row["metadata"] else {}
         )
     
