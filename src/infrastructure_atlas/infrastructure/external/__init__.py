@@ -12,6 +12,15 @@ from .commvault_client import (
 )
 from .confluence_client import ConfluenceClient, ConfluenceClientConfig
 from .esxi_client import ESXiClient
+from .jira_client import (
+    JiraAPIError,
+    JiraAuthError,
+    JiraClient,
+    JiraClientConfig,
+    JiraConfigError,
+    JiraError,
+    create_jira_client_from_env,
+)
 from .foreman_client import (
     ForemanAPIError,
     ForemanAuthError,
@@ -68,6 +77,13 @@ __all__ = [
     "ForemanClient",
     "ForemanClientConfig",
     "ForemanClientError",
+    "JiraAPIError",
+    "JiraAuthError",
+    "JiraClient",
+    "JiraClientConfig",
+    "JiraConfigError",
+    "JiraError",
+    "create_jira_client_from_env",
     "GitAuthError",
     "GitClient",
     "GitClientConfig",

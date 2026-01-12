@@ -14,6 +14,7 @@ from .commvault import (
     CommvaultStoragePoolDetails,
 )
 from .confluence import ConfluenceAttachment
+from .jira import JiraAttachment
 from .netbox import NetboxDeviceRecord, NetboxVMRecord
 from .vcenter import VCenterVM
 from .zabbix import (
@@ -35,6 +36,7 @@ __all__ = [
     "CommvaultStoragePool",
     "CommvaultStoragePoolDetails",
     "ConfluenceAttachment",
+    "JiraAttachment",
     "NetboxDeviceRecord",
     "NetboxVMRecord",
     "VCenterVM",
