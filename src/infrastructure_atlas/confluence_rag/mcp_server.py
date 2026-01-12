@@ -18,10 +18,8 @@ without requiring the Atlas API server to be running.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
-from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -35,45 +33,67 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
+# Client Caching - Reuse clients across calls for performance
+# =============================================================================
+
+_client_cache: dict[str, Any] = {}
+
+
+def _get_cached_client(key: str, factory):
+    """Get or create a cached client instance."""
+    if key not in _client_cache:
+        _client_cache[key] = factory()
+    return _client_cache[key]
+
+
+# =============================================================================
 # Client Factory Functions
 # =============================================================================
 
 
 def _create_netbox_client():
-    """Create NetBox client from environment variables."""
-    from infrastructure_atlas.infrastructure.external import NetboxClient, NetboxClientConfig
+    """Create or get cached NetBox client from environment variables."""
 
-    url = os.getenv("NETBOX_URL", "").strip()
-    token = os.getenv("NETBOX_TOKEN", "").strip()
+    def factory():
+        from infrastructure_atlas.infrastructure.external import NetboxClient, NetboxClientConfig
 
-    if not url or not token:
-        raise ValueError("NetBox not configured: set NETBOX_URL and NETBOX_TOKEN environment variables")
+        url = os.getenv("NETBOX_URL", "").strip()
+        token = os.getenv("NETBOX_TOKEN", "").strip()
 
-    config = NetboxClientConfig(url=url, token=token)
-    return NetboxClient(config)
+        if not url or not token:
+            raise ValueError("NetBox not configured: set NETBOX_URL and NETBOX_TOKEN environment variables")
+
+        config = NetboxClientConfig(url=url, token=token, cache_ttl_seconds=600.0)  # 10 min cache
+        return NetboxClient(config)
+
+    return _get_cached_client("netbox", factory)
 
 
 def _create_zabbix_client():
-    """Create Zabbix client from environment variables."""
-    from infrastructure_atlas.infrastructure.external import ZabbixClient, ZabbixClientConfig
+    """Create or get cached Zabbix client from environment variables."""
 
-    url = os.getenv("ZABBIX_API_URL", "").strip()
-    host = os.getenv("ZABBIX_HOST", "").strip()
-    if not url and host:
-        url = host
-    if url and not url.endswith("/api_jsonrpc.php"):
-        url = url.rstrip("/") + "/api_jsonrpc.php"
+    def factory():
+        from infrastructure_atlas.infrastructure.external import ZabbixClient, ZabbixClientConfig
 
-    if not url:
-        raise ValueError("Zabbix not configured: set ZABBIX_API_URL environment variable")
+        url = os.getenv("ZABBIX_API_URL", "").strip()
+        host = os.getenv("ZABBIX_HOST", "").strip()
+        if not url and host:
+            url = host
+        if url and not url.endswith("/api_jsonrpc.php"):
+            url = url.rstrip("/") + "/api_jsonrpc.php"
 
-    token = os.getenv("ZABBIX_API_TOKEN", "").strip() or None
-    web_url = os.getenv("ZABBIX_WEB_URL", "").strip() or None
-    if not web_url and url.endswith("/api_jsonrpc.php"):
-        web_url = url[: -len("/api_jsonrpc.php")]
+        if not url:
+            raise ValueError("Zabbix not configured: set ZABBIX_API_URL environment variable")
 
-    config = ZabbixClientConfig(api_url=url, api_token=token, web_url=web_url)
-    return ZabbixClient(config)
+        token = os.getenv("ZABBIX_API_TOKEN", "").strip() or None
+        web_url = os.getenv("ZABBIX_WEB_URL", "").strip() or None
+        if not web_url and url.endswith("/api_jsonrpc.php"):
+            web_url = url[: -len("/api_jsonrpc.php")]
+
+        config = ZabbixClientConfig(api_url=url, api_token=token, web_url=web_url)
+        return ZabbixClient(config)
+
+    return _get_cached_client("zabbix", factory)
 
 
 def _create_jira_client():
@@ -94,17 +114,21 @@ def _create_jira_client():
 
 
 def _create_commvault_client():
-    """Create Commvault client from environment variables."""
-    from infrastructure_atlas.infrastructure.external import CommvaultClient, CommvaultClientConfig
+    """Create or get cached Commvault client from environment variables."""
 
-    base_url = os.getenv("COMMVAULT_BASE_URL", "").strip()
-    api_token = os.getenv("COMMVAULT_API_TOKEN", "").strip()
+    def factory():
+        from infrastructure_atlas.infrastructure.external import CommvaultClient, CommvaultClientConfig
 
-    if not base_url:
-        raise ValueError("Commvault not configured: set COMMVAULT_BASE_URL environment variable")
+        base_url = os.getenv("COMMVAULT_BASE_URL", "").strip()
+        api_token = os.getenv("COMMVAULT_API_TOKEN", "").strip()
 
-    config = CommvaultClientConfig(base_url=base_url, authtoken=api_token if api_token else None)
-    return CommvaultClient(config)
+        if not base_url:
+            raise ValueError("Commvault not configured: set COMMVAULT_BASE_URL environment variable")
+
+        config = CommvaultClientConfig(base_url=base_url, authtoken=api_token if api_token else None)
+        return CommvaultClient(config)
+
+    return _get_cached_client("commvault", factory)
 
 
 def _get_confluence_session():
@@ -225,70 +249,147 @@ class AtlasMCPServer:
             except ValueError as e:
                 return f"## Error: NetBox Not Configured\n\n{e}"
 
+            results = []
+            query_stripped = query.strip()
+
+            def _search_devices():
+                """Server-side device search using NetBox API."""
+                try:
+                    # Use pynetbox's filter with 'q' parameter for server-side search
+                    raw_devices = list(client.api.dcim.devices.filter(q=query_stripped, limit=limit))
+                    for device in raw_devices:
+                        data = device.serialize() if hasattr(device, "serialize") else {}
+                        status_obj = data.get("status", {})
+                        status_label = (
+                            status_obj.get("label")
+                            if isinstance(status_obj, dict)
+                            else str(status_obj)
+                            if status_obj
+                            else None
+                        )
+                        role_obj = data.get("role", {})
+                        role = (
+                            role_obj.get("name") if isinstance(role_obj, dict) else str(role_obj) if role_obj else None
+                        )
+                        site_obj = data.get("site", {})
+                        site = (
+                            site_obj.get("name") if isinstance(site_obj, dict) else str(site_obj) if site_obj else None
+                        )
+                        tenant_obj = data.get("tenant", {})
+                        tenant = (
+                            tenant_obj.get("name")
+                            if isinstance(tenant_obj, dict)
+                            else str(tenant_obj)
+                            if tenant_obj
+                            else None
+                        )
+                        primary_ip_obj = data.get("primary_ip", {})
+                        primary_ip = (
+                            primary_ip_obj.get("address")
+                            if isinstance(primary_ip_obj, dict)
+                            else str(primary_ip_obj)
+                            if primary_ip_obj
+                            else None
+                        )
+                        device_type_obj = data.get("device_type", {})
+                        model = device_type_obj.get("model") if isinstance(device_type_obj, dict) else None
+                        manufacturer_obj = (
+                            device_type_obj.get("manufacturer", {}) if isinstance(device_type_obj, dict) else {}
+                        )
+                        manufacturer = manufacturer_obj.get("name") if isinstance(manufacturer_obj, dict) else None
+
+                        results.append(
+                            {
+                                "type": "device",
+                                "name": data.get("name") or getattr(device, "name", ""),
+                                "id": data.get("id") or getattr(device, "id", 0),
+                                "status": status_label,
+                                "role": role,
+                                "site": site,
+                                "primary_ip": primary_ip,
+                                "tenant": tenant,
+                                "model": model,
+                                "manufacturer": manufacturer,
+                            }
+                        )
+                except Exception as e:
+                    logger.warning(f"NetBox device search failed: {e}")
+
+            def _search_vms():
+                """Server-side VM search using NetBox API."""
+                try:
+                    raw_vms = list(client.api.virtualization.virtual_machines.filter(q=query_stripped, limit=limit))
+                    for vm in raw_vms:
+                        data = vm.serialize() if hasattr(vm, "serialize") else {}
+                        status_obj = data.get("status", {})
+                        status_label = (
+                            status_obj.get("label")
+                            if isinstance(status_obj, dict)
+                            else str(status_obj)
+                            if status_obj
+                            else None
+                        )
+                        cluster_obj = data.get("cluster", {})
+                        cluster = (
+                            cluster_obj.get("name")
+                            if isinstance(cluster_obj, dict)
+                            else str(cluster_obj)
+                            if cluster_obj
+                            else None
+                        )
+                        site_obj = data.get("site", {})
+                        site = (
+                            site_obj.get("name") if isinstance(site_obj, dict) else str(site_obj) if site_obj else None
+                        )
+                        tenant_obj = data.get("tenant", {})
+                        tenant = (
+                            tenant_obj.get("name")
+                            if isinstance(tenant_obj, dict)
+                            else str(tenant_obj)
+                            if tenant_obj
+                            else None
+                        )
+                        primary_ip_obj = data.get("primary_ip", {})
+                        primary_ip = (
+                            primary_ip_obj.get("address")
+                            if isinstance(primary_ip_obj, dict)
+                            else str(primary_ip_obj)
+                            if primary_ip_obj
+                            else None
+                        )
+                        platform_obj = data.get("platform", {})
+                        platform = (
+                            platform_obj.get("name")
+                            if isinstance(platform_obj, dict)
+                            else str(platform_obj)
+                            if platform_obj
+                            else None
+                        )
+
+                        results.append(
+                            {
+                                "type": "vm",
+                                "name": data.get("name") or getattr(vm, "name", ""),
+                                "id": data.get("id") or getattr(vm, "id", 0),
+                                "status": status_label,
+                                "cluster": cluster,
+                                "site": site,
+                                "primary_ip": primary_ip,
+                                "tenant": tenant,
+                                "platform": platform,
+                            }
+                        )
+                except Exception as e:
+                    logger.warning(f"NetBox VM search failed: {e}")
+
             try:
-                devices = await asyncio.to_thread(client.list_devices)
-                vms = await asyncio.to_thread(client.list_vms)
+                # Run device and VM searches in parallel
+                await asyncio.gather(
+                    asyncio.to_thread(_search_devices),
+                    asyncio.to_thread(_search_vms),
+                )
             except Exception as e:
                 return f"## Error: NetBox Query Failed\n\n{e}"
-
-            query_lower = query.lower().strip()
-            results = []
-
-            # Search devices
-            for device in devices:
-                searchable = " ".join(
-                    filter(
-                        None,
-                        [
-                            device.name,
-                            device.primary_ip,
-                            device.primary_ip4,
-                            device.primary_ip6,
-                            device.site,
-                            device.role,
-                            device.tenant,
-                            device.serial,
-                        ],
-                    )
-                ).lower()
-                if query_lower in searchable:
-                    results.append(
-                        {
-                            "type": "device",
-                            "name": device.name,
-                            "id": device.id,
-                            "status": device.status_label or device.status,
-                            "role": device.role,
-                            "site": device.site,
-                            "primary_ip": device.primary_ip,
-                            "tenant": device.tenant,
-                            "model": device.model,
-                            "manufacturer": device.manufacturer,
-                        }
-                    )
-
-            # Search VMs
-            for vm in vms:
-                searchable = " ".join(
-                    filter(
-                        None,
-                        [vm.name, vm.primary_ip, vm.primary_ip4, vm.primary_ip6, vm.cluster, vm.site, vm.tenant],
-                    )
-                ).lower()
-                if query_lower in searchable:
-                    results.append(
-                        {
-                            "type": "vm",
-                            "name": vm.name,
-                            "id": vm.id,
-                            "status": vm.status_label or vm.status,
-                            "cluster": vm.cluster,
-                            "site": vm.site,
-                            "primary_ip": vm.primary_ip,
-                            "tenant": vm.tenant,
-                            "platform": vm.platform,
-                        }
-                    )
 
             # Apply limit
             results = results[:limit]
@@ -306,7 +407,7 @@ class AtlasMCPServer:
                 output += "### Devices\n\n"
                 for d in devices_found:
                     output += f"- **{d['name']}** (ID: {d['id']})\n"
-                    output += f"  - Status: {d['status']} | Role: {d['role'] or 'N/A'}\n"
+                    output += f"  - Status: {d['status'] or 'N/A'} | Role: {d['role'] or 'N/A'}\n"
                     output += f"  - Site: {d['site'] or 'N/A'} | Tenant: {d['tenant'] or 'N/A'}\n"
                     output += f"  - IP: {d['primary_ip'] or 'N/A'}\n"
                     if d.get("manufacturer") or d.get("model"):
@@ -317,7 +418,7 @@ class AtlasMCPServer:
                 output += "### Virtual Machines\n\n"
                 for v in vms_found:
                     output += f"- **{v['name']}** (ID: {v['id']})\n"
-                    output += f"  - Status: {v['status']} | Cluster: {v['cluster'] or 'N/A'}\n"
+                    output += f"  - Status: {v['status'] or 'N/A'} | Cluster: {v['cluster'] or 'N/A'}\n"
                     output += f"  - Site: {v['site'] or 'N/A'} | Tenant: {v['tenant'] or 'N/A'}\n"
                     output += f"  - IP: {v['primary_ip'] or 'N/A'}\n"
                     output += "\n"
@@ -390,10 +491,12 @@ class AtlasMCPServer:
 
                 with SessionLocal() as db:
                     service = create_vcenter_service(db)
-                    config, vms, meta = service.get_inventory(config_id, refresh=False)
+                    config, vms, _meta = service.get_inventory(config_id, refresh=False)
 
                     if not vms:
-                        return f"## vCenter VMs ({config.name or config_id})\n\nNo VMs found in cache. Run refresh first."
+                        return (
+                            f"## vCenter VMs ({config.name or config_id})\n\nNo VMs found in cache. Run refresh first."
+                        )
 
                     # Apply search filter
                     if search:
@@ -526,7 +629,9 @@ class AtlasMCPServer:
                 api_token = os.getenv("ATLASSIAN_API_TOKEN", "").strip()
 
                 if not (base_url and email and api_token):
-                    return "## Error: Jira Not Configured\n\nSet ATLASSIAN_BASE_URL, ATLASSIAN_EMAIL, ATLASSIAN_API_TOKEN"
+                    return (
+                        "## Error: Jira Not Configured\n\nSet ATLASSIAN_BASE_URL, ATLASSIAN_EMAIL, ATLASSIAN_API_TOKEN"
+                    )
 
                 sess = requests.Session()
                 sess.auth = (email, api_token)
@@ -608,7 +713,9 @@ class AtlasMCPServer:
                 api_token = os.getenv("ATLASSIAN_API_TOKEN", "").strip()
 
                 if not (base_url and email and api_token):
-                    return "## Error: Jira Not Configured\n\nSet ATLASSIAN_BASE_URL, ATLASSIAN_EMAIL, ATLASSIAN_API_TOKEN"
+                    return (
+                        "## Error: Jira Not Configured\n\nSet ATLASSIAN_BASE_URL, ATLASSIAN_EMAIL, ATLASSIAN_API_TOKEN"
+                    )
 
                 sess = requests.Session()
                 sess.auth = (email, api_token)
@@ -668,7 +775,9 @@ class AtlasMCPServer:
                 api_token = os.getenv("ATLASSIAN_API_TOKEN", "").strip()
 
                 if not (base_url and email and api_token):
-                    return "## Error: Jira Not Configured\n\nSet ATLASSIAN_BASE_URL, ATLASSIAN_EMAIL, ATLASSIAN_API_TOKEN"
+                    return (
+                        "## Error: Jira Not Configured\n\nSet ATLASSIAN_BASE_URL, ATLASSIAN_EMAIL, ATLASSIAN_API_TOKEN"
+                    )
 
                 sess = requests.Session()
                 sess.auth = (email, api_token)
@@ -708,7 +817,7 @@ class AtlasMCPServer:
 - **Issue**: {issue_key}
 - **Title**: {link_title}
 - **Page URL**: {page_url}
-- **Link ID**: {result.get('id')}
+- **Link ID**: {result.get("id")}
 """
             except Exception as e:
                 return f"## Error: Failed to create remote link\n\n{e}"
@@ -733,7 +842,9 @@ class AtlasMCPServer:
                 api_token = os.getenv("ATLASSIAN_API_TOKEN", "").strip()
 
                 if not (base_url and email and api_token):
-                    return "## Error: Jira Not Configured\n\nSet ATLASSIAN_BASE_URL, ATLASSIAN_EMAIL, ATLASSIAN_API_TOKEN"
+                    return (
+                        "## Error: Jira Not Configured\n\nSet ATLASSIAN_BASE_URL, ATLASSIAN_EMAIL, ATLASSIAN_API_TOKEN"
+                    )
 
                 sess = requests.Session()
                 sess.auth = (email, api_token)
@@ -744,7 +855,7 @@ class AtlasMCPServer:
                 response = await asyncio.to_thread(sess.delete, url, timeout=30)
 
                 if response.status_code == 404:
-                    return f"## Error\n\nLink or issue not found"
+                    return "## Error\n\nLink or issue not found"
                 response.raise_for_status()
 
                 return f"## Remote Link Deleted\n\n- **Issue**: {issue_key}\n- **Link ID**: {link_id}"
@@ -904,7 +1015,9 @@ class AtlasMCPServer:
                             for job in summary.job_metrics.jobs[:limit]:
                                 start = _format_datetime(job.start_time)
                                 size = _format_size(job.size_of_application_bytes or 0)
-                                output += f"| {job.status} | {job.backup_level_name or job.job_type} | {start} | {size} |\n"
+                                output += (
+                                    f"| {job.status} | {job.backup_level_name or job.job_type} | {start} | {size} |\n"
+                                )
 
                             output += "\n"
                         else:
@@ -926,7 +1039,7 @@ class AtlasMCPServer:
             """
             Search across all Atlas systems (NetBox, vCenter, Zabbix, Jira, Confluence, Commvault).
 
-            This is a unified search that queries all configured systems at once.
+            This is a unified search that queries all configured systems in PARALLEL.
 
             Args:
                 query: Search query (hostname, IP, ticket ID, etc.)
@@ -936,83 +1049,108 @@ class AtlasMCPServer:
                 Combined search results from all systems
             """
             output = f"## Unified Atlas Search: {query}\n\n"
-            sections = []
+            sections: list[tuple[str, str]] = []
 
-            # NetBox
-            try:
-                netbox_result = await atlas_netbox_search(query, limit=limit)
-                if "No results found" not in netbox_result and "Error" not in netbox_result:
-                    sections.append(("NetBox", netbox_result.split("\n\n", 1)[1] if "\n\n" in netbox_result else netbox_result))
-            except Exception as e:
-                sections.append(("NetBox", f"*Error: {e}*"))
+            # Define search tasks that will run in parallel
+            async def search_netbox():
+                try:
+                    result = await atlas_netbox_search(query, limit=limit)
+                    if "No results found" not in result and "Error" not in result:
+                        return ("NetBox", result.split("\n\n", 1)[1] if "\n\n" in result else result)
+                except Exception as e:
+                    return ("NetBox", f"*Error: {e}*")
+                return None
 
-            # vCenter
-            try:
-                from infrastructure_atlas.application.services import create_vcenter_service
-                from infrastructure_atlas.db import get_sessionmaker
+            async def search_vcenter():
+                try:
+                    from infrastructure_atlas.application.services import create_vcenter_service
+                    from infrastructure_atlas.db import get_sessionmaker
 
-                SessionLocal = get_sessionmaker()
-                vcenter_results = []
+                    def _search():
+                        SessionLocal = get_sessionmaker()
+                        vcenter_results = []
+                        with SessionLocal() as db:
+                            service = create_vcenter_service(db)
+                            configs_with_meta = service.list_configs_with_status()
+                            query_lower = query.lower()
 
-                with SessionLocal() as db:
-                    service = create_vcenter_service(db)
-                    configs_with_meta = service.list_configs_with_status()
-                    query_lower = query.lower()
+                            for config, _ in configs_with_meta:
+                                try:
+                                    _, vms, _ = service.get_inventory(config.id, refresh=False)
+                                    for vm in vms:
+                                        searchable = " ".join(
+                                            filter(
+                                                None,
+                                                [
+                                                    vm.name,
+                                                    vm.guest_ip_address,
+                                                    vm.guest_host_name,
+                                                    *list(vm.ip_addresses or []),
+                                                ],
+                                            )
+                                        ).lower()
+                                        if query_lower in searchable:
+                                            vcenter_results.append(
+                                                f"- **{vm.name}** ({vm.power_state}) - {config.name or config.id}"
+                                            )
+                                            if len(vcenter_results) >= limit:
+                                                break
+                                except Exception:
+                                    pass
+                                if len(vcenter_results) >= limit:
+                                    break
+                        return vcenter_results
 
-                    for config, _ in configs_with_meta:
-                        try:
-                            _, vms, _ = service.get_inventory(config.id, refresh=False)
-                            for vm in vms:
-                                searchable = " ".join(
-                                    filter(
-                                        None,
-                                        [
-                                            vm.name,
-                                            vm.guest_ip_address,
-                                            vm.guest_host_name,
-                                            *list(vm.ip_addresses or []),
-                                        ],
-                                    )
-                                ).lower()
-                                if query_lower in searchable:
-                                    vcenter_results.append(
-                                        f"- **{vm.name}** ({vm.power_state}) - {config.name or config.id}"
-                                    )
-                                    if len(vcenter_results) >= limit:
-                                        break
-                        except Exception:
-                            pass
-                        if len(vcenter_results) >= limit:
-                            break
+                    vcenter_results = await asyncio.to_thread(_search)
+                    if vcenter_results:
+                        return ("vCenter", "\n".join(vcenter_results))
+                except Exception as e:
+                    return ("vCenter", f"*Error: {e}*")
+                return None
 
-                if vcenter_results:
-                    sections.append(("vCenter", "\n".join(vcenter_results)))
-            except Exception as e:
-                sections.append(("vCenter", f"*Error: {e}*"))
+            async def search_zabbix():
+                try:
+                    result = await atlas_zabbix_alerts(search=query, limit=limit)
+                    if "No active problems" not in result and "Error" not in result:
+                        return ("Zabbix", result.split("\n\n", 1)[1] if "\n\n" in result else result)
+                except Exception as e:
+                    return ("Zabbix", f"*Error: {e}*")
+                return None
 
-            # Zabbix
-            try:
-                zabbix_result = await atlas_zabbix_alerts(search=query, limit=limit)
-                if "No active problems" not in zabbix_result and "Error" not in zabbix_result:
-                    sections.append(("Zabbix", zabbix_result.split("\n\n", 1)[1] if "\n\n" in zabbix_result else zabbix_result))
-            except Exception as e:
-                sections.append(("Zabbix", f"*Error: {e}*"))
+            async def search_jira():
+                try:
+                    result = await atlas_jira_search(query=query, max_results=limit)
+                    if "No issues found" not in result and "Error" not in result:
+                        return ("Jira", result.split("\n\n", 2)[2] if result.count("\n\n") >= 2 else result)
+                except Exception as e:
+                    return ("Jira", f"*Error: {e}*")
+                return None
 
-            # Jira
-            try:
-                jira_result = await atlas_jira_search(query=query, max_results=limit)
-                if "No issues found" not in jira_result and "Error" not in jira_result:
-                    sections.append(("Jira", jira_result.split("\n\n", 2)[2] if jira_result.count("\n\n") >= 2 else jira_result))
-            except Exception as e:
-                sections.append(("Jira", f"*Error: {e}*"))
+            async def search_confluence():
+                try:
+                    result = await atlas_confluence_search(query=query, max_results=limit)
+                    if "No results found" not in result and "Error" not in result:
+                        return ("Confluence", result.split("\n\n", 2)[2] if result.count("\n\n") >= 2 else result)
+                except Exception as e:
+                    return ("Confluence", f"*Error: {e}*")
+                return None
 
-            # Confluence (basic search)
-            try:
-                confluence_result = await atlas_confluence_search(query=query, max_results=limit)
-                if "No results found" not in confluence_result and "Error" not in confluence_result:
-                    sections.append(("Confluence", confluence_result.split("\n\n", 2)[2] if confluence_result.count("\n\n") >= 2 else confluence_result))
-            except Exception as e:
-                sections.append(("Confluence", f"*Error: {e}*"))
+            # Run all searches in parallel
+            results = await asyncio.gather(
+                search_netbox(),
+                search_vcenter(),
+                search_zabbix(),
+                search_jira(),
+                search_confluence(),
+                return_exceptions=True,
+            )
+
+            # Collect non-None results
+            for result in results:
+                if isinstance(result, Exception):
+                    continue
+                if result is not None:
+                    sections.append(result)
 
             # Build output
             if not sections:
@@ -1313,7 +1451,9 @@ class AtlasMCPServer:
                         results.append(f"- **{fname or url[:50]}...**: Failed - {e}")
                         error_count += 1
 
-                status = "All files uploaded" if error_count == 0 else f"{success_count} succeeded, {error_count} failed"
+                status = (
+                    "All files uploaded" if error_count == 0 else f"{success_count} succeeded, {error_count} failed"
+                )
                 return f"""## Batch Upload Results
 
 **Issue**: {issue_id_or_key}
