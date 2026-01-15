@@ -3189,86 +3189,190 @@
 
   renderChatToolsPanel();
 
-  // Simple markdown parser for chat messages
+  // Enhanced markdown parser for chat messages with Claude-like rendering
   function parseMarkdown(text) {
     if (!text || typeof text !== 'string') return '';
-    
-    let html = escapeHtml(text);
-    
-    // Code blocks (```code```)
-    html = html.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
-    
-    // Inline code (`code`)
-    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-    
+
+    // Preserve code blocks before escaping
+    const codeBlocks = [];
+    let processedText = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (match, lang, code) => {
+      const index = codeBlocks.length;
+      codeBlocks.push({ lang: lang || '', code: code.trim() });
+      return `___CODEBLOCK_${index}___`;
+    });
+
+    // Preserve inline code
+    const inlineCodes = [];
+    processedText = processedText.replace(/`([^`]+)`/g, (match, code) => {
+      const index = inlineCodes.length;
+      inlineCodes.push(code);
+      return `___INLINECODE_${index}___`;
+    });
+
+    // Now escape HTML
+    let html = escapeHtml(processedText);
+
+    // Restore code blocks with syntax highlighting hints
+    html = html.replace(/___CODEBLOCK_(\d+)___/g, (match, index) => {
+      const block = codeBlocks[parseInt(index)];
+      const langClass = block.lang ? ` class="language-${escapeHtml(block.lang)}"` : '';
+      const langLabel = block.lang ? `<span class="code-lang">${escapeHtml(block.lang)}</span>` : '';
+      const escapedCode = escapeHtml(block.code);
+      return `<div class="code-block-wrapper">${langLabel}<pre><code${langClass}>${escapedCode}</code></pre><button class="code-copy-btn" onclick="copyCodeBlock(this)" title="Copy code">📋</button></div>`;
+    });
+
+    // Restore inline code
+    html = html.replace(/___INLINECODE_(\d+)___/g, (match, index) => {
+      return `<code>${escapeHtml(inlineCodes[parseInt(index)])}</code>`;
+    });
+
     // Bold (**text** or __text__)
-    html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-    html = html.replace(/__(.*?)__/g, '<strong>$1</strong>');
-    
-    // Italic (*text* or _text_)
-    html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
-    html = html.replace(/_(.*?)_/g, '<em>$1</em>');
-    
-    // Links [text](url)
-    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-    
-    // Headers (# ## ###)
+    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+
+    // Italic (*text* or _text_) - but not inside URLs or words
+    html = html.replace(/(?<![a-zA-Z0-9])\*([^*]+)\*(?![a-zA-Z0-9])/g, '<em>$1</em>');
+    html = html.replace(/(?<![a-zA-Z0-9])_([^_]+)_(?![a-zA-Z0-9])/g, '<em>$1</em>');
+
+    // Strikethrough (~~text~~)
+    html = html.replace(/~~([^~]+)~~/g, '<del>$1</del>');
+
+    // Links [text](url) - with better URL handling
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="chat-link">$1 <span class="link-icon">↗</span></a>');
+
+    // Auto-link plain URLs (but not inside existing links)
+    html = html.replace(/(?<!href="|">)(https?:\/\/[^\s<]+[^\s<.,;:!?\)\]'"])/g, '<a href="$1" target="_blank" rel="noopener noreferrer" class="chat-link auto-link">$1 <span class="link-icon">↗</span></a>');
+
+    // Reference links with 📚 emoji
+    html = html.replace(/📚\s*Reference:\s*\[([^\]]+)\]\(([^)]+)\)/g, '<div class="reference-link"><span class="ref-icon">📚</span> <strong>Reference:</strong> <a href="$2" target="_blank" rel="noopener noreferrer" class="chat-link">$1 <span class="link-icon">↗</span></a></div>');
+
+    // Horizontal rules
+    html = html.replace(/^---+$/gm, '<hr class="chat-hr">');
+    html = html.replace(/^\*\*\*+$/gm, '<hr class="chat-hr">');
+
+    // Headers (# ## ### ####)
+    html = html.replace(/^#### (.*$)/gm, '<h4>$1</h4>');
     html = html.replace(/^### (.*$)/gm, '<h3>$1</h3>');
     html = html.replace(/^## (.*$)/gm, '<h2>$1</h2>');
     html = html.replace(/^# (.*$)/gm, '<h1>$1</h1>');
-    
-    // Lists (- item or * item) - compact handling without extra line breaks
+
+    // Risk level badges
+    html = html.replace(/🟢\s*(Low)/g, '<span class="risk-badge risk-low">🟢 $1</span>');
+    html = html.replace(/🟡\s*(Medium)/g, '<span class="risk-badge risk-medium">🟡 $1</span>');
+    html = html.replace(/🔴\s*(High)/g, '<span class="risk-badge risk-high">🔴 $1</span>');
+    html = html.replace(/⚫\s*(Critical)/g, '<span class="risk-badge risk-critical">⚫ $1</span>');
+
+    // Blockquotes (> text)
+    html = html.replace(/^&gt;\s*(.*)$/gm, '<blockquote>$1</blockquote>');
+    // Merge consecutive blockquotes
+    html = html.replace(/<\/blockquote>\n<blockquote>/g, '\n');
+
+    // Tables (basic markdown tables)
+    const tableRegex = /^\|(.+)\|[\r\n]+\|([-:\s|]+)\|[\r\n]+((?:\|.+\|[\r\n]*)+)/gm;
+    html = html.replace(tableRegex, (match, headerRow, alignRow, bodyRows) => {
+      const headers = headerRow.split('|').map(h => h.trim()).filter(h => h);
+      const aligns = alignRow.split('|').map(a => {
+        a = a.trim();
+        if (a.startsWith(':') && a.endsWith(':')) return 'center';
+        if (a.endsWith(':')) return 'right';
+        return 'left';
+      }).filter(a => a);
+
+      let tableHtml = '<div class="table-wrapper"><table class="chat-table"><thead><tr>';
+      headers.forEach((h, i) => {
+        const align = aligns[i] || 'left';
+        tableHtml += `<th style="text-align:${align}">${h}</th>`;
+      });
+      tableHtml += '</tr></thead><tbody>';
+
+      const rows = bodyRows.trim().split('\n');
+      rows.forEach(row => {
+        const cells = row.split('|').map(c => c.trim()).filter(c => c);
+        tableHtml += '<tr>';
+        cells.forEach((cell, i) => {
+          const align = aligns[i] || 'left';
+          tableHtml += `<td style="text-align:${align}">${cell}</td>`;
+        });
+        tableHtml += '</tr>';
+      });
+      tableHtml += '</tbody></table></div>';
+      return tableHtml;
+    });
+
+    // Numbered lists (1. 2. 3.)
     const lines = html.split('\n');
     const processedLines = [];
-    let inList = false;
-    
+    let inUList = false;
+    let inOList = false;
+
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      const isListItem = /^[\s]*[-*]\s+(.*)$/.test(line);
-      
-      if (isListItem) {
+      const isUListItem = /^[\s]*[-*]\s+(.*)$/.test(line);
+      const isOListItem = /^[\s]*(\d+)\.\s+(.*)$/.test(line);
+
+      if (isUListItem) {
         const content = line.replace(/^[\s]*[-*]\s+(.*)$/, '$1');
-        if (!inList) {
-          processedLines.push('<ul>');
-          inList = true;
-        }
+        if (inOList) { processedLines.push('</ol>'); inOList = false; }
+        if (!inUList) { processedLines.push('<ul>'); inUList = true; }
+        processedLines.push(`<li>${content}</li>`);
+      } else if (isOListItem) {
+        const content = line.replace(/^[\s]*\d+\.\s+(.*)$/, '$1');
+        if (inUList) { processedLines.push('</ul>'); inUList = false; }
+        if (!inOList) { processedLines.push('<ol>'); inOList = true; }
         processedLines.push(`<li>${content}</li>`);
       } else {
-        if (inList) {
-          processedLines.push('</ul>');
-          inList = false;
-        }
+        if (inUList) { processedLines.push('</ul>'); inUList = false; }
+        if (inOList) { processedLines.push('</ol>'); inOList = false; }
         processedLines.push(line);
       }
     }
-    
-    if (inList) {
-      processedLines.push('</ul>');
-    }
-    
+    if (inUList) processedLines.push('</ul>');
+    if (inOList) processedLines.push('</ol>');
+
     html = processedLines.join('\n');
-    
-    // Convert double line breaks to paragraphs, single line breaks to <br>
+
+    // Convert double line breaks to paragraph breaks
     html = html.replace(/\n\n+/g, '</p><p>');
-    
-    // Don't add <br> inside lists - remove line breaks between list items
+
+    // Clean up list formatting
     html = html.replace(/<\/li>\n<li>/g, '</li><li>');
     html = html.replace(/<ul>\n/g, '<ul>');
     html = html.replace(/\n<\/ul>/g, '</ul>');
-    
+    html = html.replace(/<ol>\n/g, '<ol>');
+    html = html.replace(/\n<\/ol>/g, '</ol>');
+
     // Convert remaining single line breaks to <br>
     html = html.replace(/\n/g, '<br>');
-    
-    // Wrap in paragraph if not already wrapped
-    if (!html.startsWith('<') && html.trim()) {
+
+    // Wrap in paragraph if needed
+    if (html.trim() && !html.startsWith('<')) {
       html = '<p>' + html + '</p>';
     }
-    
-    // Clean up empty paragraphs
+
+    // Clean up empty paragraphs and extra breaks
     html = html.replace(/<p><\/p>/g, '');
-    
+    html = html.replace(/<p><br>/g, '<p>');
+    html = html.replace(/<br><\/p>/g, '</p>');
+    html = html.replace(/<br><br>/g, '<br>');
+
     return html;
   }
+
+  // Copy code block to clipboard
+  window.copyCodeBlock = function(btn) {
+    const wrapper = btn.closest('.code-block-wrapper');
+    const code = wrapper.querySelector('code');
+    const text = code.textContent;
+    navigator.clipboard.writeText(text).then(() => {
+      const originalText = btn.textContent;
+      btn.textContent = '✓';
+      btn.classList.add('copied');
+      setTimeout(() => {
+        btn.textContent = originalText;
+        btn.classList.remove('copied');
+      }, 2000);
+    });
+  };
   const naturalCmp = (a, b) => {
     if (a == null && b == null) return 0;
     if (a == null) return 1;

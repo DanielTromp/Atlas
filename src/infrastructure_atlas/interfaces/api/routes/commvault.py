@@ -2376,3 +2376,109 @@ def commvault_servers_export(
     csv_bytes = BytesIO(buffer.getvalue().encode("utf-8"))
     csv_bytes.seek(0)
     return StreamingResponse(csv_bytes, media_type="text/csv", headers=disposition)
+
+
+@router.get("/backup-status")
+def commvault_backup_status(
+    hostname: str = Query(..., min_length=1, description="Hostname, client name, or VM name to search."),
+    hours: int = Query(24, ge=1, le=24 * 365, description="Hours of history to look back."),
+    limit: int = Query(10, ge=1, le=100, description="Maximum number of jobs to return."),
+) -> dict[str, Any]:
+    """Get Commvault backup status and recent job history for a hostname.
+
+    This endpoint is optimized for AI tools to quickly check backup health.
+    Returns:
+    - Client information
+    - Recent backup jobs with status
+    - Summary statistics (success rate, last successful backup)
+    """
+    # First search for the client
+    needle = hostname.strip().casefold()
+    if not needle:
+        raise HTTPException(status_code=400, detail="Hostname must not be empty")
+
+    clients, _, _ = _cached_commvault_clients()
+    if not clients:
+        return {
+            "found": False,
+            "hostname": hostname,
+            "error": "Commvault cache not available - run /commvault/backups/refresh first",
+        }
+
+    # Find matching client
+    match = None
+    for record in clients:
+        variants = record.get("name_variants") or set()
+        name = record.get("name", "").lower()
+        display_name = record.get("display_name", "").lower()
+
+        if needle in name or needle in display_name:
+            match = record
+            break
+        if any(needle in variant for variant in variants if variant):
+            match = record
+            break
+
+    if not match:
+        return {
+            "found": False,
+            "hostname": hostname,
+            "message": f"No Commvault client found matching '{hostname}'",
+        }
+
+    # Get client details and jobs
+    client_id = match.get("client_id")
+    client_name = match.get("display_name") or match.get("name")
+
+    try:
+        summary, metrics, jobs, stats = _load_commvault_server_data(
+            str(client_name),
+            job_limit=limit,
+            since_hours=hours,
+            retained_only=False,
+            refresh_cache=False,
+        )
+    except Exception as e:
+        return {
+            "found": True,
+            "hostname": hostname,
+            "client_id": client_id,
+            "client_name": client_name,
+            "error": f"Failed to load job data: {e}",
+        }
+
+    # Build response
+    recent_jobs = []
+    for job in jobs[:limit]:
+        recent_jobs.append({
+            "job_id": job.get("job_id"),
+            "start": job.get("start"),
+            "end": job.get("end"),
+            "status": job.get("status"),
+            "plan": job.get("plan"),
+            "app_size": job.get("app_size"),
+            "media_size": job.get("media_size"),
+        })
+
+    # Calculate success rate
+    total = stats.get("job_count", 0)
+    successful = stats.get("completed", 0)
+    success_rate = (successful / total * 100) if total > 0 else 0
+
+    return {
+        "found": True,
+        "hostname": hostname,
+        "client_id": client_id,
+        "client_name": client_name,
+        "lookback_hours": hours,
+        "summary": {
+            "total_jobs": total,
+            "successful": successful,
+            "failed": stats.get("failed", 0),
+            "running": stats.get("running", 0),
+            "success_rate_pct": round(success_rate, 1),
+            "last_successful": stats.get("last_success"),
+            "last_job": stats.get("last_job"),
+        },
+        "recent_jobs": recent_jobs,
+    }

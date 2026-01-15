@@ -8,39 +8,30 @@ from typing import Any
 # Pricing per 1M tokens (input, output)
 # Format: (input_price_per_1M, output_price_per_1M)
 PRICING: dict[str, tuple[float, float]] = {
-    # OpenAI models
-    "gpt-5-mini": (0.25, 2.0),
-    "gpt-4o-mini": (0.15, 0.6),
-    "gpt-4o": (2.5, 10.0),
-    "gpt-4-turbo": (10.0, 30.0),
-    "gpt-3.5-turbo": (0.5, 1.5),
-    # Anthropic models
-    "claude-3-5-sonnet-20241022": (3.0, 15.0),
-    "claude-3-5-haiku-20241022": (0.8, 4.0),
-    "claude-3-opus-20240229": (15.0, 75.0),
-    # Google Gemini models
-    "gemini-1.5-flash": (0.075, 0.3),
-    "gemini-1.5-pro": (1.25, 5.0),
-    "gemini-pro": (0.5, 1.5),
-    # OpenRouter models (approximate, varies)
+    # OpenAI models (direct API)
+    "gpt-5": (1.25, 10.0),  # Best overall performance
+    "gpt-5-mini": (0.25, 2.0),  # Fast, cost-effective
+    "gpt-5-nano": (0.05, 0.40),  # Ultra-low cost
+    # Anthropic models (direct API)
+    "claude-opus-4-5-20251101": (5.0, 25.0),  # Most capable
+    "claude-sonnet-4-5-20250929": (3.0, 15.0),  # Best for coding/RAG
+    "claude-haiku-4-5-20251001": (1.0, 5.0),  # Fast, economical
+    # Google Gemini models (direct API)
+    "gemini-3-pro": (2.0, 12.0),  # Frontier reasoning
+    "gemini-3-flash": (0.50, 3.0),  # Fast + Pro-grade
+    # OpenRouter models
+    "openai/gpt-5": (1.25, 10.0),
     "openai/gpt-5-mini": (0.25, 2.0),
-    "openai/gpt-5-nano": (0.10, 0.40),
-    "openai/gpt-5.2": (5.0, 20.0),
-    "openai/gpt-4o-mini": (0.15, 0.6),
-    "openai/gpt-4o": (2.5, 10.0),
-    "openai/gpt-oss-120b": (0.50, 1.50),
-    "anthropic/claude-opus-4.5": (15.0, 75.0),
+    "openai/gpt-5-nano": (0.05, 0.40),
+    "anthropic/claude-opus-4.5": (5.0, 25.0),
     "anthropic/claude-sonnet-4.5": (3.0, 15.0),
-    "anthropic/claude-haiku-4.5": (0.80, 4.0),
-    "anthropic/claude-sonnet-4": (3.0, 15.0),
-    "anthropic/claude-3.5-sonnet": (3.0, 15.0),
-    "anthropic/claude-3.5-haiku": (0.8, 4.0),
-    "google/gemini-2.5-flash": (0.075, 0.3),
-    "google/gemini-flash-1.5": (0.075, 0.3),
-    "x-ai/grok-4.1-fast": (0.50, 1.50),
-    "meta-llama/llama-3.1-70b-instruct": (0.59, 0.79),
-    "deepseek/deepseek-v3.2": (0.27, 1.10),
-    "deepseek/deepseek-chat": (0.14, 0.28),
+    "anthropic/claude-haiku-4.5": (1.0, 5.0),
+    "google/gemini-3-pro": (2.0, 12.0),
+    "google/gemini-3-flash": (0.50, 3.0),
+    "x-ai/grok-4": (3.0, 15.0),
+    "x-ai/grok-4.1-fast": (0.20, 0.50),
+    "deepseek/deepseek-chat": (0.28, 0.42),
+    "deepseek/deepseek-reasoner": (0.28, 0.42),
 }
 
 

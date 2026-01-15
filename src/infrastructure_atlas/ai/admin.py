@@ -87,11 +87,11 @@ class AIAdminService:
     def _get_default_model(self, provider_type: ProviderType) -> str:
         """Get default model for a provider."""
         defaults = {
-            ProviderType.AZURE_OPENAI: os.getenv("AZURE_OPENAI_DEFAULT_MODEL", "gpt-4o-mini"),
-            ProviderType.OPENAI: os.getenv("OPENAI_DEFAULT_MODEL", "gpt-4o-mini"),
-            ProviderType.ANTHROPIC: os.getenv("ANTHROPIC_DEFAULT_MODEL", "claude-3-5-sonnet-20241022"),
+            ProviderType.AZURE_OPENAI: os.getenv("AZURE_OPENAI_DEFAULT_MODEL", "gpt-5-mini"),
+            ProviderType.OPENAI: os.getenv("OPENAI_DEFAULT_MODEL", "gpt-5-mini"),
+            ProviderType.ANTHROPIC: os.getenv("ANTHROPIC_DEFAULT_MODEL", "claude-sonnet-4-5-20250929"),
             ProviderType.OPENROUTER: os.getenv("OPENROUTER_DEFAULT_MODEL", "openai/gpt-5-mini"),
-            ProviderType.GEMINI: os.getenv("GEMINI_DEFAULT_MODEL", "gemini-1.5-flash"),
+            ProviderType.GEMINI: os.getenv("GEMINI_DEFAULT_MODEL", "gemini-3-flash"),
         }
         return defaults.get(provider_type, "")
 

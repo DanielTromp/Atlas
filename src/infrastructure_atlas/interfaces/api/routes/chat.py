@@ -142,12 +142,12 @@ def _chat_env(*, db: Session | None = None, user: User | None = None) -> dict[st
             },
             "claude": {
                 "api_key": os.getenv("ANTHROPIC_API_KEY", "").strip(),
-                "default_model": os.getenv("CHAT_DEFAULT_MODEL_CLAUDE", "claude-3-5-sonnet-20240620"),
+                "default_model": os.getenv("CHAT_DEFAULT_MODEL_CLAUDE", "claude-sonnet-4-5-20250929"),
                 "key_source": "env",
             },
             "gemini": {
                 "api_key": os.getenv("GOOGLE_API_KEY", "").strip(),
-                "default_model": os.getenv("CHAT_DEFAULT_MODEL_GEMINI", "gemini-1.5-flash"),
+                "default_model": os.getenv("CHAT_DEFAULT_MODEL_GEMINI", "google/gemini-3-flash"),
                 "key_source": "env",
             },
             "default_provider": os.getenv("CHAT_DEFAULT_PROVIDER", "openai"),

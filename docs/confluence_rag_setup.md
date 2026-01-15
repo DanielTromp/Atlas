@@ -1,31 +1,78 @@
-# Confluence RAG Implementation Guide
+# Confluence RAG Setup Guide
 
-Successful deployment and debugging of the Confluence RAG (Retrieval-Augmented Generation) system.
+This guide covers the setup and operation of the Confluence RAG (Retrieval-Augmented Generation) system using Qdrant vector database.
 
-## 1. Architecture & Design Decisions
+## Architecture Overview
 
-### Database Schema (DuckDB)
-The core database utilizes DuckDB with the `vss` (vector similarity search) extension.
+The Confluence RAG system uses:
+- **Qdrant** - Vector database for storing and searching embeddings
+- **nomic-embed-text-v1.5** - Local embedding model (768 dimensions)
+- **Docling** - Document parsing and intelligent chunking
+- **Semantic search** - Cosine similarity for finding relevant content
 
-**Critical Configuration: No Foreign Keys**
-Due to limitations in DuckDB's constraint handling within high-churn transaction environments (like syncs), we have **disabled foreign key constraints** between `chunk_embeddings` and `chunks`.
+### Data Flow
 
-*   **Rationale:** Foreign Key `ON DELETE CASCADE` can be unreliable or strict about transaction visibility in DuckDB.
-*   **Implementation:** The `chunk_embeddings` table does *not* technically reference `chunks` in the schema.
-*   **Integrity:** Data integrity is managed at the **application layer** in `sync.py`. The sync engine explicitly cleans up orphan embeddings before deleting chunks.
+```
+Confluence API
+    ↓
+ConfluenceClient (async, cursor pagination)
+    ↓
+QdrantSyncEngine (full/incremental)
+    ↓
+ConfluenceChunker (Docling + intelligent chunking)
+    ↓
+EmbeddingPipeline (nomic-embed-text-v1.5)
+    ↓
+QdrantStore (vector storage with HNSW indexing)
+    ↓
+QdrantSearchEngine (semantic search)
+    ↓
+REST API / MCP Tools → Claude
+```
 
-### Transactional Logic
-The sync process uses a **Two-Step Transaction** approach:
-1.  **Cleanup (Tx 1):** Identify existing chunks for a page, explicitly delete their embeddings, then delete the chunks. Commit.
-2.  **Upsert (Tx 2):** Insert/Update the Page record, generate new Chunks, and insert new Embeddings. Commit.
+## Prerequisites
 
-This ensures that we never block on an "integrity violation" while still maintaining a clean dataset.
+### 1. Start Qdrant
 
-## 2. Running a Sync
+The system uses Qdrant running in Docker:
 
-### Initial Full Sync (First Time)
+```bash
+# Start Qdrant container
+docker compose up -d
 
-Use `--full` for the initial population of the database:
+# Verify it's running
+curl http://localhost:6333/readyz
+# Should return: "all shards are ready"
+
+# Check container status
+docker ps --filter name=atlas-qdrant
+```
+
+### 2. Configure Environment
+
+Add these to your `.env` file:
+
+```bash
+# Confluence credentials (required)
+ATLAS_RAG_CONFLUENCE_BASE_URL=https://your-company.atlassian.net
+ATLAS_RAG_CONFLUENCE_USERNAME=your-email@company.com
+ATLAS_RAG_CONFLUENCE_API_TOKEN=your-api-token
+
+# Sync settings (optional)
+ATLAS_RAG_WATCHED_SPACES=["INFRA", "SE", "RUNBOOKS"]
+ATLAS_RAG_WATCHED_LABELS=["procedure", "how-to", "troubleshooting"]
+
+# Qdrant settings (optional, defaults shown)
+ATLAS_RAG_QDRANT_HOST=localhost
+ATLAS_RAG_QDRANT_PORT=6333
+ATLAS_RAG_QDRANT_GRPC_PORT=6334
+```
+
+## Running a Sync
+
+### Initial Full Sync
+
+Use `--full` for the initial population:
 
 ```bash
 # Sync entire space
@@ -35,17 +82,28 @@ uv run python scripts/sync_confluence.py --full -s SPS --no-labels
 uv run python scripts/sync_confluence.py --full -s SPS --ancestor-id "65111963" --no-labels -v
 ```
 
-### Subsequent Syncs (Incremental)
+### Incremental Sync
 
-After the initial sync, use **incremental sync** (omit `--full`) to only process pages modified since the last sync:
+After the initial sync, use incremental sync to only process changed pages:
 
 ```bash
-# Incremental sync - only changed pages since last sync
+# Incremental sync - only changed pages
 uv run python scripts/sync_confluence.py -s SPS --no-labels
 
 # Incremental sync of specific folder
 uv run python scripts/sync_confluence.py -s SPS --ancestor-id "65111963" --no-labels
 ```
+
+### CLI Options
+
+| Option | Description |
+|--------|-------------|
+| `--full` | Force full sync (re-process all pages) |
+| `-s, --spaces` | Space keys to sync (can repeat) |
+| `-l, --labels` | Filter by labels (can repeat) |
+| `--no-labels` | Disable label filtering (sync all pages) |
+| `--ancestor-id` | Limit sync to a specific page tree |
+| `-v, --verbose` | Enable verbose logging |
 
 ### When to Use Full vs Incremental
 
@@ -53,167 +111,181 @@ uv run python scripts/sync_confluence.py -s SPS --ancestor-id "65111963" --no-la
 |----------|---------|
 | First time setup | `--full` |
 | Daily/regular updates | No `--full` (incremental) |
-| After schema changes | `--full` |
-| After deleting the database | `--full` |
-| Content seems stale/missing | `--full` |
+| After Qdrant reset | `--full` |
+| Content seems stale | `--full` |
 
-### CLI Options Reference
+## Testing Search
 
-*   `--full`: Forces full sync (re-process all pages, ignores last sync timestamp)
-*   `--spaces "KEY"`, `-s`: Space keys to sync (can repeat for multiple spaces)
-*   `--labels "LABEL"`, `-l`: Filter by labels (can repeat)
-*   `--no-labels`: Disable label filtering (sync all pages in space)
-*   `--ancestor-id "ID"`: Limit sync to a specific page tree
-*   `-v`, `--verbose`: Verbose logging (shows chunk creation details)
-
-## 3. Testing Search (CLI)
-
-You can verify the data without using the LLM by running the standalone search script:
+### CLI Search Test
 
 ```bash
 uv run python scripts/search_confluence.py "your query here" --limit 3
 ```
 
-**Example Output:**
-```text
-Found 5 results in 42ms
+### API Search Test
 
-============================================================
-1. Deployment Guide
-   Space: SPS
-   Score: 89.12%
-------------------------------------------------------------
-> "The automated deployment pipeline runs on..."
-   (Confidence: 95%)
+```bash
+# Start the API server
+uv run atlas api serve
 
-   URL: https://yourdomain.atlassian.net/wiki/spaces/SPS/pages/123/Deployment
+# Test search endpoint
+curl -X POST http://localhost:8000/confluence-rag/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "how to configure", "top_k": 5}'
 ```
 
-## 4. MCP Integration
+## MCP Integration
 
-The system exposes several MCP tools for accessing documentation from Claude.
+The MCP server provides Claude with access to the RAG system.
 
 ### Available Tools
 
 | Tool | Purpose |
 |------|---------|
-| `search_confluence_docs` | Search and return snippets with links |
-| `generate_guide_from_docs` | **Search and return FULL page content** (recommended for guides) |
-| `get_doc_content` | Get full content of a specific page by title |
-| `get_confluence_page` | Get a page by ID or title+space |
+| `search_confluence_docs` | Semantic search with citations |
+| `generate_guide_from_docs` | Get full page content for guides |
+| `get_doc_content` | Get specific page by title |
+| `get_confluence_page` | Get page by ID or title+space |
 | `list_confluence_spaces` | List available spaces |
 | `get_confluence_stats` | Cache statistics |
 
-### Recommended Usage
+### Example Usage
 
-**For generating guides/documentation (use RAG only, no Confluence fetch):**
+**For generating guides:**
 ```
 "Use generate_guide_from_docs to explain how to configure CEPH tenants"
-"Generate a guide from docs about MS Defender setup"
 ```
 
-**For quick searches (returns snippets):**
+**For quick searches:**
 ```
 "Search docs for SFTP user management"
 ```
 
-**For specific page content:**
+**For specific pages:**
 ```
 "Get the full content of 'Create/Remove SFTP users' from docs"
 ```
 
-### Tool Details
+## Qdrant Management
 
-#### `generate_guide_from_docs` (Recommended)
-- Searches documentation and returns **full page content**
-- No need to fetch from Confluence separately
-- Best for creating comprehensive guides
-- Parameters:
-  - `query`: Search terms
-  - `max_pages`: Number of pages to include (default 5)
-
-#### `search_confluence_docs`
-- Returns snippets with citations and URLs
-- Good for quick lookups
-- May trigger Claude to fetch full pages from Atlassian MCP
-
-### Implementation
-The tools wrap the `HybridSearchEngine` which performs:
-1. Vector similarity search (semantic)
-2. BM25 keyword search
-3. Reciprocal Rank Fusion scoring
-
-## 5. Database Maintenance
-
-### Check Database Status
+### Check Collection Status
 
 ```bash
-uv run python scripts/inspect_db.py
+curl http://localhost:6333/collections/confluence_chunks
 ```
 
-### Database Bloat
-
-The DuckDB database can grow large over time due to delete/update cycles during syncs (page count stays the same but file size grows). If the database grows significantly larger than expected, compact it:
+### View Statistics
 
 ```bash
-# Check current size
-ls -lh data/atlas_confluence_rag.duckdb
-
-# Compact the database (creates a fresh copy without dead rows)
 uv run python -c "
-import duckdb
-old = duckdb.connect('data/atlas_confluence_rag.duckdb', read_only=True)
-new = duckdb.connect('data/atlas_confluence_rag_new.duckdb')
-for table in ['pages', 'chunks', 'chunk_embeddings', 'sync_state', 'search_cache']:
-    new.execute(f\"ATTACH 'data/atlas_confluence_rag.duckdb' AS old (READ_ONLY)\")
-    new.execute(f'CREATE TABLE {table} AS SELECT * FROM old.{table}')
-    new.execute('DETACH old')
-new.close()
-old.close()
+from infrastructure_atlas.confluence_rag.qdrant_store import QdrantStore
+store = QdrantStore()
+print(store.get_stats())
+print(store.list_spaces())
 "
-
-# Replace old with compacted version
-mv data/atlas_confluence_rag.duckdb data/atlas_confluence_rag_old.duckdb
-mv data/atlas_confluence_rag_new.duckdb data/atlas_confluence_rag.duckdb
-rm data/atlas_confluence_rag_old.duckdb
 ```
 
-**Expected database sizes:**
-- ~100 pages: ~10-20 MB
-- ~500 pages: ~50-100 MB
-- ~1000 pages: ~100-200 MB
+### Reset Collection
 
-If significantly larger, the database needs compacting.
-
-### Reset Database
-
-To start completely fresh:
+To start fresh, delete and recreate the collection:
 
 ```bash
-rm data/atlas_confluence_rag.duckdb
+# Delete collection
+curl -X DELETE http://localhost:6333/collections/confluence_chunks
+
+# Re-run sync to recreate
 uv run python scripts/sync_confluence.py --full -s SPS --no-labels
 ```
 
-## 6. Troubleshooting
+### Docker Management
+
+```bash
+# Stop Qdrant
+docker compose down
+
+# Stop and remove data
+docker compose down -v
+
+# View logs
+docker logs atlas-qdrant
+
+# Restart
+docker compose restart
+```
+
+## Troubleshooting
+
+### Qdrant Connection Failed
+
+```
+Error connecting to Qdrant: ...
+Make sure Qdrant is running: docker compose up -d
+```
+
+**Solution:** Start the Qdrant container with `docker compose up -d`
 
 ### Search Returns 0 Results
 
-1. Check if data exists: `uv run python scripts/inspect_db.py`
-2. Verify embeddings exist (should match chunk count)
-3. Test vector search directly to isolate the issue
+1. Check if data was synced:
+   ```bash
+   curl http://localhost:6333/collections/confluence_chunks
+   ```
 
-### Sync Gets Stuck or Shows Many Duplicates
+2. Verify vectors exist (points_count > 0)
 
-Confluence Cloud uses cursor-based pagination. If you see endless duplicates:
-- The sync will skip duplicates automatically
-- If it doesn't progress, cancel and restart
-- Delete DB and run fresh `--full` sync if needed
+3. Run a full sync if empty
+
+### Sync Shows Many Duplicates
+
+Confluence Cloud uses cursor-based pagination. Duplicates are automatically skipped, but if sync doesn't progress:
+- Cancel and restart
+- Run fresh `--full` sync
 
 ### Empty Pages (0 chars)
 
-Some Confluence pages return empty content and are skipped:
-- Pages that are stubs/redirects
-- Pages with restricted permissions
-- Pages with content in unsupported formats
+Some Confluence pages return empty content:
+- Stub/redirect pages
+- Restricted permission pages
+- Unsupported content formats
 
-This is normal behavior.
+This is normal and pages are skipped.
+
+## Configuration Reference
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ATLAS_RAG_CONFLUENCE_BASE_URL` | (required) | Confluence base URL |
+| `ATLAS_RAG_CONFLUENCE_USERNAME` | (required) | Atlassian email |
+| `ATLAS_RAG_CONFLUENCE_API_TOKEN` | (required) | API token |
+| `ATLAS_RAG_WATCHED_SPACES` | `["INFRA", "SE", "RUNBOOKS"]` | Spaces to sync |
+| `ATLAS_RAG_WATCHED_LABELS` | `["procedure", ...]` | Label filters |
+| `ATLAS_RAG_QDRANT_HOST` | `localhost` | Qdrant host |
+| `ATLAS_RAG_QDRANT_PORT` | `6333` | Qdrant REST port |
+| `ATLAS_RAG_QDRANT_GRPC_PORT` | `6334` | Qdrant gRPC port |
+| `ATLAS_RAG_EMBEDDING_MODEL` | `nomic-ai/nomic-embed-text-v1.5` | Embedding model |
+| `ATLAS_RAG_EMBEDDING_DIMENSIONS` | `768` | Vector dimensions |
+| `ATLAS_RAG_MAX_CHUNK_TOKENS` | `512` | Max tokens per chunk |
+
+### Qdrant Collection Schema
+
+The `confluence_chunks` collection stores:
+
+**Vector:** 768-dimensional float array (cosine distance)
+
+**Payload fields:**
+- `chunk_id` - Unique chunk identifier
+- `page_id` - Source page ID
+- `space_key` - Confluence space key
+- `page_title` - Page title
+- `page_url` - Full page URL
+- `content` - Chunk text content
+- `chunk_type` - prose/code/table/list/heading
+- `heading_context` - Parent heading
+- `context_path` - Breadcrumb trail
+- `labels` - Page labels
+- `updated_at` - Last update timestamp
+- `indexed_at` - When indexed to Qdrant
+
+**Indexes:** space_key, page_id, chunk_type, labels

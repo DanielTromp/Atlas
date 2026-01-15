@@ -38,11 +38,14 @@ class GeminiProvider(AIProvider):
 
     # Available Gemini models
     MODELS = {
+        # Gemini 3 models
+        "gemini-3-pro": {"context_window": 2097152, "max_output": 16384},
+        "gemini-3-flash": {"context_window": 1048576, "max_output": 16384},
+        # Gemini 2 models (legacy)
         "gemini-2.0-flash-exp": {"context_window": 1048576, "max_output": 8192},
+        # Gemini 1.5 models (legacy)
         "gemini-1.5-pro": {"context_window": 2097152, "max_output": 8192},
         "gemini-1.5-flash": {"context_window": 1048576, "max_output": 8192},
-        "gemini-1.5-flash-8b": {"context_window": 1048576, "max_output": 8192},
-        "gemini-pro": {"context_window": 32760, "max_output": 8192},
     }
 
     def __init__(self, config: ProviderConfig):
@@ -397,7 +400,7 @@ class GeminiProvider(AIProvider):
         ]
 
     def _get_fallback_model(self) -> str:
-        return "gemini-1.5-flash"
+        return "gemini-3-flash"
 
     async def close(self) -> None:
         if self._client:

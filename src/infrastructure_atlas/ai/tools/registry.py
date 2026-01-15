@@ -67,6 +67,12 @@ class ToolRegistry:
                 "endpoint": "/jira/search",
                 "params": ["q:query", "project", "status", "max:max_results"],
             },
+            "search_confluence_docs": {
+                "method": "POST",
+                "endpoint": "/confluence-rag/search",
+                "body": ["query", "top_k", "spaces", "include_citations"],
+                "defaults": {"top_k": 5, "include_citations": True},
+            },
             "confluence_search": {
                 "method": "GET",
                 "endpoint": "/confluence/search",
@@ -124,6 +130,51 @@ class ToolRegistry:
             "ticket_delete": {
                 "method": "DELETE",
                 "endpoint": "/draft-tickets/{ticket_id}",
+            },
+            # Jira advanced tools
+            "jira_get_remote_links": {
+                "method": "GET",
+                "endpoint": "/jira/issue/{issue_key}/remotelink",
+            },
+            "jira_create_confluence_link": {
+                "method": "POST",
+                "endpoint": "/jira/issue/{issue_key}/remotelink/confluence",
+                "body": ["page_id:confluence_page_id", "title", "relationship"],
+            },
+            "jira_delete_remote_link": {
+                "method": "DELETE",
+                "endpoint": "/jira/issue/{issue_key}/remotelink/{link_id}",
+            },
+            "jira_list_attachments": {
+                "method": "GET",
+                "endpoint": "/jira/issue/{issue_key}/attachments",
+            },
+            "jira_attach_file": {
+                "method": "POST",
+                "endpoint": "/jira/issue/{issue_key}/attachments/url",
+                "body": ["file_url", "filename"],
+            },
+            # Commvault tools
+            "commvault_backup_status": {
+                "method": "GET",
+                "endpoint": "/commvault/backup-status",
+                "params": ["hostname", "hours", "limit"],
+            },
+            # Confluence RAG advanced tools
+            "get_confluence_page": {
+                "method": "GET",
+                "endpoint": "/confluence-rag/page",
+                "params": ["page_id", "page_title", "space_key"],
+            },
+            "list_confluence_spaces": {
+                "method": "GET",
+                "endpoint": "/confluence-rag/spaces",
+            },
+            "generate_guide_from_docs": {
+                "method": "POST",
+                "endpoint": "/confluence-rag/guide",
+                "body": ["query", "max_pages"],
+                "defaults": {"max_pages": 5},
             },
         }
 

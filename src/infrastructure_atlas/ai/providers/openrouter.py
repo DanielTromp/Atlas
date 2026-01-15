@@ -42,32 +42,22 @@ class OpenRouterProvider(AIProvider):
     # Popular models available on OpenRouter
     MODELS = {
         # OpenAI models
-        "openai/gpt-5-mini": {"context_window": 400000},
-        "openai/gpt-5-nano": {"context_window": 200000},
-        "openai/gpt-5.2": {"context_window": 500000},
-        "openai/gpt-4o-mini": {"context_window": 128000},
-        "openai/gpt-4o": {"context_window": 128000},
-        "openai/gpt-oss-120b": {"context_window": 128000},
+        "openai/gpt-5": {"context_window": 500000, "max_output": 32768},
+        "openai/gpt-5-mini": {"context_window": 400000, "max_output": 32768},
+        "openai/gpt-5-nano": {"context_window": 200000, "max_output": 16384},
         # Anthropic models
-        "anthropic/claude-opus-4.5": {"context_window": 200000},
-        "anthropic/claude-sonnet-4.5": {"context_window": 200000},
-        "anthropic/claude-haiku-4.5": {"context_window": 200000},
-        "anthropic/claude-sonnet-4": {"context_window": 200000},
-        "anthropic/claude-3.5-sonnet": {"context_window": 200000},
-        "anthropic/claude-3.5-haiku": {"context_window": 200000},
+        "anthropic/claude-opus-4.5": {"context_window": 200000, "max_output": 16384},
+        "anthropic/claude-sonnet-4.5": {"context_window": 200000, "max_output": 16384},
+        "anthropic/claude-haiku-4.5": {"context_window": 200000, "max_output": 16384},
         # Google models
-        "google/gemini-2.5-flash": {"context_window": 1000000},
-        "google/gemini-pro-1.5": {"context_window": 1000000},
-        "google/gemini-flash-1.5": {"context_window": 1000000},
+        "google/gemini-3-pro": {"context_window": 2097152, "max_output": 16384},
+        "google/gemini-3-flash": {"context_window": 1048576, "max_output": 16384},
         # X.AI models
-        "x-ai/grok-4.1-fast": {"context_window": 131072},
-        # Meta models
-        "meta-llama/llama-3.1-405b-instruct": {"context_window": 131072},
-        "meta-llama/llama-3.1-70b-instruct": {"context_window": 131072},
-        # Other models
-        "mistralai/mistral-large": {"context_window": 128000},
-        "deepseek/deepseek-v3.2": {"context_window": 128000},
-        "deepseek/deepseek-chat": {"context_window": 64000},
+        "x-ai/grok-4": {"context_window": 131072, "max_output": 16384},
+        "x-ai/grok-4.1-fast": {"context_window": 131072, "max_output": 16384},
+        # DeepSeek models
+        "deepseek/deepseek-chat": {"context_window": 64000, "max_output": 8192},
+        "deepseek/deepseek-reasoner": {"context_window": 64000, "max_output": 8192},
     }
 
     def __init__(self, config: ProviderConfig):

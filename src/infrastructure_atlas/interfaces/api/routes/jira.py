@@ -365,7 +365,7 @@ def delete_remote_link(key: str, link_id: str):
     """Delete a remote link."""
     require_jira_enabled()
     sess, base = _jira_session()
-    
+
     url = f"{base}/rest/api/3/issue/{key}/remotelink/{link_id}"
     try:
         r = sess.delete(url, timeout=30)
@@ -375,5 +375,108 @@ def delete_remote_link(key: str, link_id: str):
         return {"success": True, "message": "Link deleted"}
     except requests.HTTPError as ex:
         raise HTTPException(status_code=ex.response.status_code, detail=str(ex))
+    except Exception as ex:
+        raise HTTPException(status_code=502, detail=f"Jira error: {ex}")
+
+
+# Attachment endpoints
+@router.get("/issue/{key}/attachments")
+def list_attachments(key: str):
+    """List all attachments on a Jira issue."""
+    require_jira_enabled()
+    sess, base = _jira_session()
+
+    # Get issue with attachment field
+    url = f"{base}/rest/api/3/issue/{key}"
+    try:
+        r = sess.get(url, params={"fields": "attachment"}, timeout=30)
+        if r.status_code == 404:
+            raise HTTPException(status_code=404, detail=f"Issue {key} not found")
+        r.raise_for_status()
+        data = r.json()
+        attachments = data.get("fields", {}).get("attachment", [])
+        return {
+            "issue_key": key,
+            "count": len(attachments),
+            "attachments": [
+                {
+                    "id": a.get("id"),
+                    "filename": a.get("filename"),
+                    "size": a.get("size"),
+                    "mimeType": a.get("mimeType"),
+                    "created": a.get("created"),
+                    "author": (a.get("author") or {}).get("displayName"),
+                    "content": a.get("content"),  # Download URL
+                }
+                for a in attachments
+            ],
+        }
+    except requests.HTTPError as ex:
+        raise HTTPException(status_code=ex.response.status_code, detail=str(ex))
+    except Exception as ex:
+        raise HTTPException(status_code=502, detail=f"Jira error: {ex}")
+
+
+class AttachFromUrlRequest(BaseModel):
+    file_url: str
+    filename: str | None = None
+
+
+@router.post("/issue/{key}/attachments/url")
+def attach_file_from_url(key: str, req: AttachFromUrlRequest):
+    """Download a file from URL and attach it to a Jira issue."""
+    require_jira_enabled()
+    sess, base = _jira_session()
+
+    # First download the file
+    try:
+        file_resp = requests.get(req.file_url, timeout=60, stream=True)
+        file_resp.raise_for_status()
+
+        # Determine filename
+        filename = req.filename
+        if not filename:
+            # Try to get from Content-Disposition header
+            cd = file_resp.headers.get("Content-Disposition", "")
+            if "filename=" in cd:
+                import re
+                match = re.search(r'filename[^;=\n]*=((["\']).*?\2|[^;\n]*)', cd)
+                if match:
+                    filename = match.group(1).strip("\"'")
+            if not filename:
+                # Use last part of URL path
+                from urllib.parse import urlparse
+                path = urlparse(req.file_url).path
+                filename = path.split("/")[-1] or "attachment"
+
+        file_content = file_resp.content
+        content_type = file_resp.headers.get("Content-Type", "application/octet-stream")
+
+    except Exception as ex:
+        raise HTTPException(status_code=400, detail=f"Failed to download file: {ex}")
+
+    # Now upload to Jira
+    url = f"{base}/rest/api/3/issue/{key}/attachments"
+    try:
+        # Jira attachments require multipart/form-data
+        files = {"file": (filename, file_content, content_type)}
+        # Need special header for attachments
+        headers = {"X-Atlassian-Token": "no-check"}
+        r = sess.post(url, files=files, headers=headers, timeout=60)
+
+        if r.status_code == 404:
+            raise HTTPException(status_code=404, detail=f"Issue {key} not found")
+        r.raise_for_status()
+
+        result = r.json()
+        return {
+            "success": True,
+            "issue_key": key,
+            "filename": filename,
+            "attachment": result[0] if result else None,
+        }
+    except requests.HTTPError as ex:
+        detail = ex.response.text if ex.response else str(ex)
+        raise HTTPException(status_code=ex.response.status_code if ex.response else 500, detail=detail)
     except Exception as ex:
         raise HTTPException(status_code=502, detail=f"Jira error: {ex}")

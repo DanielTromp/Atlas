@@ -26,8 +26,9 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from infrastructure_atlas.confluence_rag.config import ConfluenceRAGSettings
-from infrastructure_atlas.confluence_rag.database import Database
-from infrastructure_atlas.confluence_rag.search import HybridSearchEngine, SearchConfig, SearchResponse
+from infrastructure_atlas.confluence_rag.models import SearchResponse
+from infrastructure_atlas.confluence_rag.qdrant_search import QdrantSearchEngine, SearchConfig
+from infrastructure_atlas.confluence_rag.qdrant_store import QdrantStore
 
 logger = logging.getLogger(__name__)
 
@@ -208,12 +209,12 @@ class AtlasMCPServer:
 
     def __init__(
         self,
-        search_engine: HybridSearchEngine | None = None,
-        db: Database | None = None,
+        search_engine: QdrantSearchEngine | None = None,
+        qdrant_store: QdrantStore | None = None,
         settings: ConfluenceRAGSettings | None = None,
     ):
         self.search = search_engine
-        self.db = db
+        self.store = qdrant_store
         self.settings = settings
         self.server = FastMCP("atlas-infrastructure")
         self._register_tools()
@@ -222,10 +223,10 @@ class AtlasMCPServer:
         """Register all MCP tools."""
 
         # =====================================================================
-        # Confluence RAG Tools (semantic search)
+        # Confluence RAG Tools (semantic search via Qdrant)
         # =====================================================================
 
-        if self.search and self.db:
+        if self.search and self.store:
             self._register_confluence_rag_tools()
 
         # =====================================================================
@@ -1162,7 +1163,7 @@ class AtlasMCPServer:
             return output
 
     def _register_confluence_rag_tools(self):
-        """Register Confluence RAG search tools."""
+        """Register Confluence RAG search tools (Qdrant-based)."""
 
         @self.server.tool()
         async def search_confluence_docs(
@@ -1175,7 +1176,7 @@ class AtlasMCPServer:
             Use this for finding procedures, troubleshooting guides,
             and technical documentation.
             """
-            config = SearchConfig(top_k=top_k, include_citations=include_citations)
+            config = SearchConfig(top_k=top_k, include_citations=include_citations, space_keys=spaces)
             response = await self.search.search(query, config)
             return self._format_search_results(response)
 
@@ -1187,78 +1188,53 @@ class AtlasMCPServer:
             Retrieve a specific Confluence page from RAG cache.
             Provide either page_id OR (page_title + space_key).
             """
-            conn = self.db.connect()
-
             if page_id:
-                page = conn.execute("SELECT * FROM pages WHERE page_id = $1", [page_id]).fetchone()
-            elif page_title and space_key:
-                page = conn.execute(
-                    "SELECT * FROM pages WHERE title ILIKE $1 AND space_key = $2", [f"%{page_title}%", space_key]
-                ).fetchone()
+                page, chunks = self.search.get_page(page_id)
+                if not page:
+                    return "Page not found"
+                return self._format_page_from_models(page, chunks)
+            elif page_title:
+                # Search for the page by title
+                config = SearchConfig(top_k=10, include_citations=False, space_keys=[space_key] if space_key else None)
+                response = await self.search.search(page_title, config)
+
+                # Find best matching page
+                for result in response.results:
+                    if page_title.lower() in result.page.title.lower():
+                        page, chunks = self.search.get_page(result.page.page_id)
+                        if page:
+                            return self._format_page_from_models(page, chunks)
+
+                return f"Page not found: {page_title}"
             else:
                 return "Error: Provide either page_id or (page_title + space_key)"
-
-            if not page:
-                return "Page not found"
-
-            columns = [desc[0] for desc in conn.description]
-            page_dict = dict(zip(columns, page))
-
-            chunks = conn.execute(
-                "SELECT content, heading_context FROM chunks WHERE page_id = $1 ORDER BY position_in_page",
-                [page_dict["page_id"]],
-            ).fetchall()
-
-            return self._format_page(page_dict, chunks)
 
         @self.server.tool()
         async def list_confluence_spaces() -> str:
             """List available Confluence spaces in the RAG cache."""
-            conn = self.db.connect()
+            spaces = self.store.list_spaces()
 
-            spaces = conn.execute(
-                """
-                SELECT
-                    space_key,
-                    COUNT(*) as page_count,
-                    MAX(synced_at) as last_sync
-                FROM pages
-                GROUP BY space_key
-                ORDER BY space_key
-            """
-            ).fetchall()
+            if not spaces:
+                return "## Available Confluence Spaces\n\nNo spaces found in cache."
 
             result = "## Available Confluence Spaces\n\n"
             for space in spaces:
-                result += f"- **{space[0]}**: {space[1]} pages (sync: {space[2]})\n"
+                result += f"- **{space['space_key']}**: {space['page_count']} pages, {space['chunk_count']} chunks\n"
 
             return result
 
         @self.server.tool()
         async def get_confluence_stats() -> str:
-            """Get statistics about the Confluence RAG cache."""
-            conn = self.db.connect()
+            """Get statistics about the Confluence RAG cache (Qdrant)."""
+            stats = self.search.get_stats()
 
-            try:
-                stats = conn.execute(
-                    """
-                    SELECT
-                        (SELECT COUNT(*) FROM pages) as total_pages,
-                        (SELECT COUNT(*) FROM chunks) as total_chunks,
-                        (SELECT COUNT(*) FROM chunk_embeddings) as total_embeddings,
-                        (SELECT MAX(synced_at) FROM pages) as last_sync
-                """
-                ).fetchone()
+            result = "## Confluence RAG Cache Statistics (Qdrant)\n\n"
+            result += f"- **Collection**: {stats.get('collection_name', 'N/A')}\n"
+            result += f"- **Total Vectors**: {stats.get('points_count', 0)}\n"
+            result += f"- **Status**: {stats.get('status', 'unknown')}\n"
+            result += f"- **Cache Size**: {stats.get('cache_size', 0)} queries\n"
 
-                result = "## Confluence RAG Cache Statistics\n\n"
-                result += f"- **Total Pages**: {stats[0]}\n"
-                result += f"- **Total Chunks**: {stats[1]}\n"
-                result += f"- **Total Embeddings**: {stats[2]}\n"
-                result += f"- **Last Sync**: {stats[3]}\n"
-
-                return result
-            except Exception:
-                return "Cache empty or not initialized"
+            return result
 
         @self.server.tool()
         async def generate_guide_from_docs(query: str, max_pages: int = 5) -> str:
@@ -1278,7 +1254,6 @@ class AtlasMCPServer:
             if not response.results:
                 return f"No documentation found for: {query}"
 
-            conn = self.db.connect()
             seen_pages = set()
             pages_content = []
 
@@ -1291,18 +1266,11 @@ class AtlasMCPServer:
                 if len(seen_pages) > max_pages:
                     break
 
-                chunks = conn.execute(
-                    """
-                    SELECT content, heading_context
-                    FROM chunks
-                    WHERE page_id = $1
-                    ORDER BY position_in_page
-                """,
-                    [page_id],
-                ).fetchall()
-
-                page_content = self._format_page_for_guide(result.page, chunks)
-                pages_content.append(page_content)
+                # Get full page content from Qdrant
+                page, chunks = self.search.get_page(page_id)
+                if page and chunks:
+                    page_content = self._format_page_for_guide(page, [(c.content, c.heading_context) for c in chunks])
+                    pages_content.append(page_content)
 
             output = f"# Documentation: {query}\n\n"
             output += f"*Found {len(pages_content)} relevant pages from internal documentation*\n\n"
@@ -1321,28 +1289,45 @@ class AtlasMCPServer:
 
             Use this when you know the exact page title and want full content.
             """
-            conn = self.db.connect()
+            # Search for the page by title
+            config = SearchConfig(top_k=10, include_citations=False)
+            response = await self.search.search(page_title, config)
 
-            page = conn.execute("SELECT * FROM pages WHERE title ILIKE $1 LIMIT 1", [f"%{page_title}%"]).fetchone()
+            # Find best matching page
+            for result in response.results:
+                if page_title.lower() in result.page.title.lower():
+                    page, chunks = self.search.get_page(result.page.page_id)
+                    if page:
+                        return self._format_page_from_models(page, chunks)
 
-            if not page:
-                words = page_title.split()
-                if len(words) > 1:
-                    pattern = "%" + "%".join(words) + "%"
-                    page = conn.execute("SELECT * FROM pages WHERE title ILIKE $1 LIMIT 1", [pattern]).fetchone()
+            # Try fuzzy match
+            for result in response.results:
+                words = page_title.lower().split()
+                title_lower = result.page.title.lower()
+                if all(word in title_lower for word in words):
+                    page, chunks = self.search.get_page(result.page.page_id)
+                    if page:
+                        return self._format_page_from_models(page, chunks)
 
-            if not page:
-                return f"Page not found: {page_title}"
+            return f"Page not found: {page_title}"
 
-            columns = [desc[0] for desc in conn.description]
-            page_dict = dict(zip(columns, page))
+    def _format_page_from_models(self, page, chunks) -> str:
+        """Format a page from Pydantic models."""
+        output = f"# {page.title}\n\n"
+        output += f"**Space:** {page.space_key} | "
+        output += f"**Updated:** {page.updated_at} by {page.updated_by}\n"
+        output += f"**URL:** {page.url}\n\n"
+        output += "---\n\n"
 
-            chunks = conn.execute(
-                "SELECT content, heading_context FROM chunks WHERE page_id = $1 ORDER BY position_in_page",
-                [page_dict["page_id"]],
-            ).fetchall()
+        current_heading = None
+        for chunk in chunks:
+            if chunk.heading_context != current_heading:
+                current_heading = chunk.heading_context
+                if current_heading:
+                    output += f"## {current_heading}\n\n"
+            output += f"{chunk.content}\n\n"
 
-            return self._format_page(page_dict, chunks)
+        return output
 
     def _register_jira_attachment_tools(self):
         """Register Jira attachment tools."""

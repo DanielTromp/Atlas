@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker
 
@@ -28,8 +28,43 @@ def get_engine(echo: bool | None = None) -> Engine:
         echo = os.getenv("SQLALCHEMY_ECHO", "").strip().lower() in {"1", "true", "yes", "on"}
     connect_args: dict[str, object] = {}
     if url.startswith("sqlite"):
-        connect_args = {"check_same_thread": False}
-    return create_engine(url, echo=echo, future=True, connect_args=connect_args)
+        # Allow multi-threaded access and set a busy timeout
+        connect_args = {"check_same_thread": False, "timeout": 30}
+
+    # Use NullPool for SQLite to avoid connection pooling issues
+    # Each request gets a fresh connection, avoiding stale connection problems
+    pool_class = None
+    if url.startswith("sqlite"):
+        from sqlalchemy.pool import StaticPool
+        pool_class = StaticPool
+
+    engine = create_engine(
+        url,
+        echo=echo,
+        future=True,
+        connect_args=connect_args,
+        poolclass=pool_class,
+    )
+
+    # Configure SQLite for better concurrent access
+    if url.startswith("sqlite"):
+
+        @event.listens_for(engine, "connect")
+        def set_sqlite_pragma(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            # WAL mode for better concurrent read/write
+            cursor.execute("PRAGMA journal_mode=WAL")
+            # Normal sync is faster and still safe with WAL
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            # Increase cache size (negative = KB, so -64000 = 64MB)
+            cursor.execute("PRAGMA cache_size=-64000")
+            # Enable foreign keys
+            cursor.execute("PRAGMA foreign_keys=ON")
+            # Set busy timeout (30 seconds) to wait for locks instead of failing
+            cursor.execute("PRAGMA busy_timeout=30000")
+            cursor.close()
+
+    return engine
 
 
 def get_sessionmaker(*, engine: Engine | None = None) -> sessionmaker:

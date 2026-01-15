@@ -1,22 +1,27 @@
-from fastapi import APIRouter, Query, HTTPException, Depends
-from pydantic import BaseModel
 import asyncio
+import logging
+import os
 from typing import Annotated
 
-from infrastructure_atlas.confluence_rag.config import ConfluenceRAGSettings
-from infrastructure_atlas.confluence_rag.database import Database
-from infrastructure_atlas.confluence_rag.search import HybridSearchEngine, SearchConfig
-from infrastructure_atlas.confluence_rag.sync import ConfluenceSyncEngine
-from infrastructure_atlas.confluence_rag.models import SearchResponse
-from infrastructure_atlas.confluence_rag.embeddings import EmbeddingPipeline
-from infrastructure_atlas.confluence_rag.citations import CitationExtractor
-from infrastructure_atlas.confluence_rag.confluence_client import ConfluenceClient
-from infrastructure_atlas.confluence_rag.chunker import ConfluenceChunker
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 
-# Note: In a real app we'd use a DI container or app state.
-# Here we'll instantiate lazily given the "module" structure.
+from infrastructure_atlas.confluence_rag.chunker import ConfluenceChunker
+from infrastructure_atlas.confluence_rag.citations import CitationExtractor
+from infrastructure_atlas.confluence_rag.config import ConfluenceRAGSettings
+from infrastructure_atlas.confluence_rag.confluence_client import ConfluenceClient
+from infrastructure_atlas.confluence_rag.embeddings import EmbeddingPipeline
+from infrastructure_atlas.confluence_rag.models import SearchResponse
+
+# Qdrant-based implementations
+from infrastructure_atlas.confluence_rag.qdrant_search import QdrantSearchEngine, SearchConfig
+from infrastructure_atlas.confluence_rag.qdrant_store import QdrantStore
+from infrastructure_atlas.confluence_rag.qdrant_sync import QdrantSyncEngine
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/confluence-rag", tags=["Confluence RAG"])
+
 
 class SearchRequest(BaseModel):
     query: str
@@ -24,14 +29,22 @@ class SearchRequest(BaseModel):
     include_citations: bool = True
     spaces: list[str] | None = None
 
+
 class SyncRequest(BaseModel):
     spaces: list[str] | None = None
     full_sync: bool = False
 
+
+class GuideRequest(BaseModel):
+    query: str
+    max_pages: int = 5
+
+
 # Global singletons (cached)
 _settings = None
-_db = None
+_qdrant_store = None
 _search_engine = None
+
 
 def get_settings():
     global _settings
@@ -39,160 +52,219 @@ def get_settings():
         _settings = ConfluenceRAGSettings()
     return _settings
 
-def get_database():
-    global _db
-    if not _db:
-        settings = get_settings()
-        _db = Database(settings.duckdb_path)
-    return _db
+
+def get_qdrant_store():
+    global _qdrant_store
+    if not _qdrant_store:
+        _qdrant_store = QdrantStore()
+    return _qdrant_store
+
 
 def get_search_engine():
     global _search_engine
     if not _search_engine:
-        db = get_database()
+        store = get_qdrant_store()
         settings = get_settings()
-        embeddings = EmbeddingPipeline(model_name=settings.embedding_model, dimensions=settings.embedding_dimensions)
+        embeddings = EmbeddingPipeline(
+            model_name=settings.embedding_model, dimensions=settings.embedding_dimensions
+        )
         citations = CitationExtractor()
-        _search_engine = HybridSearchEngine(db, embeddings, citations)
+        _search_engine = QdrantSearchEngine(store, embeddings, citations)
     return _search_engine
 
+
 def get_sync_engine():
-    # Sync engine is heavy, maybe don't cache it forever or careful with client session
-    # We will create one fresh or use a cached one.
-    # The client needs closing though.
+    """Create a new sync engine instance (not cached due to client lifecycle)."""
     settings = get_settings()
-    db = get_database()
+    store = get_qdrant_store()
     confluence = ConfluenceClient(
         settings.confluence_base_url,
         settings.confluence_username,
-        settings.confluence_api_token
+        settings.confluence_api_token,
     )
     chunker = ConfluenceChunker(max_chunk_tokens=settings.max_chunk_tokens)
-    embeddings = EmbeddingPipeline(model_name=settings.embedding_model, dimensions=settings.embedding_dimensions)
-    
-    return ConfluenceSyncEngine(confluence, db, chunker, embeddings, settings)
+    embeddings = EmbeddingPipeline(
+        model_name=settings.embedding_model, dimensions=settings.embedding_dimensions
+    )
+
+    return QdrantSyncEngine(confluence, store, chunker, embeddings, settings)
 
 @router.post("/search", response_model=SearchResponse)
 async def search_confluence(request: SearchRequest):
     """
-    Search the Confluence RAG cache.
+    Search the Confluence RAG cache using Qdrant vector search.
     """
     engine = get_search_engine()
-    
+
     config = SearchConfig(
         top_k=request.top_k,
-        include_citations=request.include_citations
+        include_citations=request.include_citations,
+        space_keys=request.spaces,
     )
-    
-    # Filter by spaces logic would go into search engine config or query
-    # Currently SearchConfig doesn't support space filter but sql query can be updated.
-    # For now we ignore spaces filter or would need to extend SearchEngine.
-    
+
     return await engine.search(request.query, config)
+
 
 @router.post("/sync")
 async def trigger_sync(request: SyncRequest):
-    """Trigger a Confluence sync"""
-    # Background task
+    """Trigger a Confluence sync to Qdrant."""
     sync_engine = get_sync_engine()
-    
+
     async def run_sync():
-        if request.full_sync:
-            await sync_engine.full_sync(request.spaces)
-        else:
-            await sync_engine.incremental_sync(request.spaces)
-        await sync_engine.confluence.close()
+        try:
+            if request.full_sync:
+                await sync_engine.full_sync(request.spaces)
+            else:
+                await sync_engine.incremental_sync(request.spaces)
+        finally:
+            await sync_engine.confluence.close()
 
     asyncio.create_task(run_sync())
-    
+
     return {"status": "sync_started", "spaces": request.spaces or "all"}
+
 
 @router.get("/stats")
 async def get_stats():
-    """Get statistics about the RAG cache"""
-    db = get_database()
-    conn = db.connect()
-    
-    try:
-        stats = conn.execute("""
-            SELECT
-                (SELECT COUNT(*) FROM pages) as total_pages,
-                (SELECT COUNT(*) FROM chunks) as total_chunks,
-                (SELECT COUNT(*) FROM chunk_embeddings) as total_embeddings,
-                (SELECT MAX(synced_at) FROM pages) as last_sync,
-                (SELECT SUM(hit_count) FROM search_cache) as total_cache_hits
-        """).fetchone()
-        
-        return {
-            "pages": stats[0],
-            "chunks": stats[1],
-            "embeddings": stats[2],
-            "last_sync": stats[3],
-            "cache_hits": stats[4] or 0
-        }
-    except:
-        return {"status": "Database empty or not initialized"}
+    """Get statistics about the Qdrant RAG cache."""
+    engine = get_search_engine()
+    return engine.get_stats()
+
 
 @router.get("/page/{page_id}")
 async def get_page_chunks(page_id: str):
-    """Get all chunks for a specific page"""
-    db = get_database()
-    conn = db.connect()
-    
-    try:
-        page = conn.execute(
-            "SELECT * FROM pages WHERE page_id = $1", [page_id]
-        ).fetchone()
-        
-        if not page:
-            raise HTTPException(404, "Page not found")
-        
-        page_cols = [desc[0] for desc in conn.description]
-        
-        chunks = conn.execute(
-            "SELECT * FROM chunks WHERE page_id = $1 ORDER BY position_in_page",
-            [page_id]
-        ).fetchall()
-        
-        chunk_cols = [desc[0] for desc in conn.description]
-        
-        return {
-            "page": dict(zip(page_cols, page)),
-            "chunks": [dict(zip(chunk_cols, c)) for c in chunks]
-        }
-    except Exception as e:
-        raise HTTPException(500, str(e))
+    """Get all chunks for a specific page from Qdrant."""
+    engine = get_search_engine()
+    page, chunks = engine.get_page(page_id)
+
+    if not page:
+        raise HTTPException(404, "Page not found")
+
+    return {
+        "page": page.model_dump(),
+        "chunks": [c.model_dump() for c in chunks],
+    }
+
 
 @router.get("/spaces")
 async def list_spaces():
-    """List all spaces in the cache with statistics"""
-    db = get_database()
-    conn = db.connect()
-    
+    """List all spaces in the Qdrant cache with statistics."""
+    store = get_qdrant_store()
+    return store.list_spaces()
+
+
+@router.post("/warmup")
+async def warmup_rag():
+    """
+    Preload the embedding model and Qdrant connection.
+
+    Call this after server startup to ensure fast first queries.
+    Returns stats about the loaded components.
+    """
+    logger.info("Warming up Confluence RAG...")
+
+    # Force initialization of all components
+    engine = get_search_engine()
+    stats = engine.get_stats()
+
+    logger.info(f"RAG warmup complete: {stats.get('points_count', 0)} vectors ready")
+
+    return {
+        "status": "ready",
+        "qdrant": stats,
+        "model": get_settings().embedding_model,
+    }
+
+
+@router.post("/guide")
+async def generate_guide_from_docs(request: GuideRequest):
+    """
+    Generate a comprehensive guide by searching documentation and returning FULL page content.
+
+    Unlike /search which returns snippets, this endpoint:
+    1. Searches for relevant pages
+    2. Returns complete page content from the most relevant pages
+    3. Suitable for generating comprehensive how-to guides
+
+    Args:
+        query: What to search for (e.g., 'configure MS Defender', 'CEPH tenant setup')
+        max_pages: Maximum number of relevant pages to include (default 5)
+
+    Returns:
+        Full page content from the most relevant documentation pages.
+    """
+    engine = get_search_engine()
+    store = get_qdrant_store()
+
+    # First search for relevant pages
+    config = SearchConfig(
+        top_k=request.max_pages * 3,  # Get more candidates to find unique pages
+        include_citations=True,
+        space_keys=None,
+    )
+
+    search_result = await engine.search(request.query, config)
+
+    # Collect unique page IDs from search results
+    seen_page_ids: set[str] = set()
+    page_ids: list[str] = []
+
+    for result in search_result.results:
+        page_id = result.metadata.get("page_id")
+        if page_id and page_id not in seen_page_ids:
+            seen_page_ids.add(page_id)
+            page_ids.append(page_id)
+            if len(page_ids) >= request.max_pages:
+                break
+
+    if not page_ids:
+        return {
+            "query": request.query,
+            "pages_found": 0,
+            "pages": [],
+            "message": "No relevant documentation found for this query.",
+        }
+
+    # Fetch full content for each page
+    pages = []
+    for page_id in page_ids:
+        try:
+            page, chunks = engine.get_page(page_id)
+            if page:
+                # Reconstruct full content from chunks
+                full_content = "\n\n".join(c.text for c in chunks)
+                pages.append({
+                    "page_id": page_id,
+                    "title": page.title,
+                    "space_key": page.space_key,
+                    "url": page.url,
+                    "content": full_content,
+                    "last_modified": page.last_modified.isoformat() if page.last_modified else None,
+                })
+        except Exception as e:
+            logger.warning(f"Failed to fetch page {page_id}: {e}")
+
+    return {
+        "query": request.query,
+        "pages_found": len(pages),
+        "pages": pages,
+    }
+
+
+def warmup_search_engine():
+    """
+    Synchronous warmup function to preload the embedding model.
+
+    Call this during application startup to avoid cold-start latency.
+    """
+    if os.getenv("ATLAS_RAG_SKIP_WARMUP", "").lower() in ("1", "true", "yes"):
+        logger.info("Skipping RAG warmup (ATLAS_RAG_SKIP_WARMUP=1)")
+        return
+
     try:
-        spaces = conn.execute("""
-            SELECT 
-                p.space_key,
-                COUNT(DISTINCT p.page_id) as page_count,
-                COUNT(c.chunk_id) as chunk_count,
-                MAX(p.synced_at) as last_sync,
-                s.status as sync_status
-            FROM pages p
-            LEFT JOIN chunks c ON p.page_id = c.page_id
-            LEFT JOIN sync_state s ON p.space_key = s.space_key
-            GROUP BY p.space_key, s.status
-            ORDER BY p.space_key
-        """).fetchall()
-        
-        return [
-            {
-                "space_key": row[0],
-                "page_count": row[1],
-                "chunk_count": row[2],
-                "last_sync": row[3],
-                "sync_status": row[4]
-            }
-            for row in spaces
-        ]
-    except:
-        return []
+        logger.info("Preloading Confluence RAG embedding model...")
+        engine = get_search_engine()
+        stats = engine.get_stats()
+        logger.info(f"RAG ready: {stats.get('points_count', 0)} vectors in Qdrant")
+    except Exception as e:
+        logger.warning(f"RAG warmup failed (non-fatal): {e}")

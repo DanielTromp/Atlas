@@ -37,11 +37,14 @@ class OpenAIProvider(AIProvider):
 
     # Available OpenAI models
     MODELS = {
+        # GPT-5 models
+        "gpt-5": {"context_window": 500000, "max_output": 32768, "vision": True},
+        "gpt-5-mini": {"context_window": 400000, "max_output": 32768, "vision": True},
+        "gpt-5-nano": {"context_window": 200000, "max_output": 16384, "vision": True},
+        # GPT-4 models (legacy)
         "gpt-4o": {"context_window": 128000, "max_output": 16384, "vision": True},
         "gpt-4o-mini": {"context_window": 128000, "max_output": 16384, "vision": True},
-        "gpt-4-turbo": {"context_window": 128000, "max_output": 4096, "vision": True},
-        "gpt-4": {"context_window": 8192, "max_output": 8192, "vision": False},
-        "gpt-3.5-turbo": {"context_window": 16385, "max_output": 4096, "vision": False},
+        # Reasoning models
         "o1-preview": {"context_window": 128000, "max_output": 32768, "reasoning": True},
         "o1-mini": {"context_window": 128000, "max_output": 65536, "reasoning": True},
     }
@@ -86,7 +89,11 @@ class OpenAIProvider(AIProvider):
         if temperature is not None and not model.startswith("o1"):
             payload["temperature"] = temperature
         if max_tokens is not None:
-            payload["max_tokens"] = max_tokens
+            # GPT-5 and o1 models use max_completion_tokens instead of max_tokens
+            if model.startswith("gpt-5") or model.startswith("o1"):
+                payload["max_completion_tokens"] = max_tokens
+            else:
+                payload["max_tokens"] = max_tokens
         if tools and not model.startswith("o1"):  # o1 models don't support tools
             payload["tools"] = tools
             if tool_choice:
@@ -189,7 +196,11 @@ class OpenAIProvider(AIProvider):
         if temperature is not None and not model.startswith("o1"):
             payload["temperature"] = temperature
         if max_tokens is not None:
-            payload["max_tokens"] = max_tokens
+            # GPT-5 and o1 models use max_completion_tokens instead of max_tokens
+            if model.startswith("gpt-5") or model.startswith("o1"):
+                payload["max_completion_tokens"] = max_tokens
+            else:
+                payload["max_tokens"] = max_tokens
         if tools and not model.startswith("o1"):
             payload["tools"] = tools
             if tool_choice:
@@ -315,7 +326,7 @@ class OpenAIProvider(AIProvider):
         ]
 
     def _get_fallback_model(self) -> str:
-        return "gpt-4o-mini"
+        return "gpt-5-mini"
 
     async def close(self) -> None:
         """Close the HTTP client."""

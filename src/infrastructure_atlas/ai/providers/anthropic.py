@@ -30,7 +30,7 @@ class AnthropicProvider(AIProvider):
 
     Configuration:
         - api_key: Anthropic API key
-        - default_model: Default model (e.g., claude-3-5-sonnet-20241022)
+        - default_model: Default model (e.g., claude-sonnet-4-5-20250929)
     """
 
     provider_name = "anthropic"
@@ -39,11 +39,10 @@ class AnthropicProvider(AIProvider):
 
     # Available Claude models
     MODELS = {
-        "claude-3-5-sonnet-20241022": {"context_window": 200000, "max_output": 8192},
-        "claude-3-5-haiku-20241022": {"context_window": 200000, "max_output": 8192},
-        "claude-3-opus-20240229": {"context_window": 200000, "max_output": 4096},
-        "claude-3-sonnet-20240229": {"context_window": 200000, "max_output": 4096},
-        "claude-3-haiku-20240307": {"context_window": 200000, "max_output": 4096},
+        # Claude 4.5 models
+        "claude-opus-4-5-20251101": {"context_window": 200000, "max_output": 16384},
+        "claude-sonnet-4-5-20250929": {"context_window": 200000, "max_output": 16384},
+        "claude-haiku-4-5-20251001": {"context_window": 200000, "max_output": 16384},
     }
 
     def __init__(self, config: ProviderConfig):
@@ -416,7 +415,7 @@ class AnthropicProvider(AIProvider):
         ]
 
     def _get_fallback_model(self) -> str:
-        return "claude-3-5-sonnet-20241022"
+        return "claude-sonnet-4-5-20250929"
 
     async def close(self) -> None:
         if self._client:

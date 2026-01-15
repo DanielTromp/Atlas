@@ -111,7 +111,7 @@ class ProviderRegistry:
                 return ProviderConfig(
                     provider_type=ProviderType.ANTHROPIC,
                     api_key=api_key,
-                    default_model=os.getenv("ANTHROPIC_DEFAULT_MODEL", "claude-3-5-sonnet-20241022"),
+                    default_model=os.getenv("ANTHROPIC_DEFAULT_MODEL", "claude-sonnet-4-5-20250929"),
                 )
 
         elif name_lower == "openrouter":

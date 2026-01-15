@@ -112,6 +112,20 @@ def bootstrap_api() -> APIRouter:
     else:
         logger.info("Puppet module is disabled, skipping routes")
 
+    # Confluence RAG routes (Qdrant-based semantic search)
+    try:
+        from infrastructure_atlas.confluence_rag.api import router as rag_router, warmup_search_engine
+
+        router.include_router(rag_router)
+        logger.info("Enabled Confluence RAG API routes")
+
+        # Warmup the embedding model at startup (skip if disabled)
+        import os
+        if os.getenv("ATLAS_RAG_WARMUP", "0").lower() in ("1", "true", "yes"):
+            warmup_search_engine()
+    except Exception as e:
+        logger.warning(f"Confluence RAG routes not available: {e}")
+
     return router
 
 

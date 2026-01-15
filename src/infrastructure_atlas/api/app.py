@@ -442,6 +442,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if path.startswith("/auth/"):
             return await call_next(request)
 
+        # Allow unauthenticated access to RAG endpoints from localhost
+        if path.startswith("/confluence-rag") and _is_localhost(request):
+            return await call_next(request)
+
         # API protection via Bearer token; allow UI session/UserAPIKey as alternative
         if API_TOKEN and _is_api_path(path):
             if _has_bearer_token(request) or request.state.user is not None:
@@ -473,6 +477,15 @@ def _has_ui_session(request: Request) -> bool:
         return bool(request.session.get(SESSION_USER_KEY))
     except Exception:
         return False
+
+
+def _is_localhost(request: Request) -> bool:
+    """Check if the request originates from localhost."""
+    client = request.client
+    if client is None:
+        return False
+    host = client.host or ""
+    return host in ("127.0.0.1", "::1", "localhost")
 
 
 def _is_api_path(path: str) -> bool:
@@ -1131,7 +1144,7 @@ ENV_SETTING_FIELDS: list[dict[str, Any]] = [
         "key": "CHAT_DEFAULT_MODEL_CLAUDE",
         "label": "Anthropic Default Model",
         "secret": False,
-        "placeholder": "claude-3-5-sonnet",
+        "placeholder": "claude-sonnet-4-5-20250929",
         "category": "chat",
     },
     {

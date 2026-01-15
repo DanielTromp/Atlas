@@ -67,7 +67,8 @@ if __name__ == "__main__":
 
     # Create server without RAG for fast startup (~3 seconds)
     # RAG tools require embedding model which takes 15+ seconds to load
-    server = AtlasMCPServer(search_engine=None, db=None, settings=None)
+    # To enable RAG, pass QdrantSearchEngine and QdrantStore instances
+    server = AtlasMCPServer(search_engine=None, qdrant_store=None, settings=None)
 
     tool_count = len(server.server._tool_manager._tools)
     log(f"Atlas MCP: Ready with {tool_count} tools")
