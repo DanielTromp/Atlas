@@ -23,8 +23,10 @@ logging.basicConfig(level=logging.WARNING)
 @click.argument("query")
 @click.option("--limit", "-n", default=10, help="Number of results to return")
 @click.option("--spaces", "-s", multiple=True, help="Filter by space keys")
+@click.option("--collection", "-c", help="Qdrant collection name (for testing migrations)")
+@click.option("--provider", "-p", type=click.Choice(["local", "gemini"]), help="Embedding provider")
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
-def search(query: str, limit: int, spaces: tuple[str], verbose: bool):
+def search(query: str, limit: int, spaces: tuple[str], collection: str | None, provider: str | None, verbose: bool):
     """Search Confluence RAG knowledge base (Qdrant)."""
 
     if verbose:
@@ -33,18 +35,36 @@ def search(query: str, limit: int, spaces: tuple[str], verbose: bool):
     async def run():
         from infrastructure_atlas.confluence_rag.citations import CitationExtractor
         from infrastructure_atlas.confluence_rag.config import ConfluenceRAGSettings
-        from infrastructure_atlas.confluence_rag.embeddings import EmbeddingPipeline
+        from infrastructure_atlas.confluence_rag.embeddings import get_embedding_pipeline
         from infrastructure_atlas.confluence_rag.qdrant_search import (
             QdrantSearchEngine,
             SearchConfig,
         )
-        from infrastructure_atlas.confluence_rag.qdrant_store import QdrantStore
+        from infrastructure_atlas.confluence_rag.qdrant_store import QdrantConfig, QdrantStore
 
         settings = ConfluenceRAGSettings()
 
-        # Connect to Qdrant
+        # Determine embedding provider
+        embed_provider = provider or settings.embedding_provider
+
+        # Get embedding pipeline
+        embeddings = get_embedding_pipeline(provider=embed_provider)
+
+        # Determine collection name
+        collection_name = collection or settings.qdrant_collection
+
+        # Connect to Qdrant with custom config
         click.echo(f"Connecting to Qdrant at {settings.qdrant_host}:{settings.qdrant_port}...")
-        store = QdrantStore()
+        qdrant_config = QdrantConfig(
+            host=settings.qdrant_host,
+            port=settings.qdrant_port,
+            grpc_port=settings.qdrant_grpc_port,
+            prefer_grpc=settings.qdrant_prefer_grpc,
+            api_key=settings.qdrant_api_key,
+            collection_name=collection_name,
+            vector_size=embeddings.dimensions,
+        )
+        store = QdrantStore(config=qdrant_config)
 
         # Verify connection
         stats = store.get_stats()
@@ -59,14 +79,8 @@ def search(query: str, limit: int, spaces: tuple[str], verbose: bool):
             click.echo("  uv run python scripts/sync_confluence.py --full -s SPACE", err=True)
             sys.exit(1)
 
-        click.echo(f"Qdrant: {vector_count} vectors indexed")
-
-        # Load embedding model
-        click.echo("Loading embedding model... (this may take a moment)")
-        embeddings = EmbeddingPipeline(
-            model_name=settings.embedding_model,
-            dimensions=settings.embedding_dimensions,
-        )
+        click.echo(f"Collection: {collection_name} ({vector_count} vectors)")
+        click.echo(f"Provider: {embed_provider} ({embeddings.dimensions}D)")
         citations = CitationExtractor()
         search_engine = QdrantSearchEngine(store, embeddings, citations)
 

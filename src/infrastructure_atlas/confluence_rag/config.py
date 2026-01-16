@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic_settings import BaseSettings
 
 
@@ -16,9 +18,15 @@ class ConfluenceRAGSettings(BaseSettings):
     max_chunk_tokens: int = 512
     chunk_overlap_tokens: int = 50
 
-    # Embedding
+    # Embedding provider: "gemini" (Google API) or "local" (Nomic)
+    embedding_provider: Literal["local", "gemini"] = "gemini"
+
+    # Local embedding settings (Nomic)
     embedding_model: str = "nomic-ai/nomic-embed-text-v1.5"
     embedding_dimensions: int = 768  # Can be lower for Matryoshka
+
+    # Gemini embedding settings
+    gemini_model: str = "text-embedding-004"  # or "gemini-embedding-001"
 
     # Vector Store Backend: "qdrant" or "duckdb" (deprecated)
     vector_store: str = "qdrant"
@@ -42,3 +50,14 @@ class ConfluenceRAGSettings(BaseSettings):
         env_prefix = "ATLAS_RAG_"
         env_file = ".env"
         extra = "ignore"
+
+    def get_collection_name(self, suffix: str | None = None) -> str:
+        """
+        Get the Qdrant collection name, optionally with a suffix.
+
+        Useful for creating separate collections for different embedding models
+        during migration (e.g., "confluence_chunks_gemini").
+        """
+        if suffix:
+            return f"{self.qdrant_collection}_{suffix}"
+        return self.qdrant_collection

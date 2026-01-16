@@ -6,9 +6,19 @@ This guide covers the setup and operation of the Confluence RAG (Retrieval-Augme
 
 The Confluence RAG system uses:
 - **Qdrant** - Vector database for storing and searching embeddings
-- **nomic-embed-text-v1.5** - Local embedding model (768 dimensions)
+- **Google Gemini** - Cloud embedding API (`text-embedding-004`, FREE tier, 768 dimensions)
 - **Docling** - Document parsing and intelligent chunking
 - **Semantic search** - Cosine similarity for finding relevant content
+
+### Embedding Provider
+
+The system supports two embedding providers:
+
+| Provider | Model | Dimensions | Cost | Notes |
+|----------|-------|------------|------|-------|
+| **gemini** (default) | `text-embedding-004` | 768 | FREE | Recommended, excellent quality |
+| gemini | `gemini-embedding-001` | 768 | $0.15/1M tokens | Best multilingual |
+| local | `nomic-embed-text-v1.5` | 768 | Free (CPU/GPU) | Requires model download |
 
 ### Data Flow
 
@@ -21,7 +31,7 @@ QdrantSyncEngine (full/incremental)
     ↓
 ConfluenceChunker (Docling + intelligent chunking)
     ↓
-EmbeddingPipeline (nomic-embed-text-v1.5)
+EmbeddingPipeline (Gemini API or local Nomic)
     ↓
 QdrantStore (vector storage with HNSW indexing)
     ↓
@@ -58,6 +68,14 @@ ATLAS_RAG_CONFLUENCE_BASE_URL=https://your-company.atlassian.net
 ATLAS_RAG_CONFLUENCE_USERNAME=your-email@company.com
 ATLAS_RAG_CONFLUENCE_API_TOKEN=your-api-token
 
+# Embedding configuration (recommended: Gemini)
+ATLAS_RAG_EMBEDDING_PROVIDER=gemini
+GOOGLE_API_KEY=your-google-api-key  # Get at https://aistudio.google.com/apikey
+ATLAS_RAG_GEMINI_MODEL=text-embedding-004  # FREE tier
+
+# Qdrant collection name (important: must match your embeddings!)
+ATLAS_RAG_QDRANT_COLLECTION=confluence_chunks_gemini
+
 # Sync settings (optional)
 ATLAS_RAG_WATCHED_SPACES=["INFRA", "SE", "RUNBOOKS"]
 ATLAS_RAG_WATCHED_LABELS=["procedure", "how-to", "troubleshooting"]
@@ -67,6 +85,9 @@ ATLAS_RAG_QDRANT_HOST=localhost
 ATLAS_RAG_QDRANT_PORT=6333
 ATLAS_RAG_QDRANT_GRPC_PORT=6334
 ```
+
+> **Important**: If you switch embedding providers, you must re-sync all content to a new collection.
+> Different providers generate incompatible embeddings.
 
 ## Running a Sync
 
@@ -264,7 +285,11 @@ This is normal and pages are skipped.
 | `ATLAS_RAG_QDRANT_HOST` | `localhost` | Qdrant host |
 | `ATLAS_RAG_QDRANT_PORT` | `6333` | Qdrant REST port |
 | `ATLAS_RAG_QDRANT_GRPC_PORT` | `6334` | Qdrant gRPC port |
-| `ATLAS_RAG_EMBEDDING_MODEL` | `nomic-ai/nomic-embed-text-v1.5` | Embedding model |
+| `ATLAS_RAG_QDRANT_COLLECTION` | `confluence_chunks` | Qdrant collection name |
+| `ATLAS_RAG_EMBEDDING_PROVIDER` | `gemini` | Embedding provider (`gemini` or `local`) |
+| `GOOGLE_API_KEY` | (required for gemini) | Google API key for Gemini embeddings |
+| `ATLAS_RAG_GEMINI_MODEL` | `text-embedding-004` | Gemini embedding model |
+| `ATLAS_RAG_EMBEDDING_MODEL` | `nomic-ai/nomic-embed-text-v1.5` | Local embedding model (if provider=local) |
 | `ATLAS_RAG_EMBEDDING_DIMENSIONS` | `768` | Vector dimensions |
 | `ATLAS_RAG_MAX_CHUNK_TOKENS` | `512` | Max tokens per chunk |
 

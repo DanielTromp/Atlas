@@ -65,6 +65,7 @@ class QdrantStore:
                 grpc_port=settings.qdrant_grpc_port,
                 prefer_grpc=settings.qdrant_prefer_grpc,
                 api_key=settings.qdrant_api_key,
+                collection_name=settings.qdrant_collection,
                 vector_size=settings.embedding_dimensions,
             )
 
@@ -411,6 +412,112 @@ class QdrantStore:
             }
             for s in spaces.values()
         ]
+
+    def get_page_version(self, page_id: str) -> int | None:
+        """Get the stored version number for a page.
+
+        Returns None if the page is not in the store.
+        Used for incremental sync to skip unchanged pages.
+        """
+        try:
+            results, _ = self.client.scroll(
+                collection_name=self.config.collection_name,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="page_id",
+                            match=models.MatchValue(value=page_id),
+                        )
+                    ]
+                ),
+                limit=1,
+                with_payload=["version"],
+            )
+            if results:
+                return results[0].payload.get("version")
+        except UnexpectedResponse:
+            pass
+        return None
+
+    def get_last_indexed_time(self, space_key: str | None = None) -> datetime | None:
+        """Get the most recent indexed_at timestamp.
+
+        Args:
+            space_key: Optionally filter by space
+
+        Returns:
+            The most recent indexed_at datetime, or None if no data exists.
+        """
+        try:
+            filter_conditions = []
+            if space_key:
+                filter_conditions.append(
+                    models.FieldCondition(
+                        key="space_key",
+                        match=models.MatchValue(value=space_key),
+                    )
+                )
+
+            query_filter = models.Filter(must=filter_conditions) if filter_conditions else None
+
+            # Scroll through to find max indexed_at
+            # Note: Qdrant doesn't support MAX aggregation, so we sample
+            results, _ = self.client.scroll(
+                collection_name=self.config.collection_name,
+                scroll_filter=query_filter,
+                limit=100,
+                with_payload=["indexed_at"],
+            )
+
+            if not results:
+                return None
+
+            # Find the most recent timestamp
+            max_time = None
+            for point in results:
+                indexed_at = point.payload.get("indexed_at")
+                if indexed_at:
+                    try:
+                        dt = datetime.fromisoformat(indexed_at.replace("Z", "+00:00"))
+                        if max_time is None or dt > max_time:
+                            max_time = dt
+                    except (ValueError, TypeError):
+                        pass
+
+            return max_time
+        except UnexpectedResponse:
+            return None
+
+    def delete_by_space(self, space_key: str) -> int:
+        """Delete all points belonging to a specific space.
+
+        Args:
+            space_key: The Confluence space key to delete.
+
+        Returns:
+            Number of points deleted (approximate).
+        """
+        from qdrant_client.models import Filter, FieldCondition, MatchValue
+
+        # Get count before deletion
+        spaces = self.list_spaces()
+        space_info = next((s for s in spaces if s["space_key"] == space_key), None)
+        count = space_info["chunk_count"] if space_info else 0
+
+        # Delete by filter
+        self.client.delete(
+            collection_name=self.config.collection_name,
+            points_selector=Filter(
+                must=[
+                    FieldCondition(
+                        key="space_key",
+                        match=MatchValue(value=space_key),
+                    )
+                ]
+            ),
+        )
+
+        return count
 
     def close(self) -> None:
         """Close the client connection."""

@@ -812,6 +812,7 @@
     'backup': document.getElementById('admin-panel-backup'),
     'ai-usage': document.getElementById('admin-panel-ai-usage'),
     'ai-activity': document.getElementById('admin-panel-ai-activity'),
+    'rag': document.getElementById('admin-panel-rag'),
   };
   const adminTabs = document.querySelectorAll('#admin-tabs .admin-tab');
   const adminNavGroups = document.querySelectorAll('#admin-tabs .admin-nav-group');
@@ -9701,6 +9702,9 @@
     if (tab === 'ai-activity') {
       loadAIActivityLogs().catch(() => {});
     }
+    if (tab === 'rag') {
+      loadRAGAdminPanel().catch(() => {});
+    }
   }
 
   // Suggestions admin config
@@ -10216,6 +10220,392 @@
       if (aiUsageState.activityOffset + aiUsageState.activityLimit < aiUsageState.activityTotal) {
         aiUsageState.activityOffset += aiUsageState.activityLimit;
         loadAIActivityLogs();
+      }
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // RAG / Knowledge Base Admin
+  // ═══════════════════════════════════════════════════════════════════════════
+  const ragState = {
+    stats: null,
+    spaces: [],
+    queries: [],
+    failedQueries: [],
+    syncInProgress: false,
+    analyticsPeriod: 'week'
+  };
+
+  // RAG DOM elements
+  const $ragStatsVectors = document.getElementById('rag-stats-vectors');
+  const $ragStatsPages = document.getElementById('rag-stats-pages');
+  const $ragStatsSpaces = document.getElementById('rag-stats-spaces');
+  const $ragStatsSize = document.getElementById('rag-stats-size');
+  const $ragSyncIncremental = document.getElementById('rag-sync-incremental');
+  const $ragSyncFull = document.getElementById('rag-sync-full');
+  const $ragSyncStatusText = document.getElementById('rag-sync-status-text');
+  const $ragSyncProgress = document.getElementById('rag-sync-progress');
+  const $ragSyncProgressText = document.getElementById('rag-sync-progress-text');
+  const $ragSpacesBody = document.getElementById('rag-spaces-body');
+  const $ragSpaceAdd = document.getElementById('rag-space-add');
+  const $ragSpaceFormContainer = document.getElementById('rag-space-form-container');
+  const $ragSpaceForm = document.getElementById('rag-space-form');
+  const $ragSpaceKey = document.getElementById('rag-space-key');
+  const $ragSpaceAncestor = document.getElementById('rag-space-ancestor');
+  const $ragSpaceUseLabels = document.getElementById('rag-space-use-labels');
+  const $ragSpaceLabelsField = document.getElementById('rag-space-labels-field');
+  const $ragSpaceLabels = document.getElementById('rag-space-labels');
+  const $ragSpaceCancel = document.getElementById('rag-space-cancel');
+  const $ragSpaceStatus = document.getElementById('rag-space-status');
+  const $ragSettingThreshold = document.getElementById('rag-setting-threshold');
+  const $ragSettingMaxResults = document.getElementById('rag-setting-max-results');
+  const $ragSettingsModel = document.getElementById('rag-setting-model');
+  const $ragSettingsSave = document.getElementById('rag-settings-save');
+  const $ragSettingsStatus = document.getElementById('rag-settings-status');
+  const $ragAnalyticsPeriod = document.getElementById('rag-analytics-period');
+  const $ragAnalyticsRefresh = document.getElementById('rag-analytics-refresh');
+  const $ragAnalyticsTotal = document.getElementById('rag-analytics-total');
+  const $ragAnalyticsAvgTime = document.getElementById('rag-analytics-avg-time');
+  const $ragAnalyticsHits = document.getElementById('rag-analytics-hits');
+  const $ragAnalyticsNoResults = document.getElementById('rag-analytics-no-results');
+  const $ragQueriesBody = document.getElementById('rag-queries-body');
+  const $ragFailedBody = document.getElementById('rag-failed-body');
+
+  async function loadRAGAdminPanel() {
+    await Promise.all([
+      loadRAGStats(),
+      loadRAGSpaces(),
+      loadRAGAnalytics()
+    ]);
+  }
+
+  async function loadRAGStats() {
+    try {
+      const res = await fetch(`${API_BASE}/confluence-rag/stats`);
+      if (!res.ok) throw new Error('Failed to load RAG stats');
+      const stats = await res.json();
+      ragState.stats = stats;
+
+      if ($ragStatsVectors) $ragStatsVectors.textContent = (stats.total_chunks || 0).toLocaleString();
+      if ($ragStatsPages) $ragStatsPages.textContent = (stats.total_pages || 0).toLocaleString();
+      if ($ragStatsSpaces) $ragStatsSpaces.textContent = (stats.space_count || stats.spaces?.length || 0).toLocaleString();
+      if ($ragStatsSize) {
+        const bytes = stats.index_size_bytes || 0;
+        $ragStatsSize.textContent = formatBytes(bytes);
+      }
+      if ($ragSyncStatusText) {
+        if (stats.last_sync) {
+          const syncType = stats.last_sync_type ? ` (${stats.last_sync_type})` : '';
+          $ragSyncStatusText.textContent = `Last sync: ${formatRelativeTime(stats.last_sync)}${syncType}`;
+        } else {
+          $ragSyncStatusText.textContent = 'Last sync: Never';
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load RAG stats:', err);
+      if ($ragStatsVectors) $ragStatsVectors.textContent = '—';
+      if ($ragStatsPages) $ragStatsPages.textContent = '—';
+      if ($ragStatsSpaces) $ragStatsSpaces.textContent = '—';
+      if ($ragStatsSize) $ragStatsSize.textContent = '—';
+    }
+  }
+
+  function formatBytes(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+  }
+
+  function formatRelativeTime(isoStr) {
+    if (!isoStr) return 'Never';
+    const date = new Date(isoStr);
+    const now = new Date();
+    const diff = (now - date) / 1000;
+    if (diff < 60) return 'Just now';
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    return date.toLocaleDateString();
+  }
+
+  async function loadRAGSpaces() {
+    if (!$ragSpacesBody) return;
+    $ragSpacesBody.innerHTML = '<tr><td colspan="6" class="loading">Loading...</td></tr>';
+
+    try {
+      const res = await fetch(`${API_BASE}/confluence-rag/spaces`);
+      if (!res.ok) throw new Error('Failed to load spaces');
+      const data = await res.json();
+      ragState.spaces = data.spaces || [];
+
+      if (ragState.spaces.length === 0) {
+        $ragSpacesBody.innerHTML = '<tr><td colspan="6" class="empty">No spaces indexed yet</td></tr>';
+        return;
+      }
+
+      $ragSpacesBody.innerHTML = '';
+      ragState.spaces.forEach(space => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td><code>${escapeHtml(space.space_key)}</code></td>
+          <td>${escapeHtml(space.name || space.space_key)}</td>
+          <td>${(space.page_count || 0).toLocaleString()}</td>
+          <td>${(space.chunk_count || 0).toLocaleString()}</td>
+          <td>${formatRelativeTime(space.last_sync)}</td>
+          <td>
+            <button class="btn ghost small" data-action="sync-space" data-space="${escapeHtml(space.space_key)}">Sync</button>
+            <button class="btn ghost small danger" data-action="remove-space" data-space="${escapeHtml(space.space_key)}">Remove</button>
+          </td>
+        `;
+        $ragSpacesBody.appendChild(tr);
+      });
+    } catch (err) {
+      console.error('Failed to load RAG spaces:', err);
+      $ragSpacesBody.innerHTML = '<tr><td colspan="6" class="empty">Failed to load spaces</td></tr>';
+    }
+  }
+
+  async function loadRAGAnalytics() {
+    try {
+      const res = await fetch(`${API_BASE}/confluence-rag/analytics?period=${ragState.analyticsPeriod}`);
+      if (!res.ok) {
+        // Analytics endpoint might not exist yet - show empty state
+        if (res.status === 404) {
+          renderEmptyAnalytics();
+          return;
+        }
+        throw new Error('Failed to load analytics');
+      }
+      const data = await res.json();
+
+      if ($ragAnalyticsTotal) $ragAnalyticsTotal.textContent = (data.total_queries || 0).toLocaleString();
+      if ($ragAnalyticsAvgTime) $ragAnalyticsAvgTime.textContent = `${data.avg_response_ms || 0}ms`;
+      if ($ragAnalyticsHits) $ragAnalyticsHits.textContent = `${data.hit_rate || 0}%`;
+      if ($ragAnalyticsNoResults) $ragAnalyticsNoResults.textContent = (data.no_results_count || 0).toLocaleString();
+
+      // Recent queries
+      ragState.queries = data.recent_queries || [];
+      renderRecentQueries();
+
+      // Failed queries
+      ragState.failedQueries = data.failed_queries || [];
+      renderFailedQueries();
+    } catch (err) {
+      console.error('Failed to load RAG analytics:', err);
+      renderEmptyAnalytics();
+    }
+  }
+
+  function renderEmptyAnalytics() {
+    if ($ragAnalyticsTotal) $ragAnalyticsTotal.textContent = '0';
+    if ($ragAnalyticsAvgTime) $ragAnalyticsAvgTime.textContent = '0ms';
+    if ($ragAnalyticsHits) $ragAnalyticsHits.textContent = '0%';
+    if ($ragAnalyticsNoResults) $ragAnalyticsNoResults.textContent = '0';
+    if ($ragQueriesBody) $ragQueriesBody.innerHTML = '<tr><td colspan="5" class="empty">No queries logged yet</td></tr>';
+    if ($ragFailedBody) $ragFailedBody.innerHTML = '<tr><td colspan="3" class="empty">No failed queries</td></tr>';
+  }
+
+  function renderRecentQueries() {
+    if (!$ragQueriesBody) return;
+    if (ragState.queries.length === 0) {
+      $ragQueriesBody.innerHTML = '<tr><td colspan="5" class="empty">No queries logged yet</td></tr>';
+      return;
+    }
+    $ragQueriesBody.innerHTML = '';
+    ragState.queries.slice(0, 20).forEach(q => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${formatRelativeTime(q.timestamp)}</td>
+        <td title="${escapeHtml(q.query)}">${escapeHtml(truncate(q.query, 50))}</td>
+        <td>${q.result_count || 0}</td>
+        <td>${q.top_score ? q.top_score.toFixed(2) : '—'}</td>
+        <td>${q.duration_ms || 0}ms</td>
+      `;
+      $ragQueriesBody.appendChild(tr);
+    });
+  }
+
+  function renderFailedQueries() {
+    if (!$ragFailedBody) return;
+    if (ragState.failedQueries.length === 0) {
+      $ragFailedBody.innerHTML = '<tr><td colspan="3" class="empty">No failed queries</td></tr>';
+      return;
+    }
+    $ragFailedBody.innerHTML = '';
+    ragState.failedQueries.slice(0, 10).forEach(q => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td title="${escapeHtml(q.query)}">${escapeHtml(truncate(q.query, 60))}</td>
+        <td>${q.count || 1}</td>
+        <td>${formatRelativeTime(q.last_occurred)}</td>
+      `;
+      $ragFailedBody.appendChild(tr);
+    });
+  }
+
+  function truncate(str, len) {
+    if (!str) return '';
+    return str.length > len ? str.slice(0, len) + '…' : str;
+  }
+
+  async function triggerRAGSync(full = false) {
+    if (ragState.syncInProgress) return;
+    ragState.syncInProgress = true;
+
+    if ($ragSyncIncremental) $ragSyncIncremental.disabled = true;
+    if ($ragSyncFull) $ragSyncFull.disabled = true;
+    if ($ragSyncProgress) $ragSyncProgress.classList.remove('hidden');
+    if ($ragSyncProgressText) $ragSyncProgressText.textContent = full ? 'Running full sync...' : 'Running incremental sync...';
+
+    try {
+      const res = await fetch(`${API_BASE}/confluence-rag/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ full })
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.detail || 'Sync failed');
+      }
+
+      const result = await res.json();
+      if ($ragSyncProgressText) $ragSyncProgressText.textContent = `Sync complete! ${result.pages_processed || 0} pages processed.`;
+      setTimeout(() => {
+        if ($ragSyncProgress) $ragSyncProgress.classList.add('hidden');
+        loadRAGStats();
+        loadRAGSpaces();
+      }, 2000);
+    } catch (err) {
+      console.error('RAG sync failed:', err);
+      if ($ragSyncProgressText) $ragSyncProgressText.textContent = `Sync failed: ${err.message}`;
+      setTimeout(() => {
+        if ($ragSyncProgress) $ragSyncProgress.classList.add('hidden');
+      }, 3000);
+    } finally {
+      ragState.syncInProgress = false;
+      if ($ragSyncIncremental) $ragSyncIncremental.disabled = false;
+      if ($ragSyncFull) $ragSyncFull.disabled = false;
+    }
+  }
+
+  function openRAGSpaceForm() {
+    if ($ragSpaceFormContainer) $ragSpaceFormContainer.classList.remove('hidden');
+    if ($ragSpaceKey) $ragSpaceKey.value = '';
+    if ($ragSpaceAncestor) $ragSpaceAncestor.value = '';
+    if ($ragSpaceUseLabels) $ragSpaceUseLabels.checked = false;
+    if ($ragSpaceLabels) $ragSpaceLabels.value = '';
+    if ($ragSpaceLabelsField) $ragSpaceLabelsField.style.display = 'none';
+    if ($ragSpaceStatus) $ragSpaceStatus.textContent = '';
+    $ragSpaceKey?.focus();
+  }
+
+  function closeRAGSpaceForm() {
+    if ($ragSpaceFormContainer) $ragSpaceFormContainer.classList.add('hidden');
+    if ($ragSpaceStatus) $ragSpaceStatus.textContent = '';
+  }
+
+  async function addRAGSpace(e) {
+    e.preventDefault();
+    const spaceKey = $ragSpaceKey?.value?.trim().toUpperCase();
+    if (!spaceKey) return;
+
+    const ancestorId = $ragSpaceAncestor?.value?.trim() || null;
+    const useLabels = $ragSpaceUseLabels?.checked;
+    const labels = useLabels && $ragSpaceLabels?.value ?
+      $ragSpaceLabels.value.split(',').map(l => l.trim()).filter(Boolean) : null;
+
+    if ($ragSpaceStatus) $ragSpaceStatus.textContent = 'Adding space...';
+
+    try {
+      const res = await fetch(`${API_BASE}/confluence-rag/spaces`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          space_key: spaceKey,
+          ancestor_id: ancestorId,
+          labels: labels,
+          sync_now: true
+        })
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.detail || 'Failed to add space');
+      }
+
+      if ($ragSpaceStatus) {
+        $ragSpaceStatus.textContent = 'Space added! Syncing...';
+        $ragSpaceStatus.className = 'form-status success';
+      }
+      setTimeout(() => {
+        closeRAGSpaceForm();
+        loadRAGSpaces();
+        loadRAGStats();
+      }, 1500);
+    } catch (err) {
+      console.error('Failed to add space:', err);
+      if ($ragSpaceStatus) {
+        $ragSpaceStatus.textContent = err.message;
+        $ragSpaceStatus.className = 'form-status error';
+      }
+    }
+  }
+
+  async function removeRAGSpace(spaceKey) {
+    if (!confirm(`Remove space "${spaceKey}" from the index? This will delete all indexed content from this space.`)) return;
+
+    try {
+      const res = await fetch(`${API_BASE}/confluence-rag/spaces/${encodeURIComponent(spaceKey)}`, {
+        method: 'DELETE'
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.detail || 'Failed to remove space');
+      }
+
+      loadRAGSpaces();
+      loadRAGStats();
+    } catch (err) {
+      console.error('Failed to remove space:', err);
+      alert('Failed to remove space: ' + err.message);
+    }
+  }
+
+  // RAG Event Listeners
+  if ($ragSyncIncremental) $ragSyncIncremental.addEventListener('click', () => triggerRAGSync(false));
+  if ($ragSyncFull) $ragSyncFull.addEventListener('click', () => triggerRAGSync(true));
+  if ($ragSpaceAdd) $ragSpaceAdd.addEventListener('click', openRAGSpaceForm);
+  if ($ragSpaceCancel) $ragSpaceCancel.addEventListener('click', closeRAGSpaceForm);
+  if ($ragSpaceForm) $ragSpaceForm.addEventListener('submit', addRAGSpace);
+  if ($ragSpaceUseLabels) {
+    $ragSpaceUseLabels.addEventListener('change', () => {
+      if ($ragSpaceLabelsField) {
+        $ragSpaceLabelsField.style.display = $ragSpaceUseLabels.checked ? 'block' : 'none';
+      }
+    });
+  }
+  if ($ragAnalyticsPeriod) {
+    $ragAnalyticsPeriod.addEventListener('change', () => {
+      ragState.analyticsPeriod = $ragAnalyticsPeriod.value;
+      loadRAGAnalytics();
+    });
+  }
+  if ($ragAnalyticsRefresh) $ragAnalyticsRefresh.addEventListener('click', loadRAGAnalytics);
+
+  // Handle space table actions (sync/remove)
+  if ($ragSpacesBody) {
+    $ragSpacesBody.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-action]');
+      if (!btn) return;
+      const action = btn.dataset.action;
+      const space = btn.dataset.space;
+      if (action === 'sync-space' && space) {
+        triggerRAGSync(false); // For now, trigger full sync - could add space-specific sync later
+      } else if (action === 'remove-space' && space) {
+        removeRAGSpace(space);
       }
     });
   }
@@ -11812,6 +12202,38 @@
   const $chatMessages = document.getElementById('chat-messages');
   renderChatEmptyState();
   let chatSessionId = null;
+
+  // Chat request state for cancel functionality
+  let chatAbortController = null;
+  let isChatProcessing = false;
+
+  function setChatProcessing(processing) {
+    isChatProcessing = processing;
+    if (!$chatSend) return;
+
+    if (processing) {
+      $chatSend.innerHTML = '<span class="chat-cancel-icon">✕</span> Cancel';
+      $chatSend.classList.add('chat-cancel-btn');
+      $chatSend.title = 'Cancel current request';
+    } else {
+      $chatSend.innerHTML = 'Send';
+      $chatSend.classList.remove('chat-cancel-btn');
+      $chatSend.title = 'Send message';
+    }
+  }
+
+  function cancelChatRequest() {
+    if (chatAbortController) {
+      chatAbortController.abort();
+      chatAbortController = null;
+    }
+    // Remove any processing placeholder
+    const placeholder = $chatMessages?.querySelector('.chat-status-message.processing');
+    if (placeholder) {
+      placeholder.remove();
+    }
+    setChatProcessing(false);
+  }
   function saveChatPrefs() {
     try {
       if ($chatProvider) localStorage.setItem('chat_provider', $chatProvider.value || '');
@@ -11846,12 +12268,32 @@
       }
     } catch {}
   }
+  async function updateSessionModel() {
+    // Save model/provider to the current session in the database
+    if (!chatSessionId) return;
+    const provider = $chatProvider?.value || null;
+    const model = $chatModel?.value || null;
+    try {
+      await fetch(`${API_BASE}/ai/sessions/${encodeURIComponent(chatSessionId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider, model }),
+      });
+    } catch (err) {
+      console.warn('Failed to update session model:', err);
+    }
+  }
+
   function setupChatPrefListeners() {
     $chatProvider?.addEventListener('change', async () => {
       saveChatPrefs();
       await loadModelsForProvider($chatProvider.value);
+      await updateSessionModel();
     });
-    $chatModel?.addEventListener('change', () => saveChatPrefs());
+    $chatModel?.addEventListener('change', async () => {
+      saveChatPrefs();
+      await updateSessionModel();
+    });
     $chatModel?.addEventListener('blur', () => saveChatPrefs());
     $chatDataset?.addEventListener('change', () => saveChatPrefs());
     document.getElementById('chat-stream')?.addEventListener('change', () => saveChatPrefs());
@@ -12202,6 +12644,27 @@
     chatSessionsState.active = sessionId;
     try { localStorage.setItem('chat_session_id', sessionId); } catch {}
     renderChatSessions();
+
+    // Load session details including model/provider
+    if (options.loadSessionSettings !== false) {
+      try {
+        const res = await fetch(`${API_BASE}/ai/sessions/${encodeURIComponent(sessionId)}`);
+        if (res.ok) {
+          const session = await res.json();
+          // Set provider and model from session if they exist
+          if (session.provider && $chatProvider) {
+            $chatProvider.value = session.provider;
+            await loadModelsForProvider(session.provider);
+          }
+          if (session.model && $chatModel) {
+            $chatModel.value = session.model;
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to load session settings:', err);
+      }
+    }
+
     if (options.loadHistory !== false) {
       await refreshChatHistory();
     }
@@ -12268,11 +12731,8 @@
           return;
         }
       }
-      chatSessionId = desired;
-      chatSessionsState.active = desired;
-      try { localStorage.setItem('chat_session_id', desired); } catch {}
-      renderChatSessions();
-      await refreshChatHistory();
+      // Use setActiveChatSession to load session settings (model/provider)
+      await setActiveChatSession(desired, { loadHistory: true, loadSessionSettings: true });
     } catch (err) {
       console.error('Failed to load chat sessions', err);
     } finally {
@@ -12281,6 +12741,13 @@
   }
 
   async function sendChat() {
+    // If already processing, treat click as cancel
+    if (isChatProcessing) {
+      cancelChatRequest();
+      appendChat('assistant', '⚠️ Request cancelled by user.');
+      return;
+    }
+
     const q = ($chatInput?.value || '').trim();
     if (!q) return;
     appendChat('user', q);
@@ -12299,7 +12766,11 @@
     const tempPref = (typeof chatConfig.temperature === 'number' && Number.isFinite(chatConfig.temperature))
       ? chatConfig.temperature
       : undefined;
-    
+
+    // Setup abort controller for cancel functionality
+    chatAbortController = new AbortController();
+    setChatProcessing(true);
+
     // Enhanced status placeholder with queue information
     let placeholder = document.createElement('div');
     placeholder.className = 'chat-status-message processing';
@@ -12346,17 +12817,20 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(requestPayload),
+        signal: chatAbortController?.signal,
       }) : null;
-      
+
       if (!wantStream || !res || !res.ok || !res.body) {
         // Fallback to non-streaming
         const res2 = await fetch(`${API_BASE}/ai/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(requestPayload),
+          signal: chatAbortController?.signal,
         });
         const data2 = await res2.json().catch(() => ({}));
         placeholder.remove();
+        setChatProcessing(false);
         if (!res2.ok) {
           appendChat('assistant', data2?.detail || `Error: ${res2.status} ${res2.statusText}`);
         } else {
@@ -12479,9 +12953,17 @@
       if (!wasCommand) {
         await fetchChatSessions();
       }
+      setChatProcessing(false);
     } catch (e) {
       placeholder.remove();
-      
+      setChatProcessing(false);
+
+      // Check if this was a user-initiated cancel
+      if (e?.name === 'AbortError') {
+        // Already handled by cancelChatRequest
+        return;
+      }
+
       // Enhanced error handling with user-friendly messages
       let errorMessage = `Error: ${e?.message || e}`;
       if (e?.message && e.message.includes('rate limit')) {
@@ -12491,7 +12973,7 @@
       } else if (e?.message && e.message.includes('queue')) {
         errorMessage = '⏳ Request queue is full. Please wait and try again.';
       }
-      
+
       appendChat('assistant', errorMessage);
     }
   }

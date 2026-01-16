@@ -497,6 +497,52 @@ async def get_session(request: Request, session_id: str):
         db.close()
 
 
+class UpdateSessionRequest(BaseModel):
+    """Request to update session settings."""
+    title: str | None = None
+    provider: str | None = None
+    model: str | None = None
+
+
+@router.patch("/sessions/{session_id}")
+async def update_session(request: Request, session_id: str, req: UpdateSessionRequest):
+    """Update a chat session's settings (title, provider, model)."""
+    require_chat_permission(request)
+    user = get_current_user(request)
+    db = get_db_session()
+
+    try:
+        stmt = select(ChatSession).where(ChatSession.session_id == session_id)
+        session = db.execute(stmt).scalar_one_or_none()
+
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        # Check ownership
+        if user and session.user_id and session.user_id != user.id:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+        # Update fields if provided
+        if req.title is not None:
+            session.title = req.title
+        if req.provider is not None:
+            session.provider_type = req.provider
+        if req.model is not None:
+            session.model = req.model
+
+        db.commit()
+
+        return {
+            "session_id": session.session_id,
+            "title": session.title,
+            "provider": session.provider_type,
+            "model": session.model,
+            "updated_at": session.updated_at.isoformat(),
+        }
+    finally:
+        db.close()
+
+
 @router.delete("/sessions/{session_id}")
 async def delete_session(request: Request, session_id: str):
     """Delete a chat session."""

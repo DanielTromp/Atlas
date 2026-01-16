@@ -24,6 +24,8 @@ logging.basicConfig(level=logging.INFO)
 @click.option("--labels", "-l", multiple=True, help="Filter by labels (default from config)")
 @click.option("--no-labels", is_flag=True, help="Disable label filtering (sync all pages)")
 @click.option("--ancestor-id", help="Sync only a specific page tree (folder) by parent ID")
+@click.option("--provider", "-p", type=click.Choice(["local", "gemini"]), help="Embedding provider (default from config)")
+@click.option("--collection-suffix", help="Suffix for Qdrant collection name (e.g., 'gemini' creates confluence_chunks_gemini)")
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
 def sync(
     full: bool,
@@ -31,6 +33,8 @@ def sync(
     labels: tuple[str],
     no_labels: bool,
     ancestor_id: str | None,
+    provider: str | None,
+    collection_suffix: str | None,
     verbose: bool,
 ):
     """Sync Confluence content to Qdrant vector store."""
@@ -42,8 +46,8 @@ def sync(
         from infrastructure_atlas.confluence_rag.chunker import ConfluenceChunker
         from infrastructure_atlas.confluence_rag.config import ConfluenceRAGSettings
         from infrastructure_atlas.confluence_rag.confluence_client import ConfluenceClient
-        from infrastructure_atlas.confluence_rag.embeddings import EmbeddingPipeline
-        from infrastructure_atlas.confluence_rag.qdrant_store import QdrantStore
+        from infrastructure_atlas.confluence_rag.embeddings import get_embedding_pipeline
+        from infrastructure_atlas.confluence_rag.qdrant_store import QdrantConfig, QdrantStore
         from infrastructure_atlas.confluence_rag.qdrant_sync import QdrantSyncEngine
 
         settings = ConfluenceRAGSettings()
@@ -54,9 +58,30 @@ def sync(
         elif no_labels:
             settings.watched_labels = []
 
-        # Initialize Qdrant store
+        # Determine embedding provider
+        embed_provider = provider or settings.embedding_provider
+        click.echo(f"Embedding provider: {embed_provider}")
+
+        # Get embedding pipeline (will use env vars for config)
+        embeddings = get_embedding_pipeline(provider=embed_provider)
+        embed_dimensions = embeddings.dimensions
+        click.echo(f"Embedding dimensions: {embed_dimensions}")
+
+        # Determine collection name (allows parallel collections for migration)
+        collection_name = settings.get_collection_name(collection_suffix)
+
+        # Initialize Qdrant store with custom config
         click.echo(f"Connecting to Qdrant at {settings.qdrant_host}:{settings.qdrant_port}...")
-        qdrant_store = QdrantStore()
+        qdrant_config = QdrantConfig(
+            host=settings.qdrant_host,
+            port=settings.qdrant_port,
+            grpc_port=settings.qdrant_grpc_port,
+            prefer_grpc=settings.qdrant_prefer_grpc,
+            api_key=settings.qdrant_api_key,
+            collection_name=collection_name,
+            vector_size=embed_dimensions,
+        )
+        qdrant_store = QdrantStore(config=qdrant_config)
 
         # Verify Qdrant connection
         stats = qdrant_store.get_stats()
@@ -74,10 +99,6 @@ def sync(
             settings.confluence_api_token,
         )
         chunker = ConfluenceChunker(max_chunk_tokens=settings.max_chunk_tokens)
-        embeddings = EmbeddingPipeline(
-            model_name=settings.embedding_model,
-            dimensions=settings.embedding_dimensions,
-        )
 
         sync_engine = QdrantSyncEngine(confluence, qdrant_store, chunker, embeddings, settings)
         space_list = list(spaces) if spaces else None

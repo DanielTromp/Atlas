@@ -1046,6 +1046,7 @@
                 <div class="admin-nav-items">
                   <button class="admin-tab" data-admin-tab="ai">AI Settings</button>
                   <button class="admin-tab" data-admin-tab="ai-usage">Usage Stats</button>
+                  <button class="admin-tab" data-admin-tab="rag">RAG / Knowledge Base</button>
                 </div>
               </div>
 
@@ -1849,6 +1850,232 @@
                       <tr><td colspan="3" class="loading">Loading...</td></tr>
                     </tbody>
                   </table>
+                </div>
+              </div>
+            </section>
+
+            <!-- RAG / Knowledge Base Panel -->
+            <section id="admin-panel-rag" class="admin-panel" data-admin-tab="rag">
+              <div class="admin-rag-section">
+                <h3>RAG / Knowledge Base</h3>
+                <p class="admin-hint">Manage the Confluence-powered knowledge base for AI context retrieval.</p>
+
+                <!-- RAG Stats Summary -->
+                <div class="rag-stats-summary">
+                  <div class="rag-stats-cards" id="rag-stats-cards">
+                    <div class="rag-stats-card">
+                      <span class="card-label">Vectors</span>
+                      <span class="card-value" id="rag-stats-vectors">-</span>
+                      <span class="card-detail">indexed chunks</span>
+                    </div>
+                    <div class="rag-stats-card">
+                      <span class="card-label">Pages</span>
+                      <span class="card-value" id="rag-stats-pages">-</span>
+                      <span class="card-detail">source pages</span>
+                    </div>
+                    <div class="rag-stats-card">
+                      <span class="card-label">Spaces</span>
+                      <span class="card-value" id="rag-stats-spaces">-</span>
+                      <span class="card-detail">Confluence spaces</span>
+                    </div>
+                    <div class="rag-stats-card">
+                      <span class="card-label">Index Size</span>
+                      <span class="card-value" id="rag-stats-size">-</span>
+                      <span class="card-detail">storage used</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Sync Controls -->
+                <div class="rag-sync-section">
+                  <div class="rag-sync-header">
+                    <h4>Synchronization</h4>
+                    <div class="rag-sync-actions">
+                      <button id="rag-sync-incremental" class="btn" type="button">
+                        <span class="btn-icon">🔄</span> Incremental Sync
+                      </button>
+                      <button id="rag-sync-full" class="btn ghost" type="button">
+                        <span class="btn-icon">📥</span> Full Sync
+                      </button>
+                    </div>
+                  </div>
+                  <p class="admin-hint">Incremental sync only processes pages changed since last sync. Full sync re-indexes everything.</p>
+                  <div class="rag-sync-status">
+                    <span id="rag-sync-status-text">Last sync: Never</span>
+                    <span id="rag-sync-progress" class="hidden">
+                      <span class="rag-sync-spinner"></span>
+                      <span id="rag-sync-progress-text">Syncing...</span>
+                    </span>
+                  </div>
+                </div>
+
+                <hr class="admin-divider" />
+
+                <!-- Space Configuration -->
+                <div class="rag-spaces-section">
+                  <div class="rag-spaces-header">
+                    <h4>Indexed Spaces</h4>
+                    <button id="rag-space-add" class="btn" type="button">+ Add Space</button>
+                  </div>
+                  <p class="admin-hint">Confluence spaces being indexed for AI context.</p>
+                  <table class="rag-table" id="rag-spaces-table">
+                    <thead>
+                      <tr>
+                        <th>Space Key</th>
+                        <th>Name</th>
+                        <th>Pages</th>
+                        <th>Chunks</th>
+                        <th>Last Sync</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="rag-spaces-body">
+                      <tr><td colspan="6" class="loading">Loading...</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <hr class="admin-divider" />
+
+                <!-- Search Settings -->
+                <div class="rag-settings-section">
+                  <h4>Search Settings</h4>
+                  <p class="admin-hint">Configure how the RAG system retrieves and ranks results.</p>
+                  <div class="rag-settings-grid">
+                    <label class="field column">
+                      <span>Similarity Threshold</span>
+                      <input id="rag-setting-threshold" type="number" min="0" max="1" step="0.05" value="0.7" />
+                      <small>Minimum score (0-1) for results to be included</small>
+                    </label>
+                    <label class="field column">
+                      <span>Max Results</span>
+                      <input id="rag-setting-max-results" type="number" min="1" max="20" value="5" />
+                      <small>Maximum chunks returned per query</small>
+                    </label>
+                    <label class="field column">
+                      <span>Embedding Model</span>
+                      <select id="rag-setting-model" disabled>
+                        <option value="text-embedding-004" selected>Gemini text-embedding-004</option>
+                        <option value="gemini-embedding-001">Gemini gemini-embedding-001</option>
+                        <option value="nomic-embed-text-v1.5">Nomic (local)</option>
+                      </select>
+                      <small>Model used for embeddings (change requires re-sync)</small>
+                    </label>
+                    <div class="rag-settings-actions">
+                      <button id="rag-settings-save" class="btn" type="button">Save Settings</button>
+                      <span id="rag-settings-status" class="form-status"></span>
+                    </div>
+                  </div>
+                </div>
+
+                <hr class="admin-divider" />
+
+                <!-- Query Analytics -->
+                <div class="rag-analytics-section">
+                  <div class="rag-analytics-header">
+                    <h4>Query Analytics</h4>
+                    <div class="rag-analytics-filters">
+                      <select id="rag-analytics-period">
+                        <option value="today">Today</option>
+                        <option value="week" selected>This Week</option>
+                        <option value="month">This Month</option>
+                        <option value="all">All Time</option>
+                      </select>
+                      <button id="rag-analytics-refresh" class="btn ghost" type="button">Refresh</button>
+                    </div>
+                  </div>
+
+                  <!-- Analytics Stats -->
+                  <div class="rag-analytics-stats">
+                    <div class="rag-analytics-stat">
+                      <span class="stat-value" id="rag-analytics-total">0</span>
+                      <span class="stat-label">Total Queries</span>
+                    </div>
+                    <div class="rag-analytics-stat">
+                      <span class="stat-value" id="rag-analytics-avg-time">0ms</span>
+                      <span class="stat-label">Avg Response Time</span>
+                    </div>
+                    <div class="rag-analytics-stat">
+                      <span class="stat-value" id="rag-analytics-hits">0%</span>
+                      <span class="stat-label">Hit Rate</span>
+                    </div>
+                    <div class="rag-analytics-stat">
+                      <span class="stat-value" id="rag-analytics-no-results">0</span>
+                      <span class="stat-label">No Results</span>
+                    </div>
+                  </div>
+
+                  <!-- Recent Queries -->
+                  <div class="rag-recent-queries">
+                    <h5>Recent Queries</h5>
+                    <table class="rag-table" id="rag-queries-table">
+                      <thead>
+                        <tr>
+                          <th>Time</th>
+                          <th>Query</th>
+                          <th>Results</th>
+                          <th>Top Score</th>
+                          <th>Duration</th>
+                        </tr>
+                      </thead>
+                      <tbody id="rag-queries-body">
+                        <tr><td colspan="5" class="empty">No queries logged yet</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <!-- Failed/No-Result Queries -->
+                  <div class="rag-failed-queries">
+                    <h5>Queries Without Results</h5>
+                    <p class="admin-hint">Queries that returned no matching content - consider adding relevant documentation.</p>
+                    <table class="rag-table" id="rag-failed-table">
+                      <thead>
+                        <tr>
+                          <th>Query</th>
+                          <th>Count</th>
+                          <th>Last Occurred</th>
+                        </tr>
+                      </thead>
+                      <tbody id="rag-failed-body">
+                        <tr><td colspan="3" class="empty">No failed queries</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <!-- Add Space Form (hidden by default) -->
+                <div id="rag-space-form-container" class="rag-form hidden">
+                  <h4>Add Confluence Space</h4>
+                  <form id="rag-space-form">
+                    <div class="rag-form-grid">
+                      <label class="field column">
+                        <span>Space Key</span>
+                        <input id="rag-space-key" type="text" placeholder="INFRA" required />
+                        <small>The Confluence space key (e.g., INFRA, SE, RUNBOOKS)</small>
+                      </label>
+                      <label class="field column">
+                        <span>Ancestor Page ID (optional)</span>
+                        <input id="rag-space-ancestor" type="text" placeholder="65111963" />
+                        <small>Limit to a specific page tree</small>
+                      </label>
+                      <div class="rag-form-toggles">
+                        <label class="toggle-field">
+                          <input id="rag-space-use-labels" type="checkbox" />
+                          <span>Filter by labels</span>
+                        </label>
+                      </div>
+                      <label class="field column" id="rag-space-labels-field" style="display:none;">
+                        <span>Labels</span>
+                        <input id="rag-space-labels" type="text" placeholder="procedure, how-to, runbook" />
+                        <small>Comma-separated list of labels to filter</small>
+                      </label>
+                    </div>
+                    <div class="rag-form-actions">
+                      <button type="submit" class="btn">Add &amp; Sync</button>
+                      <button type="button" id="rag-space-cancel" class="btn ghost">Cancel</button>
+                      <span id="rag-space-status" class="form-status"></span>
+                    </div>
+                  </form>
                 </div>
               </div>
             </section>

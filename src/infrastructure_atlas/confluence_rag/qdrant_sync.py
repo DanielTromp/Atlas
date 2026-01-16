@@ -109,7 +109,7 @@ class QdrantSyncEngine:
 
         Args:
             spaces: List of space keys to sync
-            since: Only sync pages updated after this time
+            since: Only sync pages updated after this time (auto-detected if None)
             ancestor_id: Only sync pages under this ancestor
 
         Returns:
@@ -119,10 +119,17 @@ class QdrantSyncEngine:
         total_stats = SyncStats(start_time=datetime.now())
 
         for space in spaces:
-            logger.info(f"Incremental sync for {space} since {since}")
+            # Auto-detect last sync time if not provided
+            effective_since = since
+            if effective_since is None:
+                effective_since = self.store.get_last_indexed_time(space)
+                if effective_since:
+                    logger.info(f"Auto-detected last sync time for {space}: {effective_since}")
+
+            logger.info(f"Incremental sync for {space} since {effective_since}")
             try:
                 stats = await self._sync_space(
-                    space, incremental=True, since=since, ancestor_id=ancestor_id
+                    space, incremental=True, since=effective_since, ancestor_id=ancestor_id
                 )
                 total_stats.pages_processed += stats.pages_processed
                 total_stats.pages_skipped += stats.pages_skipped
@@ -165,9 +172,17 @@ class QdrantSyncEngine:
             seen_page_ids.add(page_id)
 
             try:
-                print(f"[{page_num}] {page_title}", flush=True)
-
                 page = self._parse_page_data(page_data, space_key)
+
+                # Version check for incremental sync - skip unchanged pages
+                if incremental:
+                    stored_version = self.store.get_page_version(page_id)
+                    if stored_version is not None and stored_version >= page.version:
+                        print(f"[{page_num}] {page_title} - UNCHANGED (v{page.version}), skipping", flush=True)
+                        stats.pages_skipped += 1
+                        continue
+
+                print(f"[{page_num}] {page_title} (v{page.version})", flush=True)
 
                 # Fetch full content
                 print("  -> Exporting HTML...", end="", flush=True)
