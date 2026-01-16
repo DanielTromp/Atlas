@@ -29,7 +29,7 @@ class OpenAIProvider(AIProvider):
 
     Configuration:
         - api_key: OpenAI API key
-        - default_model: Default model to use (e.g., gpt-4o-mini)
+        - default_model: Default model to use (e.g., gpt-5-mini)
     """
 
     provider_name = "openai"
@@ -38,15 +38,9 @@ class OpenAIProvider(AIProvider):
     # Available OpenAI models
     MODELS = {
         # GPT-5 models
-        "gpt-5": {"context_window": 500000, "max_output": 32768, "vision": True},
+        "gpt-5.2": {"context_window": 500000, "max_output": 32768, "vision": True},
         "gpt-5-mini": {"context_window": 400000, "max_output": 32768, "vision": True},
         "gpt-5-nano": {"context_window": 200000, "max_output": 16384, "vision": True},
-        # GPT-4 models (legacy)
-        "gpt-4o": {"context_window": 128000, "max_output": 16384, "vision": True},
-        "gpt-4o-mini": {"context_window": 128000, "max_output": 16384, "vision": True},
-        # Reasoning models
-        "o1-preview": {"context_window": 128000, "max_output": 32768, "reasoning": True},
-        "o1-mini": {"context_window": 128000, "max_output": 65536, "reasoning": True},
     }
 
     def __init__(self, config: ProviderConfig):
@@ -85,16 +79,16 @@ class OpenAIProvider(AIProvider):
             "messages": self._format_messages(messages),
         }
 
-        # o1 models don't support temperature
-        if temperature is not None and not model.startswith("o1"):
+        # GPT-5 and reasoning models don't support temperature
+        if temperature is not None and not model.startswith("o1") and not model.startswith("o3") and not model.startswith("gpt-5"):
             payload["temperature"] = temperature
         if max_tokens is not None:
-            # GPT-5 and o1 models use max_completion_tokens instead of max_tokens
-            if model.startswith("gpt-5") or model.startswith("o1"):
+            # GPT-5 and reasoning models use max_completion_tokens instead of max_tokens
+            if model.startswith("gpt-5") or model.startswith("o1") or model.startswith("o3"):
                 payload["max_completion_tokens"] = max_tokens
             else:
                 payload["max_tokens"] = max_tokens
-        if tools and not model.startswith("o1"):  # o1 models don't support tools
+        if tools and not model.startswith("o1") and not model.startswith("o3"):  # reasoning models don't support tools
             payload["tools"] = tools
             if tool_choice:
                 payload["tool_choice"] = tool_choice
@@ -193,15 +187,16 @@ class OpenAIProvider(AIProvider):
             "stream_options": {"include_usage": True},
         }
 
-        if temperature is not None and not model.startswith("o1"):
+        # GPT-5 and reasoning models don't support temperature
+        if temperature is not None and not model.startswith("o1") and not model.startswith("o3") and not model.startswith("gpt-5"):
             payload["temperature"] = temperature
         if max_tokens is not None:
-            # GPT-5 and o1 models use max_completion_tokens instead of max_tokens
-            if model.startswith("gpt-5") or model.startswith("o1"):
+            # GPT-5 and reasoning models use max_completion_tokens instead of max_tokens
+            if model.startswith("gpt-5") or model.startswith("o1") or model.startswith("o3"):
                 payload["max_completion_tokens"] = max_tokens
             else:
                 payload["max_tokens"] = max_tokens
-        if tools and not model.startswith("o1"):
+        if tools and not model.startswith("o1") and not model.startswith("o3"):
             payload["tools"] = tools
             if tool_choice:
                 payload["tool_choice"] = tool_choice
@@ -210,6 +205,11 @@ class OpenAIProvider(AIProvider):
         url = f"{self.BASE_URL}/chat/completions"
 
         accumulated_tool_calls: dict[int, dict[str, Any]] = {}
+
+        logger.debug(
+            "OpenAI stream request",
+            extra={"event": "openai_stream_request", "model": model, "url": url},
+        )
 
         try:
             async with client.stream("POST", url, headers=self._get_headers(), json=payload) as response:
@@ -221,7 +221,19 @@ class OpenAIProvider(AIProvider):
                         retry_after=retry_after,
                     )
 
-                response.raise_for_status()
+                # Check for errors and read body before raise_for_status
+                if response.status_code >= 400:
+                    await response.aread()
+                    error_body = response.text
+                    logger.error(
+                        "OpenAI API error",
+                        extra={"event": "openai_error", "status": response.status_code, "body": error_body},
+                    )
+                    raise ProviderError(
+                        f"OpenAI API error ({response.status_code}): {error_body}",
+                        provider=self.provider_name,
+                        status_code=response.status_code,
+                    )
 
                 async for line in response.aiter_lines():
                     if not line or not line.startswith("data:"):
@@ -260,8 +272,8 @@ class OpenAIProvider(AIProvider):
                                     accumulated_tool_calls[idx]["function"]["arguments"] += tc["function"]["arguments"]
 
                     usage = None
-                    if "usage" in data:
-                        usage_data = data["usage"]
+                    usage_data = data.get("usage")
+                    if usage_data:
                         usage = TokenUsage(
                             prompt_tokens=usage_data.get("prompt_tokens", 0),
                             completion_tokens=usage_data.get("completion_tokens", 0),
@@ -284,8 +296,9 @@ class OpenAIProvider(AIProvider):
                     )
 
         except httpx.HTTPStatusError as e:
+            # Fallback for any unhandled HTTP errors
             raise ProviderError(
-                f"OpenAI streaming error: {e.response.text}",
+                f"OpenAI streaming error: {e}",
                 provider=self.provider_name,
                 status_code=e.response.status_code,
             ) from e

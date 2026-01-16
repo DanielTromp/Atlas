@@ -1116,7 +1116,7 @@ ENV_SETTING_FIELDS: list[dict[str, Any]] = [
         "key": "CHAT_DEFAULT_MODEL_OPENAI",
         "label": "OpenAI Default Model",
         "secret": False,
-        "placeholder": "gpt-4o-mini",
+        "placeholder": "gpt-5-mini",
         "category": "chat",
     },
     {

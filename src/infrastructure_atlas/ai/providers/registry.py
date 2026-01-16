@@ -102,7 +102,7 @@ class ProviderRegistry:
                 return ProviderConfig(
                     provider_type=ProviderType.OPENAI,
                     api_key=api_key,
-                    default_model=os.getenv("OPENAI_DEFAULT_MODEL", "gpt-4o-mini"),
+                    default_model=os.getenv("OPENAI_DEFAULT_MODEL", "gpt-5-mini"),
                 )
 
         elif name_lower in ("anthropic", "claude"):

@@ -50,7 +50,7 @@ COMMANDS: list[CommandDefinition] = [
         name="agent",
         description="Show or change current agent configuration",
         usage="/agent [set provider=... model=...]",
-        examples=["/agent", "/agent set model=gpt-4o", "/agent set provider=anthropic model=claude-sonnet-4-5"],
+        examples=["/agent", "/agent set model=gpt-5-mini", "/agent set provider=anthropic model=claude-sonnet-4-5"],
     ),
     CommandDefinition(
         name="clear",

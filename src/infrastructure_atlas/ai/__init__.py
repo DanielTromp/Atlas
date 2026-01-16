@@ -14,7 +14,7 @@ Example usage:
     # Create an agent with Azure OpenAI
     agent = create_chat_agent(
         provider_type=ProviderType.AZURE_OPENAI,
-        model="gpt-4o-mini",
+        model="gpt-5-mini",
         tools_enabled=True,
     )
 

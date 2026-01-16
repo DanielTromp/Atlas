@@ -48,15 +48,11 @@ class OpenAIResponse:
 class EnhancedOpenAIClient:
     """OpenAI client with rate limiting, retry logic, and token tracking."""
     
-    # Token costs per 1K tokens (as of 2024)
+    # Token costs per 1K tokens (as of 2025)
     TOKEN_COSTS: ClassVar[dict[str, dict[str, float]]] = {
-        "gpt-4o": {"input": 0.0025, "output": 0.01},
-        "gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
-        "gpt-4-turbo": {"input": 0.01, "output": 0.03},
-        "gpt-4": {"input": 0.03, "output": 0.06},
-        "gpt-3.5-turbo": {"input": 0.0005, "output": 0.0015},
-        "gpt-5-nano": {"input": 0.0001, "output": 0.0004},  # Estimated
-        "gpt-5-mini": {"input": 0.0002, "output": 0.0008},  # Estimated
+        "gpt-5.2": {"input": 0.003, "output": 0.012},
+        "gpt-5-mini": {"input": 0.0003, "output": 0.0012},
+        "gpt-5-nano": {"input": 0.0001, "output": 0.0004},
     }
     
     def __init__(
@@ -82,8 +78,8 @@ class EnhancedOpenAIClient:
                 break
         
         if not costs:
-            # Default to gpt-4o-mini pricing for unknown models
-            costs = self.TOKEN_COSTS["gpt-4o-mini"]
+            # Default to gpt-5-mini pricing for unknown models
+            costs = self.TOKEN_COSTS["gpt-5-mini"]
         
         input_cost = (prompt_tokens / 1000) * costs["input"]
         output_cost = (completion_tokens / 1000) * costs["output"]

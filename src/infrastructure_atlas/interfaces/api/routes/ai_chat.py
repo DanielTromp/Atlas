@@ -299,6 +299,12 @@ async def save_provider_config(
                 os.environ[env_var] = value
                 saved_keys.append(env_var)
 
+        # Persist API keys to encrypted database storage
+        if saved_keys:
+            from infrastructure_atlas.infrastructure.security.secret_store import sync_secure_settings
+
+            sync_secure_settings(saved_keys)
+
         # Clear provider cache to pick up new config
         from infrastructure_atlas.ai.providers import get_provider_registry
 

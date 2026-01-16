@@ -40,12 +40,9 @@ class AzureOpenAIProvider(AIProvider):
 
     # Available Azure OpenAI models and their context windows
     MODELS = {
-        "gpt-4o": {"context_window": 128000, "max_output": 16384},
-        "gpt-4o-mini": {"context_window": 128000, "max_output": 16384},
-        "gpt-4-turbo": {"context_window": 128000, "max_output": 4096},
-        "gpt-4": {"context_window": 8192, "max_output": 8192},
-        "gpt-35-turbo": {"context_window": 16385, "max_output": 4096},
-        "gpt-35-turbo-16k": {"context_window": 16385, "max_output": 4096},
+        "gpt-5.2": {"context_window": 500000, "max_output": 32768},
+        "gpt-5-mini": {"context_window": 400000, "max_output": 32768},
+        "gpt-5-nano": {"context_window": 200000, "max_output": 16384},
     }
 
     def __init__(self, config: ProviderConfig):
@@ -330,7 +327,7 @@ class AzureOpenAIProvider(AIProvider):
 
     def _get_fallback_model(self) -> str:
         """Get fallback model."""
-        return "gpt-4o-mini"
+        return "gpt-5-mini"
 
     async def close(self) -> None:
         """Close the HTTP client."""

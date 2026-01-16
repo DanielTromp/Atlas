@@ -290,6 +290,7 @@ class AnthropicProvider(AIProvider):
 
         accumulated_tool_calls: dict[str, dict[str, Any]] = {}
         current_tool_id = None
+        input_tokens = 0  # Captured from message_start event
 
         try:
             async with client.stream("POST", url, headers=self._get_headers(), json=payload) as response:
@@ -318,7 +319,13 @@ class AnthropicProvider(AIProvider):
 
                     event_type = data.get("type")
 
-                    if event_type == "content_block_start":
+                    if event_type == "message_start":
+                        # Capture input_tokens from message_start event
+                        message = data.get("message", {})
+                        usage_data = message.get("usage", {})
+                        input_tokens = usage_data.get("input_tokens", 0)
+
+                    elif event_type == "content_block_start":
                         block = data.get("content_block", {})
                         if block.get("type") == "tool_use":
                             current_tool_id = block.get("id")
@@ -340,10 +347,11 @@ class AnthropicProvider(AIProvider):
                         usage = None
                         usage_data = data.get("usage")
                         if usage_data:
+                            output_tokens = usage_data.get("output_tokens", 0)
                             usage = TokenUsage(
-                                prompt_tokens=0,  # Not provided in stream
-                                completion_tokens=usage_data.get("output_tokens", 0),
-                                total_tokens=usage_data.get("output_tokens", 0),
+                                prompt_tokens=input_tokens,
+                                completion_tokens=output_tokens,
+                                total_tokens=input_tokens + output_tokens,
                             )
 
                         stop_reason = data.get("delta", {}).get("stop_reason")
