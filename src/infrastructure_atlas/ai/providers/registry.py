@@ -11,6 +11,7 @@ from infrastructure_atlas.infrastructure.logging import get_logger
 from .anthropic import AnthropicProvider
 from .azure_openai import AzureOpenAIProvider
 from .base import AIProvider, ProviderError
+from .claude_code import ClaudeCodeProvider
 from .gemini import GeminiProvider
 from .openai_provider import OpenAIProvider
 from .openrouter import OpenRouterProvider
@@ -30,6 +31,7 @@ class ProviderRegistry:
         ProviderType.ANTHROPIC: AnthropicProvider,
         ProviderType.OPENROUTER: OpenRouterProvider,
         ProviderType.GEMINI: GeminiProvider,
+        ProviderType.CLAUDE_CODE: ClaudeCodeProvider,
     }
 
     def __init__(self):
@@ -132,6 +134,19 @@ class ProviderRegistry:
                     provider_type=ProviderType.GEMINI,
                     api_key=api_key,
                     default_model=os.getenv("GEMINI_DEFAULT_MODEL", "gemini-1.5-flash"),
+                )
+
+        elif name_lower == "claude_code":
+            # Claude Code doesn't need an API key - it uses the local CLI
+            # Check if the CLI is available
+            import shutil
+
+            if shutil.which("claude"):
+                return ProviderConfig(
+                    provider_type=ProviderType.CLAUDE_CODE,
+                    api_key="local",  # Placeholder, not used
+                    default_model="claude-code",
+                    timeout=300,  # 5 minute timeout for Claude Code
                 )
 
         return None

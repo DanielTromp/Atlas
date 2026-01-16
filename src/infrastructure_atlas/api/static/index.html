@@ -423,6 +423,7 @@
                       <option value="anthropic">Anthropic</option>
                       <option value="openrouter">OpenRouter</option>
                       <option value="gemini">Google Gemini</option>
+                      <option value="claude_code">Claude Code (Local)</option>
                     </select>
                   </label>
                   <label class="field">
@@ -1297,6 +1298,30 @@
                       <div class="admin-ai-actions">
                         <button id="admin-ai-gemini-save" class="btn" type="button">Save</button>
                         <button id="admin-ai-gemini-test" class="btn ghost" type="button">Test</button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="admin-ai-provider" data-provider="claude_code">
+                    <div class="admin-ai-provider-header">
+                      <h4>Claude Code (Local CLI)</h4>
+                      <span id="admin-ai-claude-code-status" class="admin-ai-status"></span>
+                    </div>
+                    <div class="admin-ai-provider-form">
+                      <p style="font-size: 13px; color: var(--muted); margin: 0 0 12px;">
+                        Uses the locally installed Claude Code CLI. No API key required.
+                        <br>Install with: <code>npm install -g @anthropic-ai/claude-code</code>
+                      </p>
+                      <label class="field column">
+                        <span>Default Model</span>
+                        <select id="admin-ai-claude-code-model">
+                          <option value="claude-code">Claude Code (Default)</option>
+                          <option value="claude-sonnet-4-5-20250929">Claude 4.5 Sonnet</option>
+                          <option value="claude-opus-4-5-20251101">Claude 4.5 Opus</option>
+                        </select>
+                      </label>
+                      <div class="admin-ai-actions">
+                        <button id="admin-ai-claude-code-test" class="btn ghost" type="button">Test CLI</button>
                       </div>
                     </div>
                   </div>

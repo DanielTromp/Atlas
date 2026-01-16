@@ -39,6 +39,13 @@ All notable changes to Infrastructure Atlas are documented here.
   - Changing model within a session persists to the database
   - New `PATCH /ai/sessions/{session_id}` endpoint for updating session settings
 
+- **Claude Code as AI Chat Provider (2026-01-16)**
+  - New `claude_code` provider type uses local Claude Code CLI
+  - Runs `claude --dangerously-skip-permissions` for autonomous AI responses
+  - No API key required - auto-detected when Claude CLI is in PATH
+  - Direct API endpoints: `GET /claude/status`, `POST /claude/run`
+  - Integrated into chat UI provider dropdown when CLI available
+
 ### Changed
 
 - **RAG: Migrated to Google Gemini embeddings (2026-01-16)**

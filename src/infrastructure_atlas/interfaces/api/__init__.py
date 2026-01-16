@@ -5,7 +5,7 @@ from fastapi import APIRouter
 from infrastructure_atlas.infrastructure.logging import get_logger, setup_logging
 from infrastructure_atlas.infrastructure.modules import get_module_registry, initialize_modules
 
-from .routes import admin, auth, core, draft_tickets, foreman, netbox, profile, puppet, search, tasks, tools, vcenter, zabbix
+from .routes import admin, auth, claude_cli, core, draft_tickets, foreman, netbox, profile, puppet, search, tasks, tools, vcenter, zabbix
 
 logger = get_logger(__name__)
 
@@ -32,6 +32,7 @@ def bootstrap_api() -> APIRouter:
     router.include_router(search.router)
     router.include_router(tasks.router)
     router.include_router(draft_tickets.router)
+    router.include_router(claude_cli.router)
 
     # Chat routes (imported lazily to avoid circular import)
     from .routes import chat, export

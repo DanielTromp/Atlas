@@ -38,6 +38,7 @@ class AIAdminService:
 
             providers.append(
                 {
+                    "id": name,  # Frontend expects 'id'
                     "name": name,
                     "type": provider_type.value,
                     "configured": env_configured,
@@ -50,6 +51,8 @@ class AIAdminService:
 
     def _check_env_config(self, provider_type: ProviderType) -> bool:
         """Check if a provider is configured via environment variables."""
+        import shutil
+
         if provider_type == ProviderType.AZURE_OPENAI:
             return bool(
                 os.getenv("AZURE_OPENAI_API_KEY")
@@ -64,6 +67,9 @@ class AIAdminService:
             return bool(os.getenv("OPENROUTER_API_KEY"))
         elif provider_type == ProviderType.GEMINI:
             return bool(os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY"))
+        elif provider_type == ProviderType.CLAUDE_CODE:
+            # Claude Code is configured if the CLI is available
+            return bool(shutil.which("claude"))
         return False
 
     def _get_required_env_vars(self, provider_type: ProviderType) -> list[str]:
@@ -82,6 +88,8 @@ class AIAdminService:
             return ["OPENROUTER_API_KEY"]
         elif provider_type == ProviderType.GEMINI:
             return ["GOOGLE_API_KEY (or GEMINI_API_KEY)"]
+        elif provider_type == ProviderType.CLAUDE_CODE:
+            return ["(Claude CLI in PATH)"]
         return []
 
     def _get_default_model(self, provider_type: ProviderType) -> str:
@@ -92,6 +100,7 @@ class AIAdminService:
             ProviderType.ANTHROPIC: os.getenv("ANTHROPIC_DEFAULT_MODEL", "claude-sonnet-4-5-20250929"),
             ProviderType.OPENROUTER: os.getenv("OPENROUTER_DEFAULT_MODEL", "openai/gpt-5-mini"),
             ProviderType.GEMINI: os.getenv("GEMINI_DEFAULT_MODEL", "gemini-3-flash"),
+            ProviderType.CLAUDE_CODE: "claude-code",
         }
         return defaults.get(provider_type, "")
 
@@ -126,6 +135,7 @@ class AIAdminService:
             ProviderType.ANTHROPIC,
             ProviderType.OPENROUTER,
             ProviderType.GEMINI,
+            ProviderType.CLAUDE_CODE,
         ]:
             if self._check_env_config(provider_type):
                 return {

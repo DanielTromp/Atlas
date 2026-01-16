@@ -3,6 +3,7 @@
 from . import (
     admin,
     auth,
+    claude_cli,
     commvault,
     confluence,
     core,
@@ -22,6 +23,7 @@ __all__ = [
     "admin",
     "ai_chat",
     "auth",
+    "claude_cli",
     "commvault",
     "confluence",
     "core",

@@ -446,6 +446,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if path.startswith("/confluence-rag") and _is_localhost(request):
             return await call_next(request)
 
+        # Allow unauthenticated access to Claude CLI status from localhost
+        if path == "/claude/status" and _is_localhost(request):
+            return await call_next(request)
+
         # API protection via Bearer token; allow UI session/UserAPIKey as alternative
         if API_TOKEN and _is_api_path(path):
             if _has_bearer_token(request) or request.state.user is not None:

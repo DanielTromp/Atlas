@@ -1647,6 +1647,7 @@
       openrouter: 'OpenRouter',
       gemini: 'Google Gemini',
       claude: 'Claude',  // Legacy alias
+      claude_code: 'Claude Code (Local)',
     };
     return map[id] || id?.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || 'Provider';
   }
@@ -8898,6 +8899,14 @@
       await saveAIProvider('gemini', { api_key: key, default_model: model });
     }
     await testAIProvider('gemini');
+  });
+
+  // Claude Code (Local CLI) test handler
+  document.getElementById('admin-ai-claude-code-test')?.addEventListener('click', async () => {
+    const model = document.getElementById('admin-ai-claude-code-model')?.value;
+    // Claude Code doesn't need API key - just save model preference and test
+    await saveAIProvider('claude_code', { default_model: model });
+    await testAIProvider('claude_code');
   });
 
   // AI Default Settings handlers

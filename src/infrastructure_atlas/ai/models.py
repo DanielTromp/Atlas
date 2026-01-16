@@ -27,6 +27,7 @@ class ProviderType(str, Enum):
     OPENROUTER = "openrouter"
     GEMINI = "gemini"
     OLLAMA = "ollama"
+    CLAUDE_CODE = "claude_code"
 
 
 @dataclass
