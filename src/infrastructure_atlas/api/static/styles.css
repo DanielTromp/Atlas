@@ -571,10 +571,10 @@ body { margin: 0; font: 14px/1.45 ui-sans-serif, -apple-system, Segoe UI, Roboto
 
 .hidden { display: none !important; }
 
-.app-shell { display: grid; grid-template-columns: 266px minmax(0, 1fr); min-height: 100vh; }
+.app-shell { display: grid; grid-template-columns: 280px minmax(0, 1fr); min-height: 100vh; }
 .app-main { display: flex; flex-direction: column; min-height: 100vh; position: relative; }
 .sidebar { position: sticky; top: 0; align-self: start; height: 100vh; display: flex; flex-direction: column; gap: 20px; padding: 20px 16px; background: var(--panel-translucent); border-right: 1px solid var(--topbar-border); box-shadow: 8px 0 32px rgba(8, 16, 36, 0.1); backdrop-filter: blur(20px); overflow: hidden; }
-.sidebar-inner { display: flex; flex-direction: column; gap: 20px; flex: 1 1 auto; overflow-y: auto; padding-right: 4px; }
+.sidebar-inner { display: flex; flex-direction: column; gap: 20px; flex: 1 1 auto; overflow-y: auto; scrollbar-gutter: stable; }
 .sidebar-inner::-webkit-scrollbar { width: 6px; }
 .sidebar-inner::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.35); border-radius: 999px; }
 .sidebar-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -593,12 +593,41 @@ body { margin: 0; font: 14px/1.45 ui-sans-serif, -apple-system, Segoe UI, Roboto
 .sidebar-item-chevron { width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; margin-left: auto; transition: transform 200ms ease; opacity: 0.6; }
 .sidebar-item[aria-expanded="true"] .sidebar-item-chevron { transform: rotate(90deg); }
 .sidebar-item.active,
-.sidebar-item[aria-current="page"] { background: var(--tab-active-bg); border-color: var(--accent); color: var(--btn-text); box-shadow: 0 10px 26px rgba(var(--accent-rgb), 0.18); transform: translateX(2px); }
+.sidebar-item[aria-current="page"] { background: var(--tab-active-bg); border-color: var(--accent); color: var(--btn-text); box-shadow: 0 10px 26px rgba(var(--accent-rgb), 0.18); }
 .sidebar-item:not(.active):hover { background: var(--tab-hover); border-color: rgba(var(--accent-rgb), 0.16); }
 .sidebar-item.active .sidebar-item-icon { color: var(--btn-text); }
 .sidebar-subitems { display: flex; flex-direction: column; gap: 2px; padding-left: 34px; overflow: hidden; max-height: 500px; opacity: 1; transition: opacity 200ms ease, max-height 250ms ease; }
 .sidebar-subitems[hidden] { display: none; }
 .sidebar-subitems.is-collapsing { max-height: 0; opacity: 0; }
+
+/* Sidebar Section Groups */
+.sidebar-section { display: flex; flex-direction: column; margin-bottom: 4px; }
+.sidebar-section-header { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border-radius: 8px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; background: transparent; border: none; color: var(--muted); cursor: pointer; transition: background 160ms ease, color 160ms ease; }
+.sidebar-section-header:hover { background: rgba(148, 163, 184, 0.1); color: var(--text); }
+.sidebar-section-header:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus-ring); }
+.sidebar-section-icon { width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; opacity: 0.7; }
+.sidebar-section-icon svg { width: 14px; height: 14px; }
+.sidebar-section-label { flex: 1; text-align: left; }
+.sidebar-section-chevron { width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; opacity: 0.5; transition: transform 200ms ease; }
+.sidebar-section-chevron svg { width: 12px; height: 12px; }
+.sidebar-section[data-expanded="true"] .sidebar-section-chevron { transform: rotate(90deg); }
+.sidebar-section-items { display: flex; flex-direction: column; gap: 2px; padding: 4px 0 8px 0; overflow: hidden; transition: max-height 250ms ease, opacity 200ms ease; }
+.sidebar-section-items[hidden] { display: none; }
+.sidebar-section-items .sidebar-group { margin-left: 0; }
+.sidebar-section-items .sidebar-item { padding: 7px 10px; font-size: 13px; }
+.sidebar-section-items .sidebar-item-icon { width: 18px; height: 18px; }
+.sidebar-section-items .sidebar-item-icon svg { width: 18px; height: 18px; }
+
+/* Collapsed sidebar section behavior */
+.app-shell.is-collapsed .sidebar-section-header { justify-content: center; padding: 10px 8px; }
+.app-shell.is-collapsed .sidebar-section-label { display: none; }
+.app-shell.is-collapsed .sidebar-section-chevron { display: none; }
+.app-shell.is-collapsed .sidebar-section-items { display: none !important; }
+.app-shell.is-collapsed .sidebar-section { margin-bottom: 2px; }
+.app-shell.is-collapsed .sidebar-section-icon { opacity: 1; }
+
+/* Section divider between groups */
+.sidebar-section + .sidebar-section { border-top: 1px solid rgba(148, 163, 184, 0.12); padding-top: 8px; margin-top: 4px; }
 .sidebar-subitems.is-expanding { animation: expandSubmenu 250ms ease forwards; }
 @keyframes expandSubmenu {
   from { max-height: 0; opacity: 0; }
@@ -667,6 +696,10 @@ body.sidebar-drawer-open { overflow: hidden; }
 .user-menu-item.logout { color: var(--accent-text, #fdfcff); font-weight: 600; }
 .user-menu-item.logout:hover { background: rgba(244, 63, 94, 0.22); }
 .user-menu-separator { height: 1px; margin: 6px 0; background: rgba(255, 255, 255, 0.08); }
+.user-menu-theme { padding: 8px 10px; }
+.user-menu-theme .theme-toggle { display: flex; flex-direction: column; gap: 6px; }
+.user-menu-theme .theme-toggle-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); margin-bottom: 2px; }
+.user-menu-theme .theme-select { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--grid-border); background: var(--input-bg); color: var(--text); font-size: 13px; cursor: pointer; }
 
 .brand-group { display: flex; align-items: center; gap: 12px; }
 .brand-logo { height: 34px; width: auto; min-width: 34px; display: flex; align-items: center; justify-content: center; transition: filter 200ms ease, opacity 200ms ease; }
@@ -1613,15 +1646,126 @@ body.theme-silver-light .admin-role-card {
 .suggestion-comment-remove:hover { color: #ef4444; }
 .suggestion-comment-empty { padding: 18px; border-radius: 10px; border: 1px dashed var(--grid-border); text-align: center; }
 
-.panel-admin { display: flex; flex-direction: column; gap: 12px; padding: 16px 18px; }
-.admin-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.admin-status { color: var(--muted); font-size: 13px; }
-.admin-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
-.admin-tab { border: 1px solid var(--grid-border); background: var(--tab-bg); color: var(--text); border-radius: 10px; padding: 6px 12px; font-size: 13px; cursor: pointer; transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease; }
-.admin-tab.active { background: var(--tab-active-bg); border-color: var(--accent); color: var(--btn-text); box-shadow: 0 8px 18px rgba(var(--accent-rgb), 0.2); }
-.admin-tab:hover { background: var(--tab-hover); }
+.panel-admin { display: flex; flex-direction: column; gap: 0; padding: 0; height: calc(100vh - 120px); }
+
+/* Admin Layout - Sidebar + Content */
+.admin-layout { display: flex; flex: 1; overflow: hidden; }
+
+/* Admin Sidebar Navigation */
+.admin-sidebar {
+  width: 220px;
+  min-width: 220px;
+  border-right: 1px solid var(--grid-border);
+  background: var(--sidebar-bg, var(--panel));
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 12px 8px;
+}
+.admin-sidebar-header {
+  padding: 8px 12px 16px;
+  border-bottom: 1px solid var(--grid-border);
+  margin-bottom: 8px;
+}
+.admin-sidebar-header h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+.admin-sidebar-header .admin-status {
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+/* Admin Nav Groups (collapsible sections) */
+.admin-nav-group { margin-bottom: 4px; }
+.admin-nav-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease;
+}
+.admin-nav-group-header:hover { background: rgba(148, 163, 184, 0.1); color: var(--text); }
+.admin-nav-group-header .chevron {
+  width: 14px;
+  height: 14px;
+  transition: transform 200ms ease;
+}
+/* Admin Nav Group Icons and Chevrons */
+.admin-nav-group-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+.admin-nav-group-chevron {
+  width: 14px;
+  height: 14px;
+  margin-left: auto;
+  flex-shrink: 0;
+  transition: transform 200ms ease;
+}
+.admin-nav-group[data-expanded="true"] .admin-nav-group-chevron { transform: rotate(90deg); }
+.admin-nav-group[data-expanded="false"] .admin-nav-items { display: none; }
+
+/* Admin nav group dividers */
+.admin-nav-group + .admin-nav-group {
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+  padding-top: 8px;
+  margin-top: 4px;
+}
+
+.admin-nav-items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0 8px 8px;
+}
+
+/* Admin Tabs (inside sidebar) */
+.admin-tab {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease;
+}
+.admin-tab:hover { background: rgba(148, 163, 184, 0.1); }
+.admin-tab.active {
+  background: rgba(var(--accent-rgb), 0.15);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/* Admin Content Area */
+.admin-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px;
+  background: var(--bg);
+}
+
+/* Admin Panels */
 .admin-panels { position: relative; }
-.admin-panel { display: none; flex-direction: column; gap: 14px; padding-top: 4px; }
+.admin-panel { display: none; flex-direction: column; gap: 14px; }
 .admin-panel.active { display: flex; }
 .admin-settings-group { display: flex; flex-direction: column; gap: 12px; }
 .admin-setting { border: 1px solid var(--grid-border); border-radius: 12px; padding: 14px 16px; background: var(--panel); box-shadow: var(--panel-shadow); display: grid; gap: 12px; }

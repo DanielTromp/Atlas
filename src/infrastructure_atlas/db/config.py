@@ -34,9 +34,10 @@ def get_engine(echo: bool | None = None) -> Engine:
     # Use NullPool for SQLite to avoid connection pooling issues
     # Each request gets a fresh connection, avoiding stale connection problems
     pool_class = None
+    pool_kwargs: dict[str, object] = {}
     if url.startswith("sqlite"):
-        from sqlalchemy.pool import StaticPool
-        pool_class = StaticPool
+        from sqlalchemy.pool import NullPool
+        pool_class = NullPool
 
     engine = create_engine(
         url,
@@ -44,6 +45,7 @@ def get_engine(echo: bool | None = None) -> Engine:
         future=True,
         connect_args=connect_args,
         poolclass=pool_class,
+        **pool_kwargs,
     )
 
     # Configure SQLite for better concurrent access

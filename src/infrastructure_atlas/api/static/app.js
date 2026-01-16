@@ -148,7 +148,7 @@
 
   // Elements
   // Page router
-  const $themeRoot = document.getElementById('theme-toggle-root');
+  const $themeRoot = document.getElementById('user-menu-theme-toggle');
   const $pages = document.getElementById("pages");
   const $appShell = document.getElementById('app-shell');
   const $sidebar = document.getElementById('sidebar');
@@ -236,8 +236,75 @@
   const mediaDrawer = window.matchMedia(`(max-width: ${SIDEBAR_DRAWER_BREAKPOINT - 1}px)`);
   let sidebarResizeTimer = 0;
   const sidebarGroups = Array.from(document.querySelectorAll('.sidebar-group'));
+  const sidebarSections = Array.from(document.querySelectorAll('.sidebar-section'));
   let page = 'export';
   let sidebarFocusCollapsed = false;
+
+  // Sidebar section expand/collapse functionality
+  const SIDEBAR_SECTIONS_KEY = 'atlas_sidebar_sections_v1';
+  function loadSidebarSectionState() {
+    try {
+      const stored = localStorage.getItem(SIDEBAR_SECTIONS_KEY);
+      if (stored) return JSON.parse(stored);
+    } catch {}
+    return null;
+  }
+  function saveSidebarSectionState() {
+    const state = {};
+    sidebarSections.forEach((section) => {
+      const sectionId = section.dataset.section;
+      state[sectionId] = section.dataset.expanded === 'true';
+    });
+    try { localStorage.setItem(SIDEBAR_SECTIONS_KEY, JSON.stringify(state)); } catch {}
+  }
+  function initSidebarSections() {
+    const storedState = loadSidebarSectionState();
+    sidebarSections.forEach((section) => {
+      const sectionId = section.dataset.section;
+      const header = section.querySelector('.sidebar-section-header');
+      const items = section.querySelector('.sidebar-section-items');
+      if (!header || !items) return;
+
+      // Apply stored state if available
+      if (storedState && storedState[sectionId] !== undefined) {
+        section.dataset.expanded = storedState[sectionId] ? 'true' : 'false';
+        header.setAttribute('aria-expanded', storedState[sectionId] ? 'true' : 'false');
+        if (storedState[sectionId]) {
+          items.removeAttribute('hidden');
+        } else {
+          items.setAttribute('hidden', '');
+        }
+      }
+
+      // Add click handler
+      header.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const isExpanded = section.dataset.expanded === 'true';
+        section.dataset.expanded = isExpanded ? 'false' : 'true';
+        header.setAttribute('aria-expanded', isExpanded ? 'false' : 'true');
+        if (isExpanded) {
+          items.setAttribute('hidden', '');
+        } else {
+          items.removeAttribute('hidden');
+        }
+        saveSidebarSectionState();
+      });
+    });
+  }
+  // Auto-expand section when navigating to a page within it
+  function expandSectionForPage(pageKey) {
+    sidebarSections.forEach((section) => {
+      const items = section.querySelector('.sidebar-section-items');
+      const pageBtn = section.querySelector(`button[data-page="${pageKey}"]`);
+      if (pageBtn && items) {
+        section.dataset.expanded = 'true';
+        section.querySelector('.sidebar-section-header')?.setAttribute('aria-expanded', 'true');
+        items.removeAttribute('hidden');
+      }
+    });
+  }
+  initSidebarSections();
 
   // Add chevron indicators to menu items with submenus
   sidebarGroups.forEach((group) => {
@@ -266,11 +333,7 @@
       source: () => $vcenterTabs,
       selector: 'button[data-vcenter-id]',
     },
-    admin: {
-      container: document.querySelector('[data-subnav-container="admin"]'),
-      source: () => $adminTabsContainer,
-      selector: 'button[data-admin-tab]',
-    },
+    // Admin page now has its own vertical sidebar, no longer uses subnav in main sidebar
   };
 
   const readSidebarPref = () => {
@@ -751,7 +814,61 @@
     'ai-activity': document.getElementById('admin-panel-ai-activity'),
   };
   const adminTabs = document.querySelectorAll('#admin-tabs .admin-tab');
+  const adminNavGroups = document.querySelectorAll('#admin-tabs .admin-nav-group');
   const $adminStatus = document.getElementById("admin-status");
+
+  // Admin nav group expand/collapse functionality
+  const ADMIN_NAV_GROUPS_KEY = 'atlas_admin_nav_groups_v1';
+  function loadAdminNavGroupState() {
+    try {
+      const stored = localStorage.getItem(ADMIN_NAV_GROUPS_KEY);
+      if (stored) return JSON.parse(stored);
+    } catch {}
+    return null;
+  }
+  function saveAdminNavGroupState() {
+    const state = {};
+    adminNavGroups.forEach((group) => {
+      const groupId = group.dataset.group;
+      state[groupId] = group.dataset.expanded === 'true';
+    });
+    try { localStorage.setItem(ADMIN_NAV_GROUPS_KEY, JSON.stringify(state)); } catch {}
+  }
+  function initAdminNavGroups() {
+    const storedState = loadAdminNavGroupState();
+    adminNavGroups.forEach((group) => {
+      const groupId = group.dataset.group;
+      const header = group.querySelector('.admin-nav-group-header');
+      const items = group.querySelector('.admin-nav-items');
+      if (!header || !items) return;
+
+      // Apply stored state if available, default to expanded
+      if (storedState && storedState[groupId] !== undefined) {
+        group.dataset.expanded = storedState[groupId] ? 'true' : 'false';
+      } else {
+        group.dataset.expanded = 'true';
+      }
+
+      // Add click handler for group header
+      header.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const isExpanded = group.dataset.expanded === 'true';
+        group.dataset.expanded = isExpanded ? 'false' : 'true';
+        saveAdminNavGroupState();
+      });
+    });
+  }
+  // Auto-expand group when selecting a tab within it
+  function expandAdminGroupForTab(tabKey) {
+    adminNavGroups.forEach((group) => {
+      const tabBtn = group.querySelector(`button[data-admin-tab="${tabKey}"]`);
+      if (tabBtn) {
+        group.dataset.expanded = 'true';
+      }
+    });
+  }
+  initAdminNavGroups();
   // New backup UI elements
   const $adminBackupCreate = document.getElementById("admin-backup-create");
   const $adminBackupCreateStatus = document.getElementById("admin-backup-create-status");
@@ -4347,6 +4464,8 @@
     }
     // Toggle tabs
     $pages?.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.getAttribute('data-page') === p));
+    // Auto-expand the sidebar section containing the active page
+    expandSectionForPage(p);
     if (p === 'suggestion-detail') {
       const suggestionsTab = $pages?.querySelector('button.tab[data-page="suggestions"]');
       suggestionsTab?.classList.add('active');
@@ -9542,6 +9661,8 @@
       const isActive = btn.dataset.adminTab === tab;
       btn.classList.toggle('active', isActive);
     });
+    // Auto-expand the admin nav group containing the selected tab
+    expandAdminGroupForTab(tab);
     buildSidebarSubnav('admin');
     syncSidebarSubnavActive('admin');
     Object.entries(adminPanels).forEach(([key, panel]) => {
