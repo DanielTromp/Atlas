@@ -39,6 +39,7 @@ class User(Base):
     playground_presets: Mapped[list[PlaygroundPreset]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
+    playground_usage: Mapped[list[PlaygroundUsage]] = relationship(back_populates="user")
 
 
 class UserAPIKey(Base):
@@ -510,3 +511,47 @@ class PlaygroundPreset(Base):
 
     # Relationships
     user: Mapped[User | None] = relationship(back_populates="playground_presets")
+
+
+class PlaygroundUsage(Base):
+    """Per-message usage logging for agent playground interactions."""
+
+    __tablename__ = "playground_usage"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    # User info
+    user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    username: Mapped[str | None] = mapped_column(String(255), nullable=True)  # Denormalized for easy querying
+
+    # Session/request info
+    session_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    agent_id: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    model: Mapped[str] = mapped_column(String(100), nullable=False)
+
+    # Message content
+    user_message: Mapped[str] = mapped_column(Text, nullable=False)
+    assistant_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Token usage
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # Cost (in USD)
+    cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
+    # Tool calls (JSON array)
+    tool_calls: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+
+    # Performance
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Error tracking
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+
+    # Relationships
+    user: Mapped[User | None] = relationship(back_populates="playground_usage")

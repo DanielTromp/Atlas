@@ -1069,6 +1069,7 @@
                 <div class="admin-nav-items">
                   <button class="admin-tab" data-admin-tab="ai">AI Settings</button>
                   <button class="admin-tab" data-admin-tab="ai-usage">Usage Stats</button>
+                  <button class="admin-tab" data-admin-tab="playground-usage">Playground Usage</button>
                   <button class="admin-tab" data-admin-tab="rag">RAG / Knowledge Base</button>
                 </div>
               </div>
@@ -1895,6 +1896,109 @@
                     </thead>
                     <tbody id="ai-pricing-body">
                       <tr><td colspan="3" class="loading">Loading...</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+
+            <!-- Playground Usage Panel -->
+            <section id="admin-panel-playground-usage" class="admin-panel" data-admin-tab="playground-usage">
+              <div class="admin-playground-usage">
+                <h3>Agent Playground Usage</h3>
+                <p class="admin-hint">Monitor token usage and costs for the Agent Playground across all users.</p>
+
+                <!-- Period Selector -->
+                <div class="playground-usage-controls">
+                  <label class="field inline">
+                    <span>Period:</span>
+                    <select id="admin-playground-days">
+                      <option value="7">Last 7 days</option>
+                      <option value="30" selected>Last 30 days</option>
+                      <option value="90">Last 90 days</option>
+                      <option value="365">Last year</option>
+                    </select>
+                  </label>
+                  <button id="admin-playground-refresh" class="btn ghost">Refresh</button>
+                </div>
+
+                <!-- Overall Stats -->
+                <div class="playground-admin-stats">
+                  <div class="playground-stat-card">
+                    <span class="stat-label">Total Requests</span>
+                    <span class="stat-value" id="admin-playground-requests">0</span>
+                  </div>
+                  <div class="playground-stat-card">
+                    <span class="stat-label">Total Tokens</span>
+                    <span class="stat-value" id="admin-playground-tokens">0</span>
+                  </div>
+                  <div class="playground-stat-card">
+                    <span class="stat-label">Total Cost</span>
+                    <span class="stat-value" id="admin-playground-cost">$0.00</span>
+                  </div>
+                  <div class="playground-stat-card">
+                    <span class="stat-label">Unique Users</span>
+                    <span class="stat-value" id="admin-playground-users">0</span>
+                  </div>
+                  <div class="playground-stat-card">
+                    <span class="stat-label">Sessions</span>
+                    <span class="stat-value" id="admin-playground-sessions">0</span>
+                  </div>
+                </div>
+
+                <!-- By Model Breakdown -->
+                <div class="playground-usage-section">
+                  <h4>Usage by Model</h4>
+                  <table class="ai-usage-table">
+                    <thead>
+                      <tr>
+                        <th>Model</th>
+                        <th>Requests</th>
+                        <th>Tokens</th>
+                        <th>Cost</th>
+                      </tr>
+                    </thead>
+                    <tbody id="admin-playground-models-body">
+                      <tr><td colspan="4" class="loading">Loading...</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <!-- By User Breakdown -->
+                <div class="playground-usage-section">
+                  <h4>Usage by User</h4>
+                  <table class="ai-usage-table">
+                    <thead>
+                      <tr>
+                        <th>Username</th>
+                        <th>Requests</th>
+                        <th>Tokens</th>
+                        <th>Cost</th>
+                        <th>Last Active</th>
+                      </tr>
+                    </thead>
+                    <tbody id="admin-playground-users-body">
+                      <tr><td colspan="5" class="loading">Loading...</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <!-- Recent Activity -->
+                <div class="playground-usage-section">
+                  <h4>Recent Activity</h4>
+                  <table class="ai-usage-table">
+                    <thead>
+                      <tr>
+                        <th>Time</th>
+                        <th>User</th>
+                        <th>Agent</th>
+                        <th>Model</th>
+                        <th>Tokens</th>
+                        <th>Cost</th>
+                      </tr>
+                    </thead>
+                    <tbody id="admin-playground-recent-body">
+                      <tr><td colspan="6" class="loading">Loading...</td></tr>
                     </tbody>
                   </table>
                 </div>
@@ -2743,6 +2847,7 @@
                   <button type="button" class="playground-tab active" data-tab="config" role="tab">Config</button>
                   <button type="button" class="playground-tab" data-tab="state" role="tab">State</button>
                   <button type="button" class="playground-tab" data-tab="skills" role="tab">Skills</button>
+                  <button type="button" class="playground-tab" data-tab="usage" role="tab">Usage</button>
                 </nav>
 
                 <!-- Config Tab -->
@@ -2834,6 +2939,48 @@
                       <h5>Result</h5>
                       <pre id="playground-skill-result">{}</pre>
                       <div class="playground-skill-timing" id="playground-skill-timing"></div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Usage Tab -->
+                <div class="playground-tab-content" data-tab="usage" hidden>
+                  <div class="playground-usage">
+                    <h4>Usage Statistics</h4>
+
+                    <div class="playground-usage-summary">
+                      <div class="usage-stat">
+                        <span class="usage-label">Total Requests</span>
+                        <span class="usage-value" id="playground-usage-requests">0</span>
+                      </div>
+                      <div class="usage-stat">
+                        <span class="usage-label">Total Tokens</span>
+                        <span class="usage-value" id="playground-usage-tokens">0</span>
+                      </div>
+                      <div class="usage-stat">
+                        <span class="usage-label">Total Cost</span>
+                        <span class="usage-value" id="playground-usage-cost">$0.00</span>
+                      </div>
+                      <div class="usage-stat">
+                        <span class="usage-label">Avg Response Time</span>
+                        <span class="usage-value" id="playground-usage-duration">0ms</span>
+                      </div>
+                    </div>
+
+                    <h5>By Agent</h5>
+                    <div class="playground-usage-agents" id="playground-usage-agents">
+                      <!-- Agent breakdown populated dynamically -->
+                      <div class="usage-empty">No usage data yet</div>
+                    </div>
+
+                    <h5>Recent Activity</h5>
+                    <div class="playground-usage-recent" id="playground-usage-recent">
+                      <!-- Recent usage items populated dynamically -->
+                      <div class="usage-empty">No recent activity</div>
+                    </div>
+
+                    <div class="playground-usage-actions">
+                      <button id="playground-refresh-usage" class="btn ghost">Refresh</button>
                     </div>
                   </div>
                 </div>

@@ -25,6 +25,7 @@ from infrastructure_atlas.agents.playground import (
     ChatEventType,
     PlaygroundRuntime,
 )
+from infrastructure_atlas.agents.usage import UsageService
 from infrastructure_atlas.db.models import PlaygroundPreset, User
 from infrastructure_atlas.db.models import PlaygroundSession as DBSession
 from infrastructure_atlas.infrastructure.logging import get_logger
@@ -171,6 +172,11 @@ async def chat_with_agent(
 
     db = get_db_session()
 
+    # Get user info for usage tracking
+    user = get_current_user(request)
+    user_id = user.id if user else None
+    username = user.username if user else None
+
     try:
         runtime = get_playground_runtime(db)
 
@@ -191,6 +197,8 @@ async def chat_with_agent(
                         state=body.state,
                         config_override=config_override,
                         stream=True,
+                        user_id=user_id,
+                        username=username,
                     ):
                         if event.type == ChatEventType.TOOL_START:
                             tool_calls.append(event.data)
@@ -228,6 +236,8 @@ async def chat_with_agent(
                 state=body.state,
                 config_override=config_override,
                 stream=False,
+                user_id=user_id,
+                username=username,
             ):
                 if event.type == ChatEventType.MESSAGE_DELTA:
                     response_content = event.data.get("content", "")
@@ -612,6 +622,62 @@ def get_preset(preset_id: str, request: Request) -> dict[str, Any]:
             "created_at": preset.created_at.isoformat() if preset.created_at else None,
             "updated_at": preset.updated_at.isoformat() if preset.updated_at else None,
         }
+
+    finally:
+        db.close()
+
+
+# ============================================================================
+# Usage Statistics Endpoints
+# ============================================================================
+
+
+@router.get("/usage/stats")
+def get_user_usage_stats(
+    request: Request,
+    days: int = Query(30, ge=1, le=365, description="Number of days to look back"),
+) -> dict[str, Any]:
+    """Get usage statistics for the current user."""
+    require_playground_permission(request)
+
+    user = get_current_user(request)
+    db = get_db_session()
+
+    try:
+        usage_service = UsageService(db)
+        user_id = user.id if user else None
+
+        # Get overall stats
+        stats = usage_service.get_user_stats(user_id=user_id, days=days)
+
+        # Get per-agent breakdown
+        by_agent = usage_service.get_user_stats_by_agent(user_id=user_id, days=days)
+
+        return {
+            **stats,
+            "by_agent": by_agent,
+        }
+
+    finally:
+        db.close()
+
+
+@router.get("/usage/recent")
+def get_recent_usage(
+    request: Request,
+    limit: int = Query(20, ge=1, le=100, description="Maximum records to return"),
+) -> list[dict[str, Any]]:
+    """Get recent usage records for the current user."""
+    require_playground_permission(request)
+
+    user = get_current_user(request)
+    db = get_db_session()
+
+    try:
+        usage_service = UsageService(db)
+        user_id = user.id if user else None
+
+        return usage_service.get_recent_usage(user_id=user_id, limit=limit)
 
     finally:
         db.close()

@@ -814,6 +814,7 @@
     'ai-usage': document.getElementById('admin-panel-ai-usage'),
     'ai-activity': document.getElementById('admin-panel-ai-activity'),
     'rag': document.getElementById('admin-panel-rag'),
+    'playground-usage': document.getElementById('admin-panel-playground-usage'),
   };
   const adminTabs = document.querySelectorAll('#admin-tabs .admin-tab');
   const adminNavGroups = document.querySelectorAll('#admin-tabs .admin-nav-group');
@@ -9722,7 +9723,101 @@
     if (tab === 'rag') {
       loadRAGAdminPanel().catch(() => {});
     }
+    if (tab === 'playground-usage') {
+      loadPlaygroundUsageDashboard().catch(() => {});
+    }
   }
+
+  // Playground Usage admin functions
+  async function loadPlaygroundUsageDashboard() {
+    const days = document.getElementById('admin-playground-days')?.value || 30;
+
+    try {
+      // Fetch overall stats
+      const statsRes = await fetch(`${API_BASE}/admin/playground/usage/stats?days=${days}`);
+      if (statsRes.ok) {
+        const stats = await statsRes.json();
+
+        document.getElementById('admin-playground-requests').textContent = (stats.total_requests || 0).toLocaleString();
+        document.getElementById('admin-playground-tokens').textContent = (stats.total_tokens || 0).toLocaleString();
+        document.getElementById('admin-playground-cost').textContent = `$${(stats.total_cost_usd || 0).toFixed(4)}`;
+        document.getElementById('admin-playground-users').textContent = (stats.unique_users || 0).toLocaleString();
+        document.getElementById('admin-playground-sessions').textContent = (stats.unique_sessions || 0).toLocaleString();
+
+        // Render by model table
+        const modelsBody = document.getElementById('admin-playground-models-body');
+        if (modelsBody && stats.by_model) {
+          if (stats.by_model.length === 0) {
+            modelsBody.innerHTML = '<tr><td colspan="4" class="empty">No usage data yet</td></tr>';
+          } else {
+            modelsBody.innerHTML = stats.by_model.map(m => `
+              <tr>
+                <td>${m.model.replace('claude-', '').split('-20')[0]}</td>
+                <td>${m.requests.toLocaleString()}</td>
+                <td>${(m.tokens || 0).toLocaleString()}</td>
+                <td>$${(m.cost_usd || 0).toFixed(4)}</td>
+              </tr>
+            `).join('');
+          }
+        }
+      }
+
+      // Fetch per-user stats
+      const usersRes = await fetch(`${API_BASE}/admin/playground/usage/users?days=${days}`);
+      if (usersRes.ok) {
+        const users = await usersRes.json();
+        const usersBody = document.getElementById('admin-playground-users-body');
+        if (usersBody) {
+          if (users.length === 0) {
+            usersBody.innerHTML = '<tr><td colspan="5" class="empty">No usage data yet</td></tr>';
+          } else {
+            usersBody.innerHTML = users.map(u => `
+              <tr>
+                <td>${u.username || 'anonymous'}</td>
+                <td>${u.requests.toLocaleString()}</td>
+                <td>${(u.tokens || 0).toLocaleString()}</td>
+                <td>$${(u.cost_usd || 0).toFixed(4)}</td>
+                <td>${u.last_used ? new Date(u.last_used).toLocaleString() : '-'}</td>
+              </tr>
+            `).join('');
+          }
+        }
+      }
+
+      // Fetch recent activity
+      const recentRes = await fetch(`${API_BASE}/admin/playground/usage/recent?limit=20`);
+      if (recentRes.ok) {
+        const recent = await recentRes.json();
+        const recentBody = document.getElementById('admin-playground-recent-body');
+        if (recentBody) {
+          if (recent.length === 0) {
+            recentBody.innerHTML = '<tr><td colspan="6" class="empty">No recent activity</td></tr>';
+          } else {
+            recentBody.innerHTML = recent.map(r => `
+              <tr>
+                <td>${new Date(r.created_at).toLocaleString()}</td>
+                <td>${r.username || 'anonymous'}</td>
+                <td>@${r.agent_id}</td>
+                <td>${r.model.replace('claude-', '').split('-20')[0]}</td>
+                <td>${r.total_tokens.toLocaleString()}</td>
+                <td>$${(r.cost_usd || 0).toFixed(5)}</td>
+              </tr>
+            `).join('');
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Error loading playground usage:', e);
+    }
+  }
+
+  // Playground usage event listeners
+  document.getElementById('admin-playground-refresh')?.addEventListener('click', () => {
+    loadPlaygroundUsageDashboard().catch(() => {});
+  });
+  document.getElementById('admin-playground-days')?.addEventListener('change', () => {
+    loadPlaygroundUsageDashboard().catch(() => {});
+  });
 
   // Suggestions admin config
   const $adminSuggestionsBackend = document.getElementById('admin-suggestions-backend');

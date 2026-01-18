@@ -94,6 +94,28 @@
     return await response.json();
   }
 
+  async function fetchUsageStats(days = 30) {
+    try {
+      const response = await fetch(`/playground/usage/stats?days=${days}`);
+      if (!response.ok) throw new Error('Failed to fetch usage stats');
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching usage stats:', error);
+      return null;
+    }
+  }
+
+  async function fetchRecentUsage(limit = 10) {
+    try {
+      const response = await fetch(`/playground/usage/recent?limit=${limit}`);
+      if (!response.ok) throw new Error('Failed to fetch recent usage');
+      return await response.json();
+    } catch (error) {
+      console.error('Error fetching recent usage:', error);
+      return [];
+    }
+  }
+
   // ============================================================================
   // UI Rendering
   // ============================================================================
@@ -325,6 +347,100 @@
         )
         .join('');
     }
+  }
+
+  function renderUsageStats(stats) {
+    if (!stats) return;
+
+    // Update summary stats
+    const requestsEl = document.getElementById('playground-usage-requests');
+    const tokensEl = document.getElementById('playground-usage-tokens');
+    const costEl = document.getElementById('playground-usage-cost');
+    const durationEl = document.getElementById('playground-usage-duration');
+
+    if (requestsEl) requestsEl.textContent = (stats.total_requests || 0).toLocaleString();
+    if (tokensEl) tokensEl.textContent = (stats.total_tokens || 0).toLocaleString();
+    if (costEl) costEl.textContent = `$${(stats.total_cost_usd || 0).toFixed(4)}`;
+    if (durationEl) durationEl.textContent = `${Math.round(stats.avg_duration_ms || 0)}ms`;
+
+    // Update per-agent breakdown
+    const agentsContainer = document.getElementById('playground-usage-agents');
+    if (agentsContainer && stats.by_agent) {
+      if (stats.by_agent.length === 0) {
+        agentsContainer.innerHTML = '<div class="usage-empty">No usage data yet</div>';
+      } else {
+        agentsContainer.innerHTML = stats.by_agent
+          .map(
+            (agent) => `
+          <div class="usage-agent-item">
+            <span class="usage-agent-name">@${agent.agent_id}</span>
+            <span class="usage-agent-stats">
+              ${agent.requests} reqs • ${(agent.tokens || 0).toLocaleString()} tokens • $${(agent.cost_usd || 0).toFixed(4)}
+            </span>
+          </div>
+        `
+          )
+          .join('');
+      }
+    }
+  }
+
+  function renderRecentUsage(records) {
+    const container = document.getElementById('playground-usage-recent');
+    if (!container) return;
+
+    if (!records || records.length === 0) {
+      container.innerHTML = '<div class="usage-empty">No recent activity</div>';
+      return;
+    }
+
+    container.innerHTML = records
+      .map(
+        (record) => `
+        <div class="usage-recent-item">
+          <div class="usage-recent-header">
+            <span class="usage-recent-agent">@${record.agent_id}</span>
+            <span class="usage-recent-model">${record.model.replace('claude-', '').split('-20')[0]}</span>
+            <span class="usage-recent-time">${formatRelativeTime(record.created_at)}</span>
+          </div>
+          <div class="usage-recent-message">${escapeHtml(record.user_message)}</div>
+          <div class="usage-recent-stats">
+            ${record.total_tokens} tokens • $${(record.cost_usd || 0).toFixed(5)} • ${record.duration_ms || 0}ms
+            ${record.tool_calls > 0 ? `• ${record.tool_calls} tool calls` : ''}
+          </div>
+        </div>
+      `
+      )
+      .join('');
+  }
+
+  function formatRelativeTime(isoString) {
+    const date = new Date(isoString);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMins / 60);
+    const diffDays = Math.floor(diffHours / 24);
+
+    if (diffMins < 1) return 'just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return date.toLocaleDateString();
+  }
+
+  function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  async function refreshUsageDisplay() {
+    const stats = await fetchUsageStats();
+    const recent = await fetchRecentUsage(10);
+
+    renderUsageStats(stats);
+    renderRecentUsage(recent);
   }
 
   // ============================================================================
@@ -646,7 +762,18 @@
 
     // Tab switching
     document.querySelectorAll('.playground-tab').forEach((tab) => {
-      tab.addEventListener('click', () => switchPlaygroundTab(tab.dataset.tab));
+      tab.addEventListener('click', () => {
+        switchPlaygroundTab(tab.dataset.tab);
+        // Load usage stats when switching to usage tab
+        if (tab.dataset.tab === 'usage') {
+          refreshUsageDisplay();
+        }
+      });
+    });
+
+    // Usage refresh button
+    document.getElementById('playground-refresh-usage')?.addEventListener('click', () => {
+      refreshUsageDisplay();
     });
 
     // Preset saving (simplified)

@@ -367,3 +367,59 @@ def health_check_all_modules(admin: AdminUserDep):
             for name, status in health_results.items()
         }
     }
+
+
+# ============================================================================
+# Playground Usage Statistics (Admin)
+# ============================================================================
+
+
+@router.get("/playground/usage/stats")
+def get_overall_usage_stats(
+    admin: AdminUserDep,
+    days: int = 30,
+):
+    """Get overall playground usage statistics for all users."""
+    from infrastructure_atlas.agents.usage import UsageService
+    from infrastructure_atlas.api.app import SessionLocal
+
+    db = SessionLocal()
+    try:
+        usage_service = UsageService(db)
+        return usage_service.get_overall_stats(days=days)
+    finally:
+        db.close()
+
+
+@router.get("/playground/usage/users")
+def get_all_users_usage(
+    admin: AdminUserDep,
+    days: int = 30,
+):
+    """Get usage statistics broken down by user."""
+    from infrastructure_atlas.agents.usage import UsageService
+    from infrastructure_atlas.api.app import SessionLocal
+
+    db = SessionLocal()
+    try:
+        usage_service = UsageService(db)
+        return usage_service.get_all_users_stats(days=days)
+    finally:
+        db.close()
+
+
+@router.get("/playground/usage/recent")
+def get_all_recent_usage(
+    admin: AdminUserDep,
+    limit: int = 50,
+):
+    """Get recent usage records for all users."""
+    from infrastructure_atlas.agents.usage import UsageService
+    from infrastructure_atlas.api.app import SessionLocal
+
+    db = SessionLocal()
+    try:
+        usage_service = UsageService(db)
+        return usage_service.get_recent_usage(user_id=None, limit=limit)
+    finally:
+        db.close()

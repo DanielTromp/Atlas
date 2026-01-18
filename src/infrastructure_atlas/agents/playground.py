@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
+from infrastructure_atlas.agents.usage import UsageRecord, UsageService, calculate_cost
 from infrastructure_atlas.infrastructure.logging import get_logger
 
 if TYPE_CHECKING:
@@ -173,10 +174,12 @@ class PlaygroundSession:
         session_id: str | None = None,
         agent_id: str = "triage",
         user_id: str | None = None,
+        username: str | None = None,
     ):
         self.session_id = session_id or str(uuid.uuid4())
         self.agent_id = agent_id
         self.user_id = user_id
+        self.username = username
         self.messages: list[dict[str, Any]] = []
         self.state: dict[str, Any] = {}
         self.config_override: dict[str, Any] = {}
@@ -214,6 +217,7 @@ class PlaygroundSession:
             "session_id": self.session_id,
             "agent_id": self.agent_id,
             "user_id": self.user_id,
+            "username": self.username,
             "messages": self.messages,
             "state": self.state,
             "config_override": self.config_override,
@@ -291,6 +295,7 @@ class PlaygroundRuntime:
         session_id: str | None = None,
         agent_id: str = "triage",
         user_id: str | None = None,
+        username: str | None = None,
     ) -> PlaygroundSession:
         """Get an existing session or create a new one.
 
@@ -298,6 +303,7 @@ class PlaygroundRuntime:
             session_id: Optional session ID to retrieve
             agent_id: Agent ID for new sessions
             user_id: User ID for new sessions
+            username: Username for new sessions
 
         Returns:
             PlaygroundSession instance
@@ -316,6 +322,7 @@ class PlaygroundRuntime:
             session_id=session_id,
             agent_id=agent_id,
             user_id=user_id,
+            username=username,
         )
         self._sessions[session.session_id] = session
 
@@ -433,6 +440,8 @@ class PlaygroundRuntime:
         state: dict[str, Any] | None = None,
         config_override: dict[str, Any] | None = None,
         stream: bool = True,
+        user_id: str | None = None,
+        username: str | None = None,
     ) -> AsyncIterator[ChatEvent]:
         """Send a message directly to an agent.
 
@@ -443,6 +452,8 @@ class PlaygroundRuntime:
             state: Optional state to inject
             config_override: Optional configuration overrides
             stream: Whether to stream the response
+            user_id: User ID for usage tracking
+            username: Username for usage tracking
 
         Yields:
             ChatEvent objects for real-time updates
@@ -453,6 +464,8 @@ class PlaygroundRuntime:
         session = self.get_or_create_session(
             session_id=session_id,
             agent_id=agent_id,
+            user_id=user_id,
+            username=username,
         )
 
         # Apply config override to session
@@ -500,15 +513,19 @@ class PlaygroundRuntime:
 
             # Execute with tool loop
             response_content = ""
-            total_tokens = 0
+            input_tokens = 0
+            output_tokens = 0
+            tool_calls_log: list[dict[str, Any]] = []
             max_iterations = 10
+            model = session.config_override.get("model", agent.config.model) if session.config_override else agent.config.model
 
             for _ in range(max_iterations):
                 response = llm.invoke(langchain_messages)
 
-                # Track tokens
+                # Track tokens separately
                 if hasattr(response, "usage_metadata") and response.usage_metadata:
-                    total_tokens += response.usage_metadata.get("total_tokens", 0)
+                    input_tokens += response.usage_metadata.get("input_tokens", 0)
+                    output_tokens += response.usage_metadata.get("output_tokens", 0)
 
                 # Check for tool calls
                 if hasattr(response, "tool_calls") and response.tool_calls:
@@ -526,6 +543,13 @@ class PlaygroundRuntime:
                         tool_start = time.perf_counter()
                         tool_result = self._execute_agent_tool(agent, tool_name, tool_args)
                         tool_duration = int((time.perf_counter() - tool_start) * 1000)
+
+                        # Log tool call for usage tracking
+                        tool_calls_log.append({
+                            "name": tool_name,
+                            "args": tool_args,
+                            "duration_ms": tool_duration,
+                        })
 
                         yield ChatEvent(
                             type=ChatEventType.TOOL_END,
@@ -547,8 +571,9 @@ class PlaygroundRuntime:
                     response_content = response.content if isinstance(response.content, str) else str(response.content)
                     break
 
-            # Calculate cost estimate (rough)
-            cost_usd = total_tokens * 0.000003  # Approximate
+            # Calculate accurate cost using pricing table
+            total_tokens = input_tokens + output_tokens
+            cost_usd = calculate_cost(model, input_tokens, output_tokens)
 
             # Update session
             session.add_message("assistant", response_content)
@@ -569,26 +594,60 @@ class PlaygroundRuntime:
                 type=ChatEventType.MESSAGE_END,
                 data={
                     "tokens": total_tokens,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
                     "cost_usd": cost_usd,
                     "duration_ms": duration_ms,
                 },
             )
+
+            # Record usage to database
+            if self.db_session:
+                self._record_usage(
+                    session=session,
+                    model=model,
+                    user_message=message,
+                    assistant_message=response_content,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    tool_calls=tool_calls_log if tool_calls_log else None,
+                    duration_ms=duration_ms,
+                )
 
             logger.info(
                 "Playground chat completed",
                 extra={
                     "agent_id": agent_id,
                     "session_id": session.session_id,
-                    "tokens": total_tokens,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "cost_usd": cost_usd,
                     "duration_ms": duration_ms,
                 },
             )
 
         except Exception as e:
-            logger.error(f"Playground chat error: {e!s}", exc_info=True)
+            duration_ms = int((time.perf_counter() - start_time) * 1000)
+            error_msg = str(e)
+            logger.error(f"Playground chat error: {error_msg}", exc_info=True)
+
+            # Record error usage if we have a session
+            if self.db_session and session:
+                self._record_usage(
+                    session=session,
+                    model=config_override.get("model", AGENT_DEFAULTS.get(agent_id, {}).get("model", "unknown")) if config_override else AGENT_DEFAULTS.get(agent_id, {}).get("model", "unknown"),
+                    user_message=message,
+                    assistant_message=None,
+                    input_tokens=0,
+                    output_tokens=0,
+                    tool_calls=None,
+                    duration_ms=duration_ms,
+                    error=error_msg,
+                )
+
             yield ChatEvent(
                 type=ChatEventType.ERROR,
-                data={"error": str(e)},
+                data={"error": error_msg},
             )
 
     async def execute_skill(
@@ -688,6 +747,54 @@ class PlaygroundRuntime:
             if tool.name == tool_name:
                 return tool.invoke(args)
         return f"Tool '{tool_name}' not found"
+
+    def _record_usage(  # noqa: PLR0913
+        self,
+        session: PlaygroundSession,
+        model: str,
+        user_message: str,
+        assistant_message: str | None,
+        input_tokens: int,
+        output_tokens: int,
+        tool_calls: list[dict[str, Any]] | None,
+        duration_ms: int,
+        error: str | None = None,
+    ) -> None:
+        """Record usage to the database.
+
+        Args:
+            session: The playground session
+            model: Model used for the request
+            user_message: The user's message
+            assistant_message: The assistant's response (or None on error)
+            input_tokens: Number of input tokens
+            output_tokens: Number of output tokens
+            tool_calls: List of tool calls made
+            duration_ms: Duration in milliseconds
+            error: Error message if any
+        """
+        if not self.db_session:
+            return
+
+        try:
+            usage_service = UsageService(self.db_session)
+            record = UsageRecord(
+                session_id=session.session_id,
+                agent_id=session.agent_id,
+                model=model,
+                user_message=user_message,
+                assistant_message=assistant_message,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                tool_calls=tool_calls,
+                duration_ms=duration_ms,
+                error=error,
+                user_id=session.user_id,
+                username=session.username,
+            )
+            usage_service.record(record)
+        except Exception as e:
+            logger.error(f"Failed to record usage: {e!s}", exc_info=True)
 
     def _load_session_from_db(self, session_id: str) -> PlaygroundSession | None:
         """Load a session from the database."""
