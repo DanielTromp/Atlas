@@ -17,6 +17,13 @@ __all__ = [
     "AgentConfig",
     "AgentMessage",
     "AgentResult",
+    # Playground components
+    "PlaygroundRuntime",
+    "PlaygroundSession",
+    "ChatEvent",
+    "ChatEventType",
+    "SkillResult",
+    "get_playground_runtime",
 ]
 
 
@@ -34,4 +41,22 @@ def __getattr__(name: str):
     elif name == "AgentResult":
         from .workflow_agent import AgentResult
         return AgentResult
+    elif name == "PlaygroundRuntime":
+        from .playground import PlaygroundRuntime
+        return PlaygroundRuntime
+    elif name == "PlaygroundSession":
+        from .playground import PlaygroundSession
+        return PlaygroundSession
+    elif name == "ChatEvent":
+        from .playground import ChatEvent
+        return ChatEvent
+    elif name == "ChatEventType":
+        from .playground import ChatEventType
+        return ChatEventType
+    elif name == "SkillResult":
+        from .playground import SkillResult
+        return SkillResult
+    elif name == "get_playground_runtime":
+        from .playground import get_playground_runtime
+        return get_playground_runtime
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

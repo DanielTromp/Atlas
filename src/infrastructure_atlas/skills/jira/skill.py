@@ -26,6 +26,7 @@ class JiraSkill(BaseSkill):
     Actions:
         - get_issue: Get issue details by key
         - search_issues: Search using JQL
+        - get_team_tickets: Get open tickets for a team (simplified query)
         - update_issue: Update issue fields
         - add_comment: Add a comment to an issue
         - transition_issue: Change issue status
@@ -36,11 +37,23 @@ class JiraSkill(BaseSkill):
         - ATLASSIAN_BASE_URL: Jira instance URL
         - ATLASSIAN_EMAIL: API authentication email
         - ATLASSIAN_API_TOKEN: API authentication token
+        - JIRA_TEAM_FIELD: Custom field ID for team (default: customfield_10575)
+        - JIRA_DEFAULT_PROJECT: Default project key (default: ESD)
     """
 
     name = "jira"
     category = "ticketing"
     description = "Jira ticket management operations"
+
+    # =========================================================================
+    # Configuration - Customize these for your Jira instance
+    # =========================================================================
+    # Custom field ID that contains the team name
+    TEAM_FIELD = os.getenv("JIRA_TEAM_FIELD", "customfield_10575")
+    # Default project for team queries
+    DEFAULT_PROJECT = os.getenv("JIRA_DEFAULT_PROJECT", "ESD")
+    # Statuses to exclude when looking for "open" tickets
+    CLOSED_STATUSES = ["Closed", "Canceled", "Resolved", "Done"]
 
     def __init__(self, config: SkillConfig | None = None):
         super().__init__(config)
@@ -186,6 +199,39 @@ class JiraSkill(BaseSkill):
             },
         )
 
+        self.register_action(
+            name="get_team_tickets",
+            func=self.get_team_tickets,
+            description=(
+                "Get NEW/UNASSIGNED tickets for a team that need attention. "
+                "Use this when asked for 'new tickets', 'unassigned tickets', or 'tickets for [team name]'. "
+                "By default returns only unassigned tickets (assignee = EMPTY). "
+                "Available teams: Systems Infrastructure, Network, Security, etc."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "team": {
+                        "type": "string",
+                        "description": "Team name (e.g., 'Systems Infrastructure', 'Network')",
+                    },
+                    "unassigned_only": {
+                        "type": "boolean",
+                        "description": "If true (default), only return unassigned tickets. Set false to include assigned tickets.",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum results to return (default: 20)",
+                    },
+                    "project": {
+                        "type": "string",
+                        "description": "Project key (default: ESD)",
+                    },
+                },
+                "required": ["team"],
+            },
+        )
+
         self._initialized = True
         logger.info("Jira skill initialized successfully")
 
@@ -218,12 +264,15 @@ class JiraSkill(BaseSkill):
     # Action implementations
     # =========================================================================
 
+    # Minimal fields always included in get_issue responses
+    MINIMAL_FIELDS = ["key", "summary", "status", "issuetype", "created"]
+
     def get_issue(self, issue_key: str, fields: list[str] | None = None) -> dict[str, Any]:
         """Get Jira issue details.
 
         Args:
             issue_key: Issue key like ESD-1234
-            fields: Optional list of fields to return
+            fields: Optional list of additional fields to return (custom fields, etc.)
 
         Returns:
             Issue data dict
@@ -232,14 +281,36 @@ class JiraSkill(BaseSkill):
             raise RuntimeError("Jira skill not initialized")
 
         url = f"{self._api_root}/issue/{issue_key}"
-        params = {}
+
+        # Always include minimal fields plus any requested custom/additional fields
+        request_fields = set(self.DEFAULT_FIELDS)
         if fields:
-            params["fields"] = ",".join(fields)
+            request_fields.update(fields)
+
+        params = {"fields": ",".join(request_fields)}
 
         response = self._session.get(url, params=params, timeout=30)
         response.raise_for_status()
 
         return self._parse_issue_response(response.json())
+
+    # Default fields to request from Jira API (new API requires explicit fields)
+    DEFAULT_FIELDS = [
+        "key",
+        "summary",
+        "status",
+        "priority",
+        "issuetype",
+        "created",
+        "updated",
+        "assignee",
+        "reporter",
+        "project",
+        "labels",
+        "description",
+        "comment",
+        "resolutiondate",
+    ]
 
     def search_issues(
         self,
@@ -252,7 +323,7 @@ class JiraSkill(BaseSkill):
         Args:
             jql: JQL query string
             max_results: Maximum number of results
-            fields: Fields to include
+            fields: Fields to include (uses default set if not specified)
 
         Returns:
             List of issue dicts
@@ -260,19 +331,31 @@ class JiraSkill(BaseSkill):
         if not self._session:
             raise RuntimeError("Jira skill not initialized")
 
-        url = f"{self._api_root}/search"
-        payload = {
-            "jql": jql,
-            "maxResults": min(max_results, 100),
-        }
-        if fields:
-            payload["fields"] = fields
+        # Use the new /search/jql endpoint (legacy /search was removed by Atlassian)
+        url = f"{self._api_root}/search/jql"
 
-        response = self._session.post(url, json=payload, timeout=60)
+        # Always request essential fields - new API returns only 'id' by default
+        request_fields = fields if fields else self.DEFAULT_FIELDS
+
+        params = {
+            "jql": jql,
+            "startAt": 0,
+            "maxResults": min(max_results, 100),
+            "fields": ",".join(request_fields),
+        }
+
+        response = self._session.get(url, params=params, timeout=60)
         response.raise_for_status()
 
         data = response.json()
-        return [self._parse_issue_response(issue) for issue in data.get("issues", [])]
+        # Handle both response formats (issues list or nested results)
+        issues = data.get("issues", [])
+        if not issues and "results" in data:
+            results = data.get("results", [])
+            if results and isinstance(results[0], dict):
+                issues = results[0].get("issues", [])
+
+        return [self._parse_issue_response(issue) for issue in issues]
 
     def update_issue(self, issue_key: str, fields: dict[str, Any]) -> dict[str, Any]:
         """Update issue fields.
@@ -442,6 +525,71 @@ class JiraSkill(BaseSkill):
             fields=["summary", "status", "resolution", "updated", "assignee"],
         )
 
+    def get_team_tickets(
+        self,
+        team: str,
+        unassigned_only: bool = True,
+        max_results: int = 20,
+        project: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Get new/unassigned tickets for a team that need attention.
+
+        This is a convenience method that constructs the JQL query automatically
+        based on the team name, making it easier to ask for "new tickets for Systems".
+
+        By default, returns only UNASSIGNED tickets (tickets that need to be picked up).
+        Set unassigned_only=False to include all open tickets regardless of assignee.
+
+        Args:
+            team: Team name (e.g., "Systems Infrastructure", "Network")
+            unassigned_only: If True (default), only return unassigned tickets
+            max_results: Maximum number of results (default 20)
+            project: Project key (defaults to JIRA_DEFAULT_PROJECT env var or "ESD")
+
+        Returns:
+            List of matching tickets with full details
+        """
+        if not self._session:
+            raise RuntimeError("Jira skill not initialized")
+
+        # Use configured defaults
+        project_key = project or self.DEFAULT_PROJECT
+        team_field = self.TEAM_FIELD
+        closed_statuses = ", ".join(f'"{s}"' for s in self.CLOSED_STATUSES)
+
+        # Build JQL query
+        jql_parts = [
+            f"project = {project_key}",
+            f'{team_field} = "{team}"',
+            f"status NOT IN ({closed_statuses})",
+        ]
+
+        if unassigned_only:
+            jql_parts.append("assignee = EMPTY")
+
+        jql = " AND ".join(jql_parts) + " ORDER BY created DESC"
+
+        logger.info(
+            f"Searching for team tickets: {team}",
+            extra={"jql": jql, "project": project_key, "unassigned_only": unassigned_only},
+        )
+
+        # Include the team field in results so it's visible
+        fields = [
+            "summary",
+            "status",
+            "priority",
+            "created",
+            "updated",
+            "assignee",
+            "reporter",
+            "description",
+            "issuetype",
+            team_field,
+        ]
+
+        return self.search_issues(jql=jql, max_results=max_results, fields=fields)
+
     def _parse_issue_response(self, data: dict[str, Any]) -> dict[str, Any]:
         """Parse Jira issue response into a cleaner format.
 
@@ -509,6 +657,36 @@ class JiraSkill(BaseSkill):
                 }
                 for c in comments[-5:]  # Last 5 comments
             ]
+
+        # Include any custom fields that were returned
+        for field_name, field_value in fields.items():
+            if field_name.startswith("customfield_"):
+                # Try to extract meaningful value from custom field
+                if field_value is None:
+                    result[field_name] = None
+                elif isinstance(field_value, dict):
+                    # Custom field with complex value (e.g., select, user, etc.)
+                    if "value" in field_value:
+                        result[field_name] = field_value["value"]
+                    elif "name" in field_value:
+                        result[field_name] = field_value["name"]
+                    elif "displayName" in field_value:
+                        result[field_name] = field_value["displayName"]
+                    else:
+                        result[field_name] = field_value
+                elif isinstance(field_value, list):
+                    # Multi-select or array field
+                    extracted = []
+                    for item in field_value:
+                        if isinstance(item, dict):
+                            extracted.append(
+                                item.get("value") or item.get("name") or item.get("displayName") or item
+                            )
+                        else:
+                            extracted.append(item)
+                    result[field_name] = extracted
+                else:
+                    result[field_name] = field_value
 
         return result
 

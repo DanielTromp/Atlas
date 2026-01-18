@@ -5,7 +5,22 @@ from fastapi import APIRouter
 from infrastructure_atlas.infrastructure.logging import get_logger, setup_logging
 from infrastructure_atlas.infrastructure.modules import get_module_registry, initialize_modules
 
-from .routes import admin, auth, claude_cli, core, draft_tickets, foreman, netbox, profile, puppet, search, tasks, tools, vcenter, zabbix
+from .routes import (
+    admin,
+    auth,
+    claude_cli,
+    core,
+    draft_tickets,
+    foreman,
+    netbox,
+    profile,
+    puppet,
+    search,
+    tasks,
+    tools,
+    vcenter,
+    zabbix,
+)
 
 logger = get_logger(__name__)
 
@@ -115,7 +130,8 @@ def bootstrap_api() -> APIRouter:
 
     # Confluence RAG routes (Qdrant-based semantic search)
     try:
-        from infrastructure_atlas.confluence_rag.api import router as rag_router, warmup_search_engine
+        from infrastructure_atlas.confluence_rag.api import router as rag_router
+        from infrastructure_atlas.confluence_rag.api import warmup_search_engine
 
         router.include_router(rag_router)
         logger.info("Enabled Confluence RAG API routes")
@@ -138,6 +154,15 @@ def bootstrap_api() -> APIRouter:
         logger.info("Enabled Atlas Agents Platform routes (workflows, executions, websocket)")
     except Exception as e:
         logger.warning(f"Atlas Agents routes not available: {e}")
+
+    # Agent Playground routes
+    try:
+        from .routes import playground
+
+        router.include_router(playground.router)
+        logger.info("Enabled Agent Playground API routes")
+    except Exception as e:
+        logger.warning(f"Agent Playground routes not available: {e}")
 
     return router
 

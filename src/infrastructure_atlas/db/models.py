@@ -4,7 +4,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -33,6 +33,12 @@ class User(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
     api_keys: Mapped[list[UserAPIKey]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    playground_sessions: Mapped[list[PlaygroundSession]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    playground_presets: Mapped[list[PlaygroundPreset]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class UserAPIKey(Base):
@@ -442,3 +448,65 @@ class SkillAction(Base):
 
     # Relationships
     skill: Mapped[Skill] = relationship(back_populates="actions")
+
+
+# ==============================================================================
+# Agent Playground Models
+# ==============================================================================
+
+
+class PlaygroundSession(Base):
+    """Ephemeral sessions for agent testing in the playground."""
+
+    __tablename__ = "playground_sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    agent_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+
+    # Session state
+    state: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    config_override: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    messages: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+
+    # Metrics
+    total_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_cost_usd: Mapped[float | None] = mapped_column(Float, default=0.0, nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    # Relationships
+    user: Mapped[User | None] = relationship(back_populates="playground_sessions")
+
+
+class PlaygroundPreset(Base):
+    """Saved configuration presets for agent playground."""
+
+    __tablename__ = "playground_presets"
+    __table_args__ = (UniqueConstraint("user_id", "name", name="uq_preset_user_name"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    agent_id: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # Configuration
+    config: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+    # Ownership
+    user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+    is_shared: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    # Relationships
+    user: Mapped[User | None] = relationship(back_populates="playground_presets")

@@ -101,6 +101,16 @@
                     <span class="sidebar-item-label">Search</span>
                   </button>
                 </div>
+                <div class="sidebar-group" data-page="playground">
+                  <button class="tab sidebar-item" data-page="playground" type="button">
+                    <span class="sidebar-item-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M4.5 12a7.5 7.5 0 0 0 15 0m-15 0a7.5 7.5 0 1 1 15 0m-15 0H3m16.5 0H21m-1.5 0H12m-8.457 3.077 1.41-.513m14.095-5.13 1.41-.513M5.106 17.785l1.15-.964m11.49-9.642 1.149-.964M7.501 19.795l.75-1.3m7.5-12.99.75-1.3m-6.063 16.658.26-1.477m2.605-14.772.26-1.477m0 17.726-.26-1.477M10.698 4.614l-.26-1.477M16.5 19.794l-.75-1.299M7.5 4.205 6.75 2.906m9.394 18.042-1.15-.964M5.256 15.837l-1.15-.964m15.352-5.746 1.41.513M4.954 9.435l-1.41.514M12.002 12l-3.75 6.495"></path>
+                      </svg>
+                    </span>
+                    <span class="sidebar-item-label">Agent Playground</span>
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -1278,8 +1288,8 @@
                         <span>Default Model</span>
                         <select id="admin-ai-anthropic-model">
                           <option value="claude-sonnet-4-5-20250929">Claude 4.5 Sonnet</option>
-                          <option value="claude-haiku-4-5-20251001">Claude 4.5 Haiku</option>
-                          <option value="claude-opus-4-5-20251101">Claude 4.5 Opus</option>
+                          <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku</option>
+                          <option value="claude-opus-4-20250514">Claude Opus 4</option>
                         </select>
                       </label>
                       <div class="admin-ai-actions">
@@ -2682,6 +2692,156 @@
           <div id="conf-results" class="feed empty">Not searched yet.</div>
         </div>
       </section>
+
+      <!-- Agent Playground Page -->
+      <section class="page" id="page-playground" hidden>
+        <div class="panel playground-panel">
+          <div class="playground-layout">
+            <!-- Agent Selector (Top Bar) -->
+            <div class="playground-agents">
+              <div class="playground-agents-header">
+                <h3>Select an Agent</h3>
+              </div>
+              <div class="playground-agent-cards" id="playground-agent-cards">
+                <!-- Agent cards are populated dynamically -->
+              </div>
+            </div>
+
+            <!-- Main Content Area -->
+            <div class="playground-main">
+              <!-- Chat Panel -->
+              <div class="playground-chat">
+                <div class="playground-chat-header">
+                  <span id="playground-chat-title">Select an agent to start</span>
+                  <div class="playground-chat-actions">
+                    <button id="playground-clear" class="btn ghost" type="button">Clear</button>
+                    <button id="playground-export" class="btn ghost" type="button">Export</button>
+                  </div>
+                </div>
+                <div id="playground-messages" class="playground-messages">
+                  <div class="playground-empty-state">
+                    <p>Select an agent from the cards above to start chatting.</p>
+                    <p>You can test agent responses, skill executions, and configuration changes.</p>
+                  </div>
+                </div>
+                <div class="playground-input-area">
+                  <div class="playground-input-wrapper">
+                    <span class="playground-agent-prefix" id="playground-agent-prefix">@agent</span>
+                    <textarea id="playground-input" class="playground-input" placeholder="Type your message..." rows="2" disabled></textarea>
+                  </div>
+                  <button id="playground-send" class="btn playground-send" type="button" disabled>Send</button>
+                </div>
+                <div class="playground-stats">
+                  <span id="playground-token-count">Tokens: 0</span>
+                  <span id="playground-cost">Cost: $0.00</span>
+                </div>
+              </div>
+
+              <!-- Side Panel -->
+              <div class="playground-side">
+                <nav class="playground-tabs" role="tablist">
+                  <button type="button" class="playground-tab active" data-tab="config" role="tab">Config</button>
+                  <button type="button" class="playground-tab" data-tab="state" role="tab">State</button>
+                  <button type="button" class="playground-tab" data-tab="skills" role="tab">Skills</button>
+                </nav>
+
+                <!-- Config Tab -->
+                <div class="playground-tab-content active" data-tab="config">
+                  <div class="playground-config">
+                    <h4 id="playground-config-title">Agent Configuration</h4>
+
+                    <label class="field">
+                      <span>Model</span>
+                      <select id="playground-model">
+                        <option value="claude-haiku-4-5-20251001">Claude 4.5 Haiku</option>
+                        <option value="claude-sonnet-4-5-20250929">Claude Sonnet 4.5</option>
+                        <option value="claude-opus-4-5-20251101">Claude Opus 4.5</option>
+                      </select>
+                    </label>
+
+                    <label class="field">
+                      <span>Temperature: <span id="playground-temp-value">0.3</span></span>
+                      <input type="range" id="playground-temperature" min="0" max="1" step="0.1" value="0.3" />
+                    </label>
+
+                    <label class="field">
+                      <span>Max Tokens</span>
+                      <input type="number" id="playground-max-tokens" value="4096" min="100" max="8192" />
+                    </label>
+
+                    <div class="field">
+                      <span>Skills</span>
+                      <div id="playground-skills-checkboxes" class="playground-skills-list">
+                        <!-- Skills checkboxes populated dynamically -->
+                      </div>
+                    </div>
+
+                    <label class="field">
+                      <span>System Prompt Override</span>
+                      <textarea id="playground-system-prompt" rows="4" placeholder="Optional custom system prompt..."></textarea>
+                    </label>
+
+                    <div class="playground-config-actions">
+                      <button id="playground-reset-config" class="btn ghost">Reset</button>
+                      <button id="playground-save-preset" class="btn">Save Preset</button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- State Tab -->
+                <div class="playground-tab-content" data-tab="state" hidden>
+                  <div class="playground-state">
+                    <h4>Session State</h4>
+                    <div class="playground-state-json">
+                      <pre id="playground-state-view">{}</pre>
+                    </div>
+                    <div class="playground-state-actions">
+                      <button id="playground-copy-state" class="btn ghost">Copy</button>
+                      <button id="playground-load-state" class="btn ghost">Load</button>
+                      <button id="playground-clear-state" class="btn ghost">Clear</button>
+                    </div>
+
+                    <h4>Message History</h4>
+                    <div id="playground-message-history" class="playground-message-history">
+                      <!-- Message history items -->
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Skills Tab -->
+                <div class="playground-tab-content" data-tab="skills" hidden>
+                  <div class="playground-skill-tester">
+                    <h4>Skill Tester</h4>
+
+                    <label class="field">
+                      <span>Select Skill</span>
+                      <select id="playground-skill-select">
+                        <option value="">-- Select a skill --</option>
+                      </select>
+                    </label>
+
+                    <div id="playground-skill-actions" class="playground-skill-actions">
+                      <!-- Actions populated when skill is selected -->
+                    </div>
+
+                    <div id="playground-skill-params" class="playground-skill-params">
+                      <!-- Parameters populated when action is selected -->
+                    </div>
+
+                    <button id="playground-execute-skill" class="btn" disabled>Execute</button>
+
+                    <div class="playground-skill-result">
+                      <h5>Result</h5>
+                      <pre id="playground-skill-result">{}</pre>
+                      <div class="playground-skill-timing" id="playground-skill-timing"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
         </main>
       </div>
     </div>
@@ -2719,6 +2879,7 @@
 
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="playground.js?v=1"></script>
     <script src="app.js?v=9"></script>
   </body>
   </html>

@@ -29,8 +29,11 @@ _registry_instance: SkillsRegistry | None = None
 _registry_lock = RLock()
 
 
-def get_skills_registry() -> SkillsRegistry:
+def get_skills_registry(auto_init: bool = True) -> SkillsRegistry:
     """Get the global SkillsRegistry singleton.
+
+    Args:
+        auto_init: If True, auto-discover and initialize skills on first access
 
     Returns:
         The global SkillsRegistry instance
@@ -39,6 +42,12 @@ def get_skills_registry() -> SkillsRegistry:
     with _registry_lock:
         if _registry_instance is None:
             _registry_instance = SkillsRegistry()
+            if auto_init:
+                # Auto-discover skills from the skills package
+                _registry_instance.auto_discover_skills("infrastructure_atlas.skills")
+                # Initialize all discovered skills (registers their actions)
+                _registry_instance.initialize_all()
+                logger.info("Skills registry auto-initialized")
         return _registry_instance
 
 

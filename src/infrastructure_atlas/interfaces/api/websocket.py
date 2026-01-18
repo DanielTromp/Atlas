@@ -333,13 +333,200 @@ def get_all_connection_counts() -> dict[str, int]:
     return {eid: len(conns) for eid, conns in _connections.items() if conns}
 
 
+# ============================================================================
+# Playground WebSocket Support
+# ============================================================================
+
+# Connection manager for playground sessions
+# Maps session_id -> set of WebSocket connections
+_playground_connections: dict[str, WeakSet[WebSocket]] = defaultdict(WeakSet)
+_playground_connections_lock = asyncio.Lock()
+
+
+async def broadcast_to_playground_session(session_id: str, message: dict[str, Any]) -> int:
+    """Broadcast a message to all clients watching a playground session.
+
+    Args:
+        session_id: The playground session ID
+        message: Message dict to send
+
+    Returns:
+        Number of clients that received the message
+    """
+    async with _playground_connections_lock:
+        connections = _playground_connections.get(session_id, set())
+        if not connections:
+            return 0
+
+        sent = 0
+        dead_connections = []
+
+        for ws in connections:
+            try:
+                await ws.send_json(message)
+                sent += 1
+            except Exception:
+                dead_connections.append(ws)
+
+        # Clean up dead connections
+        for ws in dead_connections:
+            connections.discard(ws)
+
+        return sent
+
+
+async def notify_playground_event(
+    session_id: str,
+    event_type: str,
+    data: dict[str, Any] | None = None,
+) -> None:
+    """Notify playground clients of an event.
+
+    Args:
+        session_id: The playground session ID
+        event_type: Type of event (message_start, message_delta, tool_start, etc.)
+        data: Event data
+    """
+    await broadcast_to_playground_session(
+        session_id,
+        {
+            "type": event_type,
+            "session_id": session_id,
+            "data": data or {},
+            "timestamp": datetime.now(UTC).isoformat(),
+        },
+    )
+
+
+@router.websocket("/ws/playground/{session_id}")
+async def websocket_playground(websocket: WebSocket, session_id: str):
+    """WebSocket endpoint for playground session real-time updates.
+
+    Clients connect to receive real-time updates about:
+    - Agent typing indicators
+    - Tool execution events
+    - Message chunks (streaming)
+    - State updates
+    - Errors
+
+    Message types sent (server -> client):
+    - {"type": "message_start", "data": {"agent_id": "..."}}
+    - {"type": "message_delta", "data": {"content": "..."}}
+    - {"type": "message_end", "data": {"tokens": ..., "cost_usd": ...}}
+    - {"type": "tool_start", "data": {"tool": "...", "args": {...}}}
+    - {"type": "tool_end", "data": {"tool": "...", "result": "...", "duration_ms": ...}}
+    - {"type": "state_update", "data": {"state": {...}}}
+    - {"type": "error", "data": {"error": "..."}}
+
+    Args:
+        websocket: FastAPI WebSocket connection
+        session_id: ID of the playground session to watch
+    """
+    await websocket.accept()
+
+    # Register connection
+    async with _playground_connections_lock:
+        _playground_connections[session_id].add(websocket)
+
+    logger.info(
+        f"Playground WebSocket connected for session: {session_id}",
+        extra={"session_id": session_id},
+    )
+
+    try:
+        # Send initial connection confirmation
+        await websocket.send_json({
+            "type": "connected",
+            "session_id": session_id,
+            "timestamp": datetime.now(UTC).isoformat(),
+        })
+
+        # Keep connection alive and handle incoming messages
+        while True:
+            try:
+                # Wait for client messages (ping/pong, commands)
+                data = await asyncio.wait_for(
+                    websocket.receive_text(),
+                    timeout=30.0,  # 30 second timeout for keepalive
+                )
+
+                # Parse and handle message
+                try:
+                    message = json.loads(data)
+                    await _handle_playground_client_message(websocket, session_id, message)
+                except json.JSONDecodeError:
+                    await websocket.send_json({
+                        "type": "error",
+                        "data": {"error": "Invalid JSON"},
+                    })
+
+            except TimeoutError:
+                # Send keepalive ping
+                try:
+                    await websocket.send_json({"type": "ping"})
+                except Exception:
+                    break
+
+    except WebSocketDisconnect:
+        logger.info(
+            f"Playground WebSocket disconnected for session: {session_id}",
+            extra={"session_id": session_id},
+        )
+    except Exception as e:
+        logger.error(
+            f"Playground WebSocket error for session {session_id}: {e!s}",
+            extra={"session_id": session_id},
+        )
+    finally:
+        # Unregister connection
+        async with _playground_connections_lock:
+            if session_id in _playground_connections:
+                _playground_connections[session_id].discard(websocket)
+                if not _playground_connections[session_id]:
+                    del _playground_connections[session_id]
+
+
+async def _handle_playground_client_message(
+    websocket: WebSocket,
+    session_id: str,
+    message: dict[str, Any],
+) -> None:
+    """Handle incoming message from playground WebSocket client."""
+    msg_type = message.get("type")
+
+    if msg_type == "pong":
+        # Keepalive response, ignore
+        pass
+
+    elif msg_type == "subscribe":
+        # Already subscribed by connecting
+        await websocket.send_json({
+            "type": "subscribed",
+            "session_id": session_id,
+        })
+
+    else:
+        await websocket.send_json({
+            "type": "error",
+            "data": {"error": f"Unknown message type: {msg_type}"},
+        })
+
+
+def get_playground_connection_count(session_id: str) -> int:
+    """Get the number of active WebSocket connections for a playground session."""
+    return len(_playground_connections.get(session_id, set()))
+
+
 __all__ = [
     "broadcast_to_execution",
+    "broadcast_to_playground_session",
     "get_all_connection_counts",
     "get_connection_count",
+    "get_playground_connection_count",
     "notify_complete",
     "notify_error",
     "notify_intervention_required",
+    "notify_playground_event",
     "notify_status_change",
     "notify_step_complete",
     "router",

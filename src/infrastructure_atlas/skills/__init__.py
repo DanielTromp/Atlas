@@ -17,6 +17,7 @@ __all__ = [
     "BaseSkill",
     "SkillAction",
     "SkillsRegistry",
+    "get_skills_registry",
 ]
 
 
@@ -24,6 +25,9 @@ def __getattr__(name: str):
     if name == "SkillsRegistry":
         from .registry import SkillsRegistry
         return SkillsRegistry
+    elif name == "get_skills_registry":
+        from .registry import get_skills_registry
+        return get_skills_registry
     elif name == "BaseSkill":
         from .base import BaseSkill
         return BaseSkill

@@ -184,6 +184,7 @@
   const $pageSuggestionDetail = document.getElementById("page-suggestion-detail");
   const $pageAdmin = document.getElementById("page-admin");
   const $pageDrafts = document.getElementById("page-drafts");
+  const $pagePlayground = document.getElementById("page-playground");
   // Tasks elements
   const $tasksList = document.getElementById("tasks-list");
   const $tasksStatus = document.getElementById("tasks-status");
@@ -4455,6 +4456,7 @@
       zhost: $pageZhost,
       tasks: $pageTasks,
       drafts: $pageDrafts,
+      playground: $pagePlayground,
       suggestions: $pageSuggestions,
       'suggestion-detail': $pageSuggestionDetail,
       account: $pageAccount,
@@ -4535,6 +4537,12 @@
       loadTasks();
     } else if (p === 'drafts') {
       loadDraftTickets();
+    } else if (p === 'playground') {
+      // Initialize playground if not already done
+      if (typeof window.playgroundInit === 'function' && !window._playgroundInitialized) {
+        window.playgroundInit();
+        window._playgroundInitialized = true;
+      }
     } else if (p === 'chat') {
       fetchChatSessions();
       loadChatDefaults();
@@ -15021,5 +15029,9 @@
   window.switchChatSidebarTab = switchChatSidebarTab;
   window.setupChatSidebarTabs = setupChatSidebarTabs;
   window.ensurePersistentSearchOptions = ensurePersistentSearchOptions;
+
+  // Expose markdown parser for other modules (e.g., playground)
+  window.parseMarkdown = parseMarkdown;
+  window.escapeHtml = escapeHtml;
 })();
 
