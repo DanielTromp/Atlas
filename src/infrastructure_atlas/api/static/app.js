@@ -12243,6 +12243,13 @@
     }
     setChatProcessing(false);
   }
+  // Tool call visibility state (default: show)
+  let showToolCalls = true;
+  try {
+    const saved = localStorage.getItem('chat_show_tools');
+    showToolCalls = saved !== '0'; // Default to showing
+  } catch {}
+
   function saveChatPrefs() {
     try {
       if ($chatProvider) localStorage.setItem('chat_provider', $chatProvider.value || '');
@@ -12252,6 +12259,8 @@
       if (streamEl) localStorage.setItem('chat_stream', streamEl.checked ? '1' : '0');
       const ctxEl = document.getElementById('chat-include-data');
       if (ctxEl) localStorage.setItem('chat_include_data', ctxEl.checked ? '1' : '0');
+      const toolsEl = document.getElementById('chat-show-tools');
+      if (toolsEl) localStorage.setItem('chat_show_tools', toolsEl.checked ? '1' : '0');
     } catch {}
   }
   function loadChatPrefs() {
@@ -12266,6 +12275,12 @@
       const ctxEl = document.getElementById('chat-include-data');
       const savedCtx = localStorage.getItem('chat_include_data');
       if (ctxEl && savedCtx != null) ctxEl.checked = savedCtx === '1';
+      const toolsEl = document.getElementById('chat-show-tools');
+      const savedTools = localStorage.getItem('chat_show_tools');
+      if (toolsEl) {
+        toolsEl.checked = savedTools !== '0'; // Default to showing
+        showToolCalls = toolsEl.checked;
+      }
       const savedDataset = localStorage.getItem('chat_dataset');
       if ($chatDataset) {
         const normalized = savedDataset === 'all' ? 'merged' : savedDataset;
@@ -12307,14 +12322,22 @@
     $chatDataset?.addEventListener('change', () => saveChatPrefs());
     document.getElementById('chat-stream')?.addEventListener('change', () => saveChatPrefs());
     document.getElementById('chat-include-data')?.addEventListener('change', () => saveChatPrefs());
+    document.getElementById('chat-show-tools')?.addEventListener('change', (e) => {
+      showToolCalls = e.target.checked;
+      saveChatPrefs();
+      // Toggle visibility of debug containers (contains tool status elements)
+      document.querySelectorAll('.chat-debug-container').forEach(el => {
+        el.style.display = showToolCalls ? 'block' : 'none';
+      });
+    });
   }
 
-  async function loadModelsForProvider(providerName) {
+  async function loadModelsForProvider(providerName, preferredModel = null) {
     if (!$chatModel || !providerName) return;
 
-    // Save current model selection
+    // Use preferred model if provided, otherwise fall back to current/localStorage
     const savedModel = localStorage.getItem('chat_model') || '';
-    const currentModel = $chatModel.value || savedModel;
+    const currentModel = preferredModel || $chatModel.value || savedModel;
 
     try {
       const res = await fetch(`${API_BASE}/ai/providers/${encodeURIComponent(providerName)}/models`);
@@ -12340,7 +12363,7 @@
         });
       }
 
-      // Restore saved model if it exists in the new list
+      // Restore model if it exists in the new list
       if (currentModel) {
         const options = Array.from($chatModel.options);
         const matchingOption = options.find(opt => opt.value === currentModel);
@@ -12418,44 +12441,64 @@
 
   function appendChat(role, text, meta = null) {
     if (!$chatMessages) return;
-    
+
     // Hide empty state if present
     const emptyState = $chatMessages.querySelector('.chat-empty-state');
     if (emptyState) {
       emptyState.style.display = 'none';
     }
-    
+
     const messageDiv = document.createElement('div');
     messageDiv.className = `chat-message ${role}`;
-    
+
     const bubble = document.createElement('div');
     bubble.className = 'chat-message-bubble';
-    
+
     // Use markdown parsing for assistant messages, plain text for user messages
     if (role === 'assistant') {
       bubble.innerHTML = parseMarkdown(text);
     } else {
       bubble.textContent = text;
     }
-    
+
     const time = document.createElement('div');
     time.className = 'chat-message-time';
     time.textContent = new Date().toLocaleTimeString();
-    
+
     messageDiv.appendChild(bubble);
     messageDiv.appendChild(time);
 
     if (role === 'assistant') {
+      // Render tool calls if present (from loaded history)
+      const toolCalls = meta?.tool_calls;
+      if (toolCalls && Array.isArray(toolCalls) && toolCalls.length > 0) {
+        const debugContainer = document.createElement('div');
+        debugContainer.className = 'chat-debug-container';
+        debugContainer.style.display = showToolCalls ? 'block' : 'none';
+
+        for (const tc of toolCalls) {
+          const toolStatus = document.createElement('div');
+          const statusClass = tc.success === false ? 'tool-error' : 'tool-complete';
+          const statusIcon = tc.success === false ? '✗' : '✓';
+          toolStatus.className = `chat-tool-status ${statusClass}`;
+          toolStatus.textContent = `🔧 ${tc.tool_name} ${statusIcon}`;
+          toolStatus.dataset.toolId = tc.tool_call_id || tc.tool_name;
+          debugContainer.appendChild(toolStatus);
+        }
+
+        messageDiv.appendChild(debugContainer);
+      }
+
       const usageText = meta && meta.prompt_tokens !== undefined ? formatTokenSummary(meta) : formatTokenSummary(meta?.usage ?? meta);
       const metricsText = formatTokenMetrics(meta?.usage ?? meta);
-      
+
       if (usageText) {
         const metaDiv = document.createElement('div');
         metaDiv.className = 'chat-message-meta';
         metaDiv.textContent = usageText;
         messageDiv.appendChild(metaDiv);
       }
-      
+
       if (metricsText) {
         const metricsDiv = document.createElement('div');
         metricsDiv.className = 'chat-message-metrics';
@@ -12463,7 +12506,7 @@
         messageDiv.appendChild(metricsDiv);
       }
     }
-    
+
     $chatMessages.appendChild(messageDiv);
     $chatMessages.scrollTop = $chatMessages.scrollHeight;
   }
@@ -12480,10 +12523,14 @@
       clearChatLog();
       for (const m of msgs) {
         if (m && typeof m.content === 'string' && typeof m.role === 'string') {
-          // Combine usage and cost from metadata
+          // Combine usage, cost, and tool_calls from metadata
           const meta = m.usage || {};
           if (m.cost) {
             meta.cost_usd = m.cost.cost_usd || m.cost.costUsd || 0;
+          }
+          // Include tool_calls for rendering in debug mode
+          if (m.tool_calls && Array.isArray(m.tool_calls)) {
+            meta.tool_calls = m.tool_calls;
           }
           appendChat(m.role, m.content, Object.keys(meta).length > 0 ? meta : null);
         }
@@ -12663,8 +12710,10 @@
           // Set provider and model from session if they exist
           if (session.provider && $chatProvider) {
             $chatProvider.value = session.provider;
-            await loadModelsForProvider(session.provider);
+            // Pass session model to ensure it takes precedence over localStorage
+            await loadModelsForProvider(session.provider, session.model || null);
           }
+          // Also explicitly set model in case loadModelsForProvider didn't find it
           if (session.model && $chatModel) {
             $chatModel.value = session.model;
           }
@@ -12809,7 +12858,8 @@
     try {
       const toolsEnabled = !!document.getElementById('chat-include-data')?.checked;
       const wantStream = !!document.getElementById('chat-stream')?.checked;
-      
+      const agentRole = document.getElementById('chat-role')?.value || 'general';
+
       // Build request payload for new AI chat API
       const requestPayload = {
         message: messagePayload,
@@ -12819,6 +12869,7 @@
         system_prompt: sys || undefined,
         temperature: tempPref,
         tools_enabled: toolsEnabled,
+        role: agentRole,
       };
       
       // Streaming request to /ai/chat/stream (SSE format)
@@ -12853,14 +12904,20 @@
       // Stream handling (SSE format: "data: {...}\n\n")
       const messageDiv = document.createElement('div');
       messageDiv.className = 'chat-message assistant';
-      
+
+      // Debug container for tool calls (stays above content)
+      const debugContainer = document.createElement('div');
+      debugContainer.className = 'chat-debug-container';
+      debugContainer.style.display = showToolCalls ? 'block' : 'none';
+
       const bubble = document.createElement('div');
       bubble.className = 'chat-message-bubble';
-      
+
       const time = document.createElement('div');
       time.className = 'chat-message-time';
       time.textContent = new Date().toLocaleTimeString();
-      
+
+      messageDiv.appendChild(debugContainer);
       messageDiv.appendChild(bubble);
       messageDiv.appendChild(time);
       placeholder.replaceWith(messageDiv);
@@ -12903,12 +12960,29 @@
               bubble.innerHTML = parseMarkdown(fullText);
             } else if (data.type === 'usage' && data.usage) {
               usageMeta = data.usage;
-            } else if (data.type === 'tool_result') {
-              // Show tool execution status
+            } else if (data.type === 'tool_start') {
+              // Show tool execution starting in debug container
               const toolStatus = document.createElement('div');
-              toolStatus.className = 'chat-tool-status';
-              toolStatus.textContent = `🔧 ${data.tool_name}: ${data.success ? 'completed' : 'failed'}`;
-              bubble.appendChild(toolStatus);
+              toolStatus.className = 'chat-tool-status tool-running';
+              toolStatus.innerHTML = `<span class="tool-spinner">⏳</span> <strong>${data.tool_name}</strong> running...`;
+              toolStatus.dataset.toolId = data.tool_call_id || data.tool_name;
+              debugContainer.appendChild(toolStatus);
+              debugContainer.style.display = showToolCalls ? 'block' : 'none';
+            } else if (data.type === 'tool_result') {
+              // Update or show tool execution status in debug container
+              const existingStatus = debugContainer.querySelector(`.chat-tool-status[data-tool-id="${data.tool_call_id || data.tool_name}"]`);
+              if (existingStatus) {
+                existingStatus.classList.remove('tool-running');
+                existingStatus.classList.add(data.success ? 'tool-success' : 'tool-failed');
+                existingStatus.innerHTML = `${data.success ? '✅' : '❌'} <strong>${data.tool_name}</strong>: ${data.success ? 'completed' : 'failed'}`;
+              } else {
+                const toolStatus = document.createElement('div');
+                toolStatus.className = `chat-tool-status ${data.success ? 'tool-success' : 'tool-failed'}`;
+                toolStatus.innerHTML = `${data.success ? '✅' : '❌'} <strong>${data.tool_name}</strong>: ${data.success ? 'completed' : 'failed'}`;
+                toolStatus.dataset.toolId = data.tool_call_id || data.tool_name;
+                debugContainer.appendChild(toolStatus);
+              }
+              debugContainer.style.display = showToolCalls ? 'block' : 'none';
             } else if (data.type === 'error') {
               fullText += `\n\n**Error:** ${data.error}`;
               bubble.innerHTML = parseMarkdown(fullText);

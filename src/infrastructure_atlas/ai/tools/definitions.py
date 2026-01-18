@@ -580,6 +580,73 @@ Returns relevant document excerpts with citations and source links.""",
         },
         category="backup",
     ),
+    # Unified host lookup tools (NEW - efficient single-call lookups)
+    ToolDefinition(
+        name="atlas_host_info",
+        description="""Get comprehensive host information in a SINGLE call. USE THIS FIRST for any "tell me about X" or "what is X" questions.
+
+Combines data from:
+- NetBox: identity, location, IPs, description, asset_tag, tenant, platform
+- Zabbix: monitoring status (in_zabbix, active_alerts count)
+- Commvault: backup status (in_commvault, last_backup, status)
+
+Returns a unified view with gaps automatically flagged. Much more efficient than calling netbox_search + zabbix_alerts + commvault_backup_status separately.
+
+Automatically tries hostname aliases (vw↔vm, short↔FQDN) if primary lookup fails.""",
+        parameters={
+            "type": "object",
+            "properties": {
+                "hostname": {
+                    "type": "string",
+                    "description": "Hostname to lookup (e.g., 'vw785', 'vm61', 'server01.domain.com')",
+                },
+                "include_network_details": {
+                    "type": "boolean",
+                    "description": "Include full network interface details (default: true)",
+                    "default": True,
+                },
+            },
+            "required": ["hostname"],
+        },
+        category="inventory",
+    ),
+    ToolDefinition(
+        name="atlas_host_context",
+        description="""Get historical context and documentation for a host. Use AFTER atlas_host_info when you need more background.
+
+Combines data from:
+- Jira: recent tickets mentioning this host (last 6 months)
+- Confluence: related documentation pages
+- NetBox: full network configuration, comments, changelog
+
+Use this for:
+- "What happened with X recently?"
+- "Any tickets about X?"
+- "What documentation exists for X?"
+
+Note: This is context/history only - for current state, use atlas_host_info first.""",
+        parameters={
+            "type": "object",
+            "properties": {
+                "hostname": {
+                    "type": "string",
+                    "description": "Hostname to get context for",
+                },
+                "ticket_months": {
+                    "type": "integer",
+                    "description": "How many months of ticket history to include (default: 6)",
+                    "default": 6,
+                },
+                "include_docs": {
+                    "type": "boolean",
+                    "description": "Search for related documentation (default: true)",
+                    "default": True,
+                },
+            },
+            "required": ["hostname"],
+        },
+        category="inventory",
+    ),
     # Confluence RAG advanced tools
     ToolDefinition(
         name="get_confluence_page",
@@ -640,6 +707,61 @@ Returns full page content (not just snippets) from the most relevant documentati
         category="documentation",
     ),
 ]
+
+
+# Agent Role definitions - controls which tools are available per role
+AGENT_ROLES: dict[str, dict[str, Any]] = {
+    "triage": {
+        "name": "Triage Agent",
+        "description": "Fast host lookups with minimal tools. Best for quick questions about servers.",
+        "tools": ["atlas_host_info", "atlas_host_context"],
+        "system_prompt_addon": """You are a Triage Agent. Be FAST and CONCISE.
+- Use ONLY atlas_host_info for host questions (1 call max)
+- Use atlas_host_context only if explicitly asked about tickets/history
+- Give brief summaries, not exhaustive reports
+- Flag critical gaps (no backup, no monitoring) immediately
+- Always include Identity fields: Platform, Role, Tenant, Description, Asset Tag (if present), Serial""",
+    },
+    "engineer": {
+        "name": "Engineer Agent",
+        "description": "Full access to all infrastructure tools for deep analysis.",
+        "tools": None,  # All tools
+        "system_prompt_addon": """You are a Senior Systems Engineer with full tool access.
+- Start with atlas_host_info for host questions
+- Use additional tools only when needed for deeper investigation
+- Document your findings thoroughly""",
+    },
+    "general": {
+        "name": "General Assistant",
+        "description": "Balanced access to common tools.",
+        "tools": [
+            "atlas_host_info", "atlas_host_context",
+            "netbox_search", "jira_search", "search_confluence_docs",
+            "zabbix_alerts", "commvault_backup_status",
+        ],
+        "system_prompt_addon": """You are Atlas, an Infrastructure AI Assistant.
+- Prefer unified tools (atlas_host_info) over multiple individual calls
+- Be helpful and thorough but efficient with tool usage""",
+    },
+}
+
+
+def get_tools_for_role(role: str) -> list[ToolDefinition]:
+    """Get tools available for a specific agent role."""
+    role_config = AGENT_ROLES.get(role, AGENT_ROLES["general"])
+    allowed_tools = role_config.get("tools")
+
+    if allowed_tools is None:
+        # None means all tools
+        return ATLAS_TOOLS
+
+    return [tool for tool in ATLAS_TOOLS if tool.name in allowed_tools]
+
+
+def get_role_system_prompt(role: str) -> str:
+    """Get the system prompt addon for a specific role."""
+    role_config = AGENT_ROLES.get(role, AGENT_ROLES["general"])
+    return role_config.get("system_prompt_addon", "")
 
 
 def get_tool_definitions(categories: list[str] | None = None) -> list[ToolDefinition]:

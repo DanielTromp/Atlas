@@ -14,15 +14,252 @@ The Atlas AI Chat system provides a modular, multi-provider AI assistant that ca
 
 ## Table of Contents
 
-1. [Provider Setup](#provider-setup)
-2. [Configuration](#configuration)
-3. [Token Limits](#token-limits)
-4. [API Usage](#api-usage)
-5. [Slash Commands](#slash-commands)
-6. [Tool Calling](#tool-calling)
-7. [Usage Tracking](#usage-tracking)
-8. [Admin Operations](#admin-operations)
-9. [Extending the System](#extending-the-system)
+1. [Agent Roles & Architecture](#agent-roles--architecture)
+2. [Provider Setup](#provider-setup)
+3. [Configuration](#configuration)
+4. [Token Limits](#token-limits)
+5. [API Usage](#api-usage)
+6. [Slash Commands](#slash-commands)
+7. [Tool Calling](#tool-calling)
+8. [Usage Tracking](#usage-tracking)
+9. [Admin Operations](#admin-operations)
+10. [Extending the System](#extending-the-system)
+
+---
+
+## Agent Roles & Architecture
+
+The AI Chat system uses a **role-based agent architecture** to optimize performance and cost. Each role has access to a specific subset of tools, custom system prompts, and behavior guidelines.
+
+### Why Roles?
+
+Using unified tools like `atlas_host_info` instead of multiple separate calls dramatically reduces:
+- **Token usage**: 3x reduction (from ~12,000 to ~4,000 tokens per query)
+- **Cost**: From ~$0.04 to ~$0.006 (Haiku) or ~$0.017 (Sonnet) per query
+- **Latency**: Single API call vs. 3+ sequential calls
+
+### Available Roles
+
+| Role | Description | Tools | Best For |
+|------|-------------|-------|----------|
+| **Triage** | Fast, minimal tools | 2 tools | Quick host lookups, brief answers |
+| **General** | Balanced access | 7 tools | Day-to-day infrastructure questions |
+| **Engineer** | Full access | All tools | Deep investigation, troubleshooting |
+
+### Role Definitions
+
+#### Triage Agent
+
+```python
+"triage": {
+    "name": "Triage Agent",
+    "tools": ["atlas_host_info", "atlas_host_context"],
+    "system_prompt_addon": """You are a Triage Agent. Be FAST and CONCISE.
+- Use ONLY atlas_host_info for host questions (1 call max)
+- Use atlas_host_context only if explicitly asked about tickets/history
+- Give brief summaries, not exhaustive reports
+- Flag critical gaps (no backup, no monitoring) immediately"""
+}
+```
+
+**When to use**: Quick questions like "Tell me about vw785" or "What is server01?"
+
+#### General Agent
+
+```python
+"general": {
+    "name": "General Assistant",
+    "tools": [
+        "atlas_host_info", "atlas_host_context",
+        "netbox_search", "jira_search", "search_confluence_docs",
+        "zabbix_alerts", "commvault_backup_status",
+    ],
+    "system_prompt_addon": """You are Atlas, an Infrastructure AI Assistant.
+- Prefer unified tools (atlas_host_info) over multiple individual calls
+- Be helpful and thorough but efficient with tool usage"""
+}
+```
+
+**When to use**: General infrastructure questions, searching for documentation, checking alerts.
+
+#### Engineer Agent
+
+```python
+"engineer": {
+    "name": "Engineer Agent",
+    "tools": None,  # All tools available
+    "system_prompt_addon": """You are a Senior Systems Engineer with full tool access.
+- Start with atlas_host_info for host questions
+- Use additional tools only when needed for deeper investigation
+- Document your findings thoroughly"""
+}
+```
+
+**When to use**: Deep troubleshooting, complex investigations, full access needed.
+
+### Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        USER REQUEST                             │
+│                  "Tell me about vw785"                          │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     AI CHAT API ROUTE                           │
+│   /ai/chat/stream or /ai/chat                                   │
+│   - Extracts role from request (triage/general/engineer)        │
+│   - Extracts session cookie for authentication                  │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      CHAT AGENT                                 │
+│   - Uses role-specific system prompt                            │
+│   - Gets role-filtered tool list                                │
+│   - Passes session cookie to Tool Registry                      │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     TOOL REGISTRY                               │
+│   - Maps tool names to Atlas API endpoints                      │
+│   - Passes session cookie for authentication                    │
+│   - Executes tool calls via HTTP                                │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    ATLAS API ENDPOINTS                          │
+│                                                                 │
+│   atlas_host_info ──────► /atlas/host-info                      │
+│      │                         │                                │
+│      └── Calls internally:     │                                │
+│          /netbox/search        │                                │
+│          /zabbix/host/search   │                                │
+│          /commvault/backup-status                               │
+│                                                                 │
+│   atlas_host_context ───► /atlas/host-context                   │
+│      │                         │                                │
+│      └── Calls internally:     │                                │
+│          /jira/search          │                                │
+│          /confluence-rag/search                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Unified Tools
+
+The key to efficiency is using **unified tools** that combine multiple data sources:
+
+#### atlas_host_info (Primary)
+
+**One call returns:**
+- **NetBox**: name, status, device_type, description, asset_tag, serial, tenant, platform, role, site, rack, primary_ip
+- **Zabbix**: in_zabbix, zabbix_host_id, active_alerts count, monitoring status
+- **Commvault**: in_commvault, client_name, last_backup, last_backup_status
+
+**Instead of calling:**
+- `netbox_search` + `zabbix_host_search` + `zabbix_alerts` + `commvault_backup_status` = 4 calls
+
+**Features:**
+- Automatically tries hostname aliases (vw785 ↔ vm785, server ↔ server.domain.com)
+- Returns gaps: "No Zabbix monitoring configured", "No Commvault backup client found"
+- Searches devices first, then VMs (never IP addresses)
+
+#### atlas_host_context (Secondary)
+
+**One call returns:**
+- **Jira**: Recent tickets mentioning the host (configurable months)
+- **Confluence**: Related documentation pages
+- **Related hosts**: Other hosts mentioned in the same tickets
+
+**Use after atlas_host_info when asked:**
+- "What tickets are there about this server?"
+- "What happened with X recently?"
+- "Is there documentation for X?"
+
+### How Roles Work Internally
+
+1. **Request arrives** at `/ai/chat/stream` with `role` parameter
+2. **Session cookie** (`atlas_ui`) extracted for authentication
+3. **ChatAgent created** with:
+   - Role-specific system prompt (via `get_role_system_prompt()`)
+   - Role-filtered tools (via `get_tools_for_role()`)
+   - Session cookie for API authentication
+4. **Tool calls executed** via ToolRegistry → Atlas API endpoints
+5. **Response streamed** back to the user
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/infrastructure_atlas/ai/tools/definitions.py` | Tool definitions, AGENT_ROLES config, role filtering functions |
+| `src/infrastructure_atlas/ai/tools/registry.py` | Tool execution, API endpoint mapping, session cookie handling |
+| `src/infrastructure_atlas/ai/chat_agent.py` | Agent creation, system prompts, role handling |
+| `src/infrastructure_atlas/interfaces/api/routes/ai_chat.py` | API routes, session extraction, request handling |
+| `src/infrastructure_atlas/interfaces/api/routes/atlas_host.py` | Unified host endpoints (`/atlas/host-info`, `/atlas/host-context`) |
+
+### Authentication Flow
+
+The session cookie must flow through the entire chain for authenticated API calls:
+
+```
+Browser (atlas_ui cookie)
+    │
+    ▼
+AI Chat Route (extracts cookie from request.cookies.get("atlas_ui"))
+    │
+    ▼
+ChatAgent (stores cookie, passes to ToolRegistry)
+    │
+    ▼
+ToolRegistry (sends cookie as {"atlas_ui": value} in HTTP requests)
+    │
+    ▼
+Atlas API Endpoints (SessionMiddleware validates, AuthMiddleware authorizes)
+    │
+    ▼
+Internal API Calls (e.g., /netbox/search receives forwarded cookie)
+```
+
+**Important**: The cookie is named `atlas_ui` (defined as `SESSION_COOKIE_NAME` in app.py).
+
+**Key Files for Authentication**:
+| File | Responsibility |
+|------|----------------|
+| `api/app.py` | Defines `SESSION_COOKIE_NAME = "atlas_ui"` |
+| `routes/ai_chat.py` | Extracts cookie: `request.cookies.get("atlas_ui")` |
+| `ai/chat_agent.py` | Passes `session_cookie` to ToolRegistry |
+| `ai/tools/registry.py` | Sends cookie in `_get_cookies()`: `{"atlas_ui": self.session_cookie}` |
+| `routes/atlas_host.py` | Forwards cookies to internal API calls |
+
+**Common Authentication Issues**:
+- **401 Unauthorized on tool calls**: Ensure the cookie name is `atlas_ui` throughout the chain
+- **Session not persisting**: Check that `SessionMiddleware` is configured with `session_cookie="atlas_ui"`
+
+### Cost Comparison
+
+| Scenario | Role | Tools Called | Tokens | Cost |
+|----------|------|--------------|--------|------|
+| "Tell me about vw785" | Triage | 1 (atlas_host_info) | ~4,000 | $0.006 |
+| "Tell me about vw785" | General (old) | 3+ (netbox + zabbix + commvault) | ~12,000 | $0.044 |
+| "What tickets for server01?" | Triage | 1-2 | ~4,500 | $0.008 |
+
+### Adding a New Role
+
+1. Add to `AGENT_ROLES` in `definitions.py`:
+
+```python
+AGENT_ROLES["custom_role"] = {
+    "name": "Custom Role Name",
+    "description": "Description for UI",
+    "tools": ["tool1", "tool2"],  # or None for all tools
+    "system_prompt_addon": """Custom behavior instructions...""",
+}
+```
+
+2. The role will automatically be available via the `role` parameter in API requests.
 
 ---
 
@@ -211,6 +448,37 @@ CHAT_DEFAULT_MODEL=gpt-4o-mini
 CHAT_DEFAULT_TEMPERATURE=0.7
 ```
 
+### Model Persistence
+
+Provider default models and per-session models are persisted across server restarts:
+
+#### Provider Default Models
+
+When you change a provider's default model in **Admin → AI Providers**, the setting is:
+1. Saved to the encrypted database store (via `sync_secure_settings`)
+2. Loaded on server startup before `.env` file (database values take precedence)
+
+**Environment Variables** (can be overridden via Admin UI):
+```bash
+# These are loaded from .env as fallbacks if no database value exists
+OPENAI_DEFAULT_MODEL=gpt-5-mini
+ANTHROPIC_DEFAULT_MODEL=claude-sonnet-4-5-20250929
+OPENROUTER_DEFAULT_MODEL=openrouter/auto
+GEMINI_DEFAULT_MODEL=gemini-3-flash
+AZURE_OPENAI_DEFAULT_MODEL=gpt-4o-mini
+```
+
+**Note**: To allow the Admin UI to override `.env` defaults, either:
+- Comment out the `*_DEFAULT_MODEL` lines in `.env`, OR
+- Save the desired model in Admin → AI Providers (database values take precedence)
+
+#### Per-Session Models
+
+Each chat session stores its own model selection:
+- Changed via the model dropdown in the chat interface
+- Saved to the `chat_sessions` table in the database
+- Restored when switching sessions or reloading the page
+
 ### Database Migration
 
 Run the database migration to enable AI chat features:
@@ -378,7 +646,21 @@ Type these commands in the chat for quick actions:
 
 ## Tool Calling
 
-The AI can automatically call tools to gather information from your infrastructure:
+The AI can automatically call tools to gather information from your infrastructure.
+
+### Tool Call Persistence
+
+Tool calls are now **persisted with chat messages** and displayed in the chat history:
+
+- **During streaming**: Tool calls show with a spinner, then ✓ (success) or ✗ (failure)
+- **After page reload**: Tool calls are restored from the database and displayed with their status
+- **Debug toggle**: The "Show Tool Calls" toggle in the chat settings controls visibility
+
+Tool call data is stored in the message metadata (`tool_calls` array) and includes:
+- `tool_name`: Name of the tool called
+- `tool_call_id`: Unique identifier for the call
+- `success`: Boolean indicating success/failure
+- `status`: "success" or "error"
 
 ### Available Tool Categories
 

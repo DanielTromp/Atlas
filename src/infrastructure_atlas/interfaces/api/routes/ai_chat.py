@@ -62,6 +62,7 @@ class ChatCompletionRequest(BaseModel):
     tools_enabled: bool = True
     streaming: bool = True
     system_prompt: str | None = None
+    role: str = "general"  # Agent role: triage, engineer, general
 
 
 class AgentConfigRequest(BaseModel):
@@ -489,6 +490,7 @@ async def get_session(request: Request, session_id: str):
                     "created_at": msg.created_at.isoformat(),
                     "usage": msg.metadata_json.get("usage") if msg.metadata_json else None,
                     "cost": msg.metadata_json.get("cost") if msg.metadata_json else None,
+                    "tool_calls": msg.metadata_json.get("tool_calls") if msg.metadata_json else None,
                 }
                 for msg in session.messages
             ],
@@ -522,13 +524,14 @@ async def update_session(request: Request, session_id: str, req: UpdateSessionRe
         if user and session.user_id and session.user_id != user.id:
             raise HTTPException(status_code=403, detail="Access denied")
 
-        # Update fields if provided
+        # Update fields if provided (use model_fields_set to detect explicit null)
         if req.title is not None:
             session.title = req.title
         if req.provider is not None:
             session.provider_type = req.provider
-        if req.model is not None:
-            session.model = req.model
+        # Allow model to be explicitly set to None/empty (for "Default" selection)
+        if "model" in req.model_fields_set:
+            session.model = req.model or None  # Normalize empty string to None
 
         db.commit()
 
@@ -608,6 +611,10 @@ async def chat_completion(
         provider_type = req.provider or session.provider_type or ai_defaults["default_provider"]
         model = req.model or session.model
 
+        # Get session cookie for authenticated tool calls
+        # Note: Session cookie is named 'atlas_ui' (see SESSION_COOKIE_NAME in app.py)
+        session_cookie = request.cookies.get("atlas_ui")
+
         # Create chat agent with defaults
         agent = create_chat_agent(
             name="Atlas AI",
@@ -621,6 +628,8 @@ async def chat_completion(
             else ai_defaults.get("tools_enabled", True),
             streaming_enabled=False,
             api_token=os.getenv("ATLAS_API_TOKEN"),
+            session_cookie=session_cookie,
+            role=req.role,
         )
 
         # Get the actual model used (agent resolves default if not specified)
@@ -764,6 +773,10 @@ async def chat_stream(
     finally:
         db.close()
 
+    # Get session cookie for authenticated tool calls
+    # Note: Session cookie is named 'atlas_ui' (see SESSION_COOKIE_NAME in app.py)
+    session_cookie = request.cookies.get("atlas_ui")
+
     # Create chat agent with defaults
     agent = create_chat_agent(
         name="Atlas AI",
@@ -775,6 +788,8 @@ async def chat_stream(
         tools_enabled=req.tools_enabled if req.tools_enabled is not None else ai_defaults.get("tools_enabled", True),
         streaming_enabled=ai_defaults.get("streaming_enabled", True),
         api_token=os.getenv("ATLAS_API_TOKEN"),
+        session_cookie=session_cookie,
+        role=req.role,
     )
     agent.set_history(history)
 
@@ -785,6 +800,7 @@ async def chat_stream(
         accumulated_content = ""
         final_usage = None
         finish_reason = "stop"
+        tool_calls = []  # Track tool calls for persistence
 
         try:
             async for chunk in agent.stream_chat(req.message):
@@ -801,9 +817,32 @@ async def chat_stream(
                             finish_reason = chunk.finish_reason
                         yield f"data: {json.dumps({'type': 'done', 'finish_reason': chunk.finish_reason})}\n\n"
 
-                # Handle ToolResult
-                elif hasattr(chunk, "tool_name"):
-                    yield f"data: {json.dumps({'type': 'tool_result', 'tool_name': chunk.tool_name, 'success': chunk.success})}\n\n"
+                # Handle ToolStart (tool execution beginning)
+                elif hasattr(chunk, "tool_name") and hasattr(chunk, "arguments") and not hasattr(chunk, "success"):
+                    tool_calls.append({
+                        "tool_call_id": chunk.tool_call_id,
+                        "tool_name": chunk.tool_name,
+                        "status": "running",
+                    })
+                    yield f"data: {json.dumps({'type': 'tool_start', 'tool_name': chunk.tool_name, 'tool_call_id': chunk.tool_call_id})}\n\n"
+
+                # Handle ToolResult (tool execution complete)
+                elif hasattr(chunk, "tool_name") and hasattr(chunk, "success"):
+                    # Update the tool call status
+                    for tc in tool_calls:
+                        if tc["tool_call_id"] == chunk.tool_call_id or tc["tool_name"] == chunk.tool_name:
+                            tc["status"] = "success" if chunk.success else "error"
+                            tc["success"] = chunk.success
+                            break
+                    else:
+                        # Tool wasn't tracked yet (shouldn't happen, but handle gracefully)
+                        tool_calls.append({
+                            "tool_call_id": chunk.tool_call_id,
+                            "tool_name": chunk.tool_name,
+                            "status": "success" if chunk.success else "error",
+                            "success": chunk.success,
+                        })
+                    yield f"data: {json.dumps({'type': 'tool_result', 'tool_name': chunk.tool_name, 'tool_call_id': chunk.tool_call_id, 'success': chunk.success})}\n\n"
 
             # Calculate cost
             cost_info = None
@@ -820,7 +859,7 @@ async def chat_stream(
                 stmt = select(ChatSession).where(ChatSession.session_id == session_id)
                 session = db.execute(stmt).scalar_one_or_none()
                 if session:
-                    usage_metadata = None
+                    usage_metadata = {}
                     if final_usage:
                         usage_metadata = {
                             "usage": {
@@ -832,12 +871,15 @@ async def chat_stream(
                             "model": model,
                             "provider": provider_type,
                         }
+                    # Include tool calls in metadata for persistence
+                    if tool_calls:
+                        usage_metadata["tool_calls"] = tool_calls
                     _save_message(
                         db,
                         session,
                         "assistant",
                         accumulated_content,
-                        metadata=usage_metadata,
+                        metadata=usage_metadata if usage_metadata else None,
                     )
 
                 # Log activity for usage tracking

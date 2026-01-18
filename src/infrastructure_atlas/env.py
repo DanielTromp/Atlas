@@ -23,14 +23,19 @@ def load_env(override: bool = False, dotenv_path: Path | None = None) -> Path:
     - If `dotenv_path` is provided, load that file.
     - Else, search from project root using python-dotenv's find_dotenv.
     Returns the resolved .env path that was loaded (or where it would be).
+
+    Note: Database-stored settings are loaded FIRST so they take precedence
+    over .env file values. This allows users to override defaults via the UI.
     """
     root = project_root()
     env_path = Path(dotenv_path) if dotenv_path else Path(find_dotenv(filename=".env", usecwd=False))
     if not env_path or not str(env_path):
         # Fallback to root/.env even if it doesn't exist
         env_path = root / ".env"
-    load_dotenv(dotenv_path=str(env_path), override=override)
+    # Load database-stored settings FIRST (user overrides via UI)
     sync_secure_settings()
+    # Then load .env file (override=False means it won't overwrite existing vars)
+    load_dotenv(dotenv_path=str(env_path), override=override)
     return env_path
 
 

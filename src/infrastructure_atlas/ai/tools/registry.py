@@ -11,7 +11,7 @@ import httpx
 from infrastructure_atlas.ai.models import ToolCall, ToolResult
 from infrastructure_atlas.infrastructure.logging import get_logger
 
-from .definitions import ATLAS_TOOLS, get_tool_definitions
+from .definitions import ATLAS_TOOLS, get_tool_definitions, get_tools_for_role
 
 logger = get_logger(__name__)
 
@@ -176,6 +176,17 @@ class ToolRegistry:
                 "body": ["query", "max_pages"],
                 "defaults": {"max_pages": 5},
             },
+            # Unified host lookup tools (efficient single-call)
+            "atlas_host_info": {
+                "method": "GET",
+                "endpoint": "/atlas/host-info",
+                "params": ["hostname", "include_network_details"],
+            },
+            "atlas_host_context": {
+                "method": "GET",
+                "endpoint": "/atlas/host-context",
+                "params": ["hostname", "ticket_months", "include_docs"],
+            },
         }
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -192,9 +203,12 @@ class ToolRegistry:
         return headers
 
     def _get_cookies(self) -> dict[str, str]:
-        """Get request cookies."""
+        """Get request cookies.
+
+        Note: Session cookie is named 'atlas_ui' (see SESSION_COOKIE_NAME in app.py).
+        """
         if self.session_cookie:
-            return {"session": self.session_cookie}
+            return {"atlas_ui": self.session_cookie}
         return {}
 
     def register_handler(self, tool_name: str, handler: Callable[..., Any]) -> None:
@@ -252,14 +266,17 @@ class ToolRegistry:
             )
 
         except Exception as e:
+            import traceback
             duration_ms = int((time.perf_counter() - start_time) * 1000)
 
             logger.error(
-                "Tool execution failed",
+                f"Tool execution failed: {tool_call.name} - {e}",
                 extra={
                     "event": "tool_execute_error",
                     "tool_name": tool_call.name,
+                    "arguments": tool_call.arguments,
                     "error": str(e),
+                    "traceback": traceback.format_exc(),
                     "duration_ms": duration_ms,
                 },
             )
@@ -286,6 +303,10 @@ class ToolRegistry:
         mapping = self._api_mappings[tool_call.name]
         method = mapping["method"]
         endpoint = mapping["endpoint"]
+
+        # Debug: log session cookie status
+        has_session = bool(self.session_cookie)
+        logger.debug(f"Tool API call: {tool_call.name} -> {endpoint}, has_session_cookie={has_session}")
 
         # Handle path parameters
         args = dict(tool_call.arguments)
@@ -368,13 +389,29 @@ class ToolRegistry:
         response.raise_for_status()
         return response.json()
 
-    def get_tools(self, categories: list[str] | None = None) -> list[dict[str, Any]]:
-        """Get tool definitions in OpenAI format."""
-        tools = get_tool_definitions(categories)
+    def get_tools(self, categories: list[str] | None = None, role: str | None = None) -> list[dict[str, Any]]:
+        """Get tool definitions in OpenAI format.
+
+        Args:
+            categories: Optional list of categories to filter by
+            role: Optional agent role to filter by (triage, engineer, general)
+        """
+        if role:
+            tools = get_tools_for_role(role)
+        elif categories:
+            tools = get_tool_definitions(categories)
+        else:
+            tools = get_tool_definitions()
+
         return [tool.to_openai_format() for tool in tools]
 
-    def get_tool_info(self) -> list[dict[str, Any]]:
-        """Get information about all available tools."""
+    def get_tool_info(self, role: str | None = None) -> list[dict[str, Any]]:
+        """Get information about available tools.
+
+        Args:
+            role: Optional agent role to filter by
+        """
+        tools = get_tools_for_role(role) if role else ATLAS_TOOLS
         return [
             {
                 "name": tool.name,
@@ -382,7 +419,7 @@ class ToolRegistry:
                 "category": tool.category,
                 "parameters": list(tool.parameters.get("properties", {}).keys()),
             }
-            for tool in ATLAS_TOOLS
+            for tool in tools
         ]
 
     async def close(self) -> None:

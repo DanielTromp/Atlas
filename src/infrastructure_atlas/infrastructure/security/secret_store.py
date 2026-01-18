@@ -38,6 +38,12 @@ SECURE_ENV_KEYS: tuple[str, ...] = (
     "BACKUP_PASSWORD",
     "CONTEXT7_API_KEY",
     "ATLAS_SSL_KEY_PASSWORD",
+    # AI provider default models (persisted to survive restarts)
+    "OPENAI_DEFAULT_MODEL",
+    "OPENROUTER_DEFAULT_MODEL",
+    "ANTHROPIC_DEFAULT_MODEL",
+    "AZURE_OPENAI_DEFAULT_MODEL",
+    "GEMINI_DEFAULT_MODEL",
 )
 
 
