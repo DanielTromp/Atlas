@@ -140,6 +140,7 @@ def _common(
 
 
 # Import extracted CLI modules
+from .interfaces.cli import bots as bots_cli
 from .interfaces.cli import database as database_cli
 from .interfaces.cli import export as export_cli
 from .interfaces.cli import foreman as foreman_cli
@@ -213,6 +214,12 @@ def _register_cli_commands() -> None:
         logger.debug("Enabled Foreman CLI commands")
     else:
         logger.debug("Foreman module is disabled, skipping CLI commands")
+
+    if registry.is_enabled("bots"):
+        app.add_typer(bots_cli.app, name="bots")
+        logger.debug("Enabled Bots CLI commands")
+    else:
+        logger.debug("Bots module is disabled, skipping CLI commands")
 
 
 # Register commands on module initialization

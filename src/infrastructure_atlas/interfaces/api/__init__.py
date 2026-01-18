@@ -164,6 +164,19 @@ def bootstrap_api() -> APIRouter:
     except Exception as e:
         logger.warning(f"Agent Playground routes not available: {e}")
 
+    # Bot platform routes (conditional on bots module)
+    if registry.is_enabled("bots"):
+        try:
+            from .routes import bot_admin, bot_webhooks
+
+            router.include_router(bot_webhooks.router)
+            router.include_router(bot_admin.router)
+            logger.info("Enabled Bot Platform API routes")
+        except Exception as e:
+            logger.warning(f"Bot Platform routes not available: {e}")
+    else:
+        logger.info("Bots module is disabled, skipping routes")
+
     return router
 
 

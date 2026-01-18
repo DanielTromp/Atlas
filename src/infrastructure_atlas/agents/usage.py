@@ -75,6 +75,7 @@ class UsageRecord:
     error: str | None = None
     user_id: str | None = None
     username: str | None = None
+    client: str | None = None  # web, telegram, slack, teams
 
     @property
     def total_tokens(self) -> int:
@@ -104,6 +105,7 @@ class UsageService:
         usage = PlaygroundUsage(
             user_id=record.user_id,
             username=record.username,
+            client=record.client or "web",
             session_id=record.session_id,
             agent_id=record.agent_id,
             model=record.model,
@@ -118,9 +120,14 @@ class UsageService:
             error=record.error,
         )
 
-        self.db.add(usage)
-        self.db.commit()
-        self.db.refresh(usage)
+        try:
+            self.db.add(usage)
+            self.db.commit()
+            self.db.refresh(usage)
+        except Exception as e:
+            logger.error(f"Failed to record usage to DB: {e!s}")
+            self.db.rollback()
+            raise
 
         # Emit structured log for operational monitoring
         logger.info(
@@ -130,6 +137,7 @@ class UsageService:
                 "usage_id": usage.id,
                 "user_id": record.user_id,
                 "username": record.username,
+                "client": record.client or "web",
                 "session_id": record.session_id,
                 "agent_id": record.agent_id,
                 "model": record.model,
@@ -352,6 +360,7 @@ class UsageService:
                 "id": r.id,
                 "user_id": r.user_id,
                 "username": r.username,
+                "client": r.client or "web",
                 "session_id": r.session_id,
                 "agent_id": r.agent_id,
                 "model": r.model,

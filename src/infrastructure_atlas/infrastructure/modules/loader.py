@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from infrastructure_atlas.infrastructure.logging import get_logger
 
+from .bots import BotsModule
 from .commvault import CommvaultModule
 from .confluence import ConfluenceModule
 from .foreman import ForemanModule
@@ -38,6 +39,7 @@ def register_all_modules(registry: ModuleRegistry | None = None) -> ModuleRegist
         ConfluenceModule(),
         ForemanModule(),
         PuppetModule(),
+        BotsModule(),
     ]
 
     for module in modules:

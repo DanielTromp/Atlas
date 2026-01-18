@@ -40,6 +40,9 @@ class User(Base):
         back_populates="user", cascade="all, delete-orphan"
     )
     playground_usage: Mapped[list[PlaygroundUsage]] = relationship(back_populates="user")
+    bot_platform_accounts: Mapped[list[BotPlatformAccount]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class UserAPIKey(Base):
@@ -464,6 +467,7 @@ class PlaygroundSession(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     agent_id: Mapped[str] = mapped_column(String(255), nullable=False)
     user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+    client: Mapped[str | None] = mapped_column(String(50), nullable=True, default="web")  # web, telegram, slack, teams
 
     # Session state
     state: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
@@ -523,6 +527,7 @@ class PlaygroundUsage(Base):
     # User info
     user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     username: Mapped[str | None] = mapped_column(String(255), nullable=True)  # Denormalized for easy querying
+    client: Mapped[str | None] = mapped_column(String(50), nullable=True, default="web")  # web, telegram, slack, teams
 
     # Session/request info
     session_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
@@ -555,3 +560,125 @@ class PlaygroundUsage(Base):
 
     # Relationships
     user: Mapped[User | None] = relationship(back_populates="playground_usage")
+
+
+# ==============================================================================
+# Bot Platform Integration Models
+# ==============================================================================
+
+
+class BotPlatformAccount(Base):
+    """Links external platform users (Telegram, Slack, Teams) to Atlas users."""
+
+    __tablename__ = "bot_platform_accounts"
+    __table_args__ = (UniqueConstraint("platform", "platform_user_id", name="uq_platform_user"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    platform: Mapped[str] = mapped_column(String(32), nullable=False)  # "telegram", "slack", "teams"
+    platform_user_id: Mapped[str] = mapped_column(String(255), nullable=False)  # Platform-specific user ID
+    platform_username: Mapped[str | None] = mapped_column(String(255), nullable=True)  # Display name
+
+    # Verification
+    verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    verification_code: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    verification_expires: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+
+    # Relationships
+    user: Mapped[User] = relationship(back_populates="bot_platform_accounts")
+    conversations: Mapped[list[BotConversation]] = relationship(
+        back_populates="platform_account", cascade="all, delete-orphan"
+    )
+
+
+class BotConversation(Base):
+    """Tracks bot conversations for context and history."""
+
+    __tablename__ = "bot_conversations"
+    __table_args__ = (UniqueConstraint("platform", "platform_conversation_id", name="uq_platform_conversation"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    platform: Mapped[str] = mapped_column(String(32), nullable=False)  # "telegram", "slack", "teams"
+    platform_conversation_id: Mapped[str] = mapped_column(String(255), nullable=False)  # Chat/channel ID
+    platform_account_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("bot_platform_accounts.id", ondelete="CASCADE"), nullable=False
+    )
+
+    # Agent/session context
+    agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)  # If direct agent conversation
+    session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)  # Links to PlaygroundSession
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    last_message_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    # Relationships
+    platform_account: Mapped[BotPlatformAccount] = relationship(back_populates="conversations")
+    messages: Mapped[list[BotMessage]] = relationship(
+        back_populates="conversation", cascade="all, delete-orphan", order_by="BotMessage.created_at"
+    )
+
+
+class BotMessage(Base):
+    """Logs all bot messages for web GUI visibility and debugging."""
+
+    __tablename__ = "bot_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    conversation_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("bot_conversations.id", ondelete="CASCADE"), nullable=False
+    )
+
+    # Message info
+    direction: Mapped[str] = mapped_column(String(16), nullable=False)  # "inbound" or "outbound"
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    platform_message_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Agent context
+    agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    tool_calls: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+
+    # Token and cost tracking
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Error tracking
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False, index=True)
+
+    # Relationships
+    conversation: Mapped[BotConversation] = relationship(back_populates="messages")
+
+
+class BotWebhookConfig(Base):
+    """Platform webhook configurations (admin-managed)."""
+
+    __tablename__ = "bot_webhook_configs"
+    __table_args__ = (UniqueConstraint("platform", name="uq_bot_webhook_platform"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    platform: Mapped[str] = mapped_column(String(32), nullable=False)  # "telegram", "slack", "teams"
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Secrets (stored encrypted via SecretStore reference)
+    webhook_secret: Mapped[str | None] = mapped_column(String(255), nullable=True)  # For signature verification
+    bot_token_secret: Mapped[str] = mapped_column(String(128), nullable=False)  # SecretStore key
+
+    # Platform-specific settings
+    extra_config: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
+    )

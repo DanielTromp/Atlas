@@ -175,11 +175,13 @@ class PlaygroundSession:
         agent_id: str = "triage",
         user_id: str | None = None,
         username: str | None = None,
+        client: str | None = None,
     ):
         self.session_id = session_id or str(uuid.uuid4())
         self.agent_id = agent_id
         self.user_id = user_id
         self.username = username
+        self.client = client or "web"  # Default to web
         self.messages: list[dict[str, Any]] = []
         self.state: dict[str, Any] = {}
         self.config_override: dict[str, Any] = {}
@@ -296,6 +298,7 @@ class PlaygroundRuntime:
         agent_id: str = "triage",
         user_id: str | None = None,
         username: str | None = None,
+        client: str | None = None,
     ) -> PlaygroundSession:
         """Get an existing session or create a new one.
 
@@ -304,17 +307,33 @@ class PlaygroundRuntime:
             agent_id: Agent ID for new sessions
             user_id: User ID for new sessions
             username: Username for new sessions
+            client: Client identifier (web, telegram, slack, teams)
 
         Returns:
             PlaygroundSession instance
         """
         if session_id and session_id in self._sessions:
-            return self._sessions[session_id]
+            session = self._sessions[session_id]
+            # Update session with latest user info and client if provided
+            if user_id and not session.user_id:
+                session.user_id = user_id
+            if username and not session.username:
+                session.username = username
+            if client and session.client == "web":
+                session.client = client
+            return session
 
         # Try to load from database if available
         if session_id and self.db_session:
             db_session = self._load_session_from_db(session_id)
             if db_session:
+                # Update with latest info
+                if user_id and not db_session.user_id:
+                    db_session.user_id = user_id
+                if username and not db_session.username:
+                    db_session.username = username
+                if client and db_session.client == "web":
+                    db_session.client = client
                 return db_session
 
         # Create new session
@@ -323,6 +342,7 @@ class PlaygroundRuntime:
             agent_id=agent_id,
             user_id=user_id,
             username=username,
+            client=client,
         )
         self._sessions[session.session_id] = session
 
@@ -442,6 +462,7 @@ class PlaygroundRuntime:
         stream: bool = True,
         user_id: str | None = None,
         username: str | None = None,
+        client: str | None = None,
     ) -> AsyncIterator[ChatEvent]:
         """Send a message directly to an agent.
 
@@ -454,6 +475,7 @@ class PlaygroundRuntime:
             stream: Whether to stream the response
             user_id: User ID for usage tracking
             username: Username for usage tracking
+            client: Client identifier (web, telegram, slack, teams)
 
         Yields:
             ChatEvent objects for real-time updates
@@ -466,6 +488,7 @@ class PlaygroundRuntime:
             agent_id=agent_id,
             user_id=user_id,
             username=username,
+            client=client,
         )
 
         # Apply config override to session
@@ -791,6 +814,7 @@ class PlaygroundRuntime:
                 error=error,
                 user_id=session.user_id,
                 username=session.username,
+                client=session.client,
             )
             usage_service.record(record)
         except Exception as e:
@@ -811,6 +835,7 @@ class PlaygroundRuntime:
             session_id=db_session.id,
             agent_id=db_session.agent_id,
             user_id=db_session.user_id,
+            client=db_session.client,
         )
         session.messages = db_session.messages or []
         session.state = db_session.state or {}
@@ -828,34 +853,40 @@ class PlaygroundRuntime:
         if not self.db_session:
             return
 
-        from infrastructure_atlas.db.models import PlaygroundSession as DBSession
+        try:
+            from infrastructure_atlas.db.models import PlaygroundSession as DBSession
 
-        db_session = self.db_session.query(DBSession).filter_by(id=session.session_id).first()
+            db_session = self.db_session.query(DBSession).filter_by(id=session.session_id).first()
 
-        if db_session:
-            # Update existing
-            db_session.agent_id = session.agent_id
-            db_session.user_id = session.user_id
-            db_session.messages = session.messages
-            db_session.state = session.state
-            db_session.config_override = session.config_override
-            db_session.total_tokens = session.total_tokens
-            db_session.total_cost_usd = session.total_cost_usd
-        else:
-            # Create new
-            db_session = DBSession(
-                id=session.session_id,
-                agent_id=session.agent_id,
-                user_id=session.user_id,
-                messages=session.messages,
-                state=session.state,
-                config_override=session.config_override,
-                total_tokens=session.total_tokens,
-                total_cost_usd=session.total_cost_usd,
-            )
-            self.db_session.add(db_session)
+            if db_session:
+                # Update existing
+                db_session.agent_id = session.agent_id
+                db_session.user_id = session.user_id
+                db_session.client = session.client
+                db_session.messages = session.messages
+                db_session.state = session.state
+                db_session.config_override = session.config_override
+                db_session.total_tokens = session.total_tokens
+                db_session.total_cost_usd = session.total_cost_usd
+            else:
+                # Create new
+                db_session = DBSession(
+                    id=session.session_id,
+                    agent_id=session.agent_id,
+                    user_id=session.user_id,
+                    client=session.client,
+                    messages=session.messages,
+                    state=session.state,
+                    config_override=session.config_override,
+                    total_tokens=session.total_tokens,
+                    total_cost_usd=session.total_cost_usd,
+                )
+                self.db_session.add(db_session)
 
-        self.db_session.commit()
+            self.db_session.commit()
+        except Exception as e:
+            logger.error(f"Failed to save session to DB: {e!s}")
+            self.db_session.rollback()
 
     def _delete_session_from_db(self, session_id: str) -> None:
         """Delete a session from the database."""

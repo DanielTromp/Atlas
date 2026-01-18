@@ -9791,12 +9791,13 @@
         const recentBody = document.getElementById('admin-playground-recent-body');
         if (recentBody) {
           if (recent.length === 0) {
-            recentBody.innerHTML = '<tr><td colspan="6" class="empty">No recent activity</td></tr>';
+            recentBody.innerHTML = '<tr><td colspan="7" class="empty">No recent activity</td></tr>';
           } else {
             recentBody.innerHTML = recent.map(r => `
               <tr>
                 <td>${new Date(r.created_at).toLocaleString()}</td>
                 <td>${r.username || 'anonymous'}</td>
+                <td>${r.client || 'web'}</td>
                 <td>@${r.agent_id}</td>
                 <td>${r.model.replace('claude-', '').split('-20')[0]}</td>
                 <td>${r.total_tokens.toLocaleString()}</td>
