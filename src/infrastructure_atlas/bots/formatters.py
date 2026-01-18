@@ -58,42 +58,131 @@ class MessageFormatter(ABC):
 
 
 class TelegramFormatter(MessageFormatter):
-    """Compact formatting for Telegram (4096 char limit).
+    """HTML formatting for Telegram (4096 char limit).
 
-    Uses MarkdownV2 with careful escaping.
-    Optimizes for mobile viewing with compact bullet points.
+    Uses HTML mode for reliable formatting:
+    - <b>bold</b>, <i>italic</i>, <code>code</code>, <pre>block</pre>
+    - Converts agent markdown to HTML
+    - Simple escaping (only <, >, &)
     """
 
     platform = "telegram"
     max_length = 4096
 
-    # Characters that need escaping in MarkdownV2
-    ESCAPE_CHARS = r"_*[]()~`>#+-=|{}.!"
+    def _escape_html(self, text: str) -> str:
+        """Escape HTML special characters."""
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-    def _escape_markdown(self, text: str) -> str:
-        """Escape special characters for Telegram MarkdownV2."""
-        # Don't escape inside code blocks
-        parts = re.split(r"(```[\s\S]*?```|`[^`]+`)", text)
+    def _markdown_to_html(self, text: str) -> str:
+        """Convert common markdown patterns to Telegram HTML.
+
+        Handles:
+        - **bold** or __bold__ → <b>bold</b>
+        - *italic* or _italic_ → <i>italic</i>
+        - `code` → <code>code</code>
+        - ```code block``` → <pre>code block</pre>
+        - [text](url) → <a href="url">text</a>
+        - Markdown tables → formatted list
+        """
+        # First convert markdown tables to readable format (uses placeholder for bold)
+        text = self._convert_markdown_table(text)
+
+        # Escape HTML in the raw text
+        text = self._escape_html(text)
+
+        # Convert table bold placeholders to actual HTML (after escaping)
+        text = text.replace("[[BOLD]]", "<b>").replace("[[/BOLD]]", "</b>")
+
+        # Convert code blocks first (```...```)
+        text = re.sub(
+            r"```(\w*)\n?([\s\S]*?)```",
+            lambda m: f"<pre>{m.group(2).strip()}</pre>",
+            text,
+        )
+
+        # Convert inline code (`...`)
+        text = re.sub(r"`([^`]+)`", r"<code>\1</code>", text)
+
+        # Convert bold (**text** or __text__)
+        text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
+        text = re.sub(r"__(.+?)__", r"<b>\1</b>", text)
+
+        # Convert italic (*text* or _text_) - but not inside words
+        # Use negative lookbehind/ahead to avoid matching underscores in words
+        text = re.sub(r"(?<!\w)\*([^*]+?)\*(?!\w)", r"<i>\1</i>", text)
+        text = re.sub(r"(?<!\w)_([^_]+?)_(?!\w)", r"<i>\1</i>", text)
+
+        # Convert links [text](url)
+        text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', text)
+
+        # Convert bullet points for cleaner display
+        text = re.sub(r"^[-*•] ", "• ", text, flags=re.MULTILINE)
+
+        return text
+
+    def _convert_markdown_table(self, text: str) -> str:
+        """Convert markdown tables to a readable list format for Telegram.
+
+        Converts:
+        | Header1 | Header2 |
+        |---------|---------|
+        | Value1  | Value2  |
+
+        To:
+        📋 Header1: Value1
+           Header2: Value2
+        """
+        lines = text.split("\n")
         result = []
-        for i, part in enumerate(parts):
-            if i % 2 == 0:  # Not a code block
-                for char in self.ESCAPE_CHARS:
-                    part = part.replace(char, f"\\{char}")
-            result.append(part)
-        return "".join(result)
+        i = 0
+
+        while i < len(lines):
+            line = lines[i].strip()
+
+            # Detect table header row (starts and ends with |)
+            if line.startswith("|") and line.endswith("|"):
+                # Parse header
+                headers = [h.strip() for h in line.strip("|").split("|")]
+
+                # Check if next line is separator (|---|---|)
+                if i + 1 < len(lines) and re.match(r"^\|[-:\s|]+\|$", lines[i + 1].strip()):
+                    i += 2  # Skip header and separator
+
+                    # Process data rows
+                    while i < len(lines):
+                        row = lines[i].strip()
+                        if row.startswith("|") and row.endswith("|"):
+                            values = [v.strip() for v in row.strip("|").split("|")]
+
+                            # Format as compact entry
+                            if len(values) >= 2 and len(headers) >= 2:
+                                # Use first column as identifier with placeholder for bold
+                                entry_parts = [f"📋 [[BOLD]]{values[0]}[[/BOLD]]"]
+                                for j, (header, value) in enumerate(zip(headers[1:], values[1:])):
+                                    if value and value != "-":
+                                        entry_parts.append(f"   {header}: {value}")
+                                result.append("\n".join(entry_parts))
+                            i += 1
+                        else:
+                            break
+                    continue
+
+            result.append(lines[i])
+            i += 1
+
+        return "\n".join(result)
 
     def format_text(self, text: str, compact: bool = False) -> FormattedMessage:
-        """Format plain text for Telegram."""
+        """Format plain text for Telegram using HTML."""
         if compact:
-            # Remove extra whitespace, compress lists
+            # Remove extra whitespace
             text = re.sub(r"\n{3,}", "\n\n", text)
-            text = re.sub(r"^[-*] ", "- ", text, flags=re.MULTILINE)
 
         text, truncated = self.truncate(text)
-        escaped = self._escape_markdown(text)
+        html = self._markdown_to_html(text)
 
         return FormattedMessage(
-            content=escaped,
+            content=html,
             platform=self.platform,
             truncated=truncated,
             original_length=len(text),
@@ -101,7 +190,8 @@ class TelegramFormatter(MessageFormatter):
 
     def format_error(self, error: str) -> FormattedMessage:
         """Format an error message with warning emoji."""
-        formatted = f"*Error:* {self._escape_markdown(error)}"
+        escaped = self._escape_html(error)
+        formatted = f"⚠️ <b>Error:</b> {escaped}"
         return FormattedMessage(
             content=formatted,
             platform=self.platform,
@@ -111,9 +201,10 @@ class TelegramFormatter(MessageFormatter):
 
     def format_tool_result(self, tool_name: str, result: dict[str, Any]) -> FormattedMessage:
         """Format tool result compactly - summarize instead of full JSON."""
-        # Summarize common tool results
         summary = self._summarize_tool_result(tool_name, result)
-        formatted = f"*{self._escape_markdown(tool_name)}:* {self._escape_markdown(summary)}"
+        escaped_name = self._escape_html(tool_name)
+        escaped_summary = self._escape_html(summary)
+        formatted = f"<b>{escaped_name}:</b> {escaped_summary}"
 
         formatted, truncated = self.truncate(formatted)
         return FormattedMessage(
@@ -156,15 +247,14 @@ class TelegramFormatter(MessageFormatter):
         self, agent_id: str, response: str, tool_calls: list[dict] | None = None
     ) -> FormattedMessage:
         """Format agent response with optional tool call summary."""
-        parts = [f"*{self._escape_markdown(agent_id)}*"]
+        parts = [f"🤖 <b>{self._escape_html(agent_id)}</b>"]
 
         if tool_calls:
-            # Escape tool names to avoid breaking markdown
-            tool_names = [self._escape_markdown(tc.get("name", "unknown")) for tc in tool_calls]
-            parts.append(f"_Used: {', '.join(tool_names)}_")
+            tool_names = [self._escape_html(tc.get("name", "unknown")) for tc in tool_calls]
+            parts.append(f"<i>🔧 Used: {', '.join(tool_names)}</i>")
 
         parts.append("")
-        parts.append(self._escape_markdown(response))
+        parts.append(self._markdown_to_html(response))
 
         content = "\n".join(parts)
         content, truncated = self.truncate(content)

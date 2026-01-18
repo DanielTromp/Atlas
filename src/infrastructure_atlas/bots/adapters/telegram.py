@@ -1,7 +1,7 @@
 """Telegram bot adapter using the Telegram Bot API.
 
 This adapter handles:
-- Sending messages with MarkdownV2 formatting
+- Sending messages with HTML formatting
 - Typing indicators
 - Webhook signature verification
 - User info retrieval
@@ -26,7 +26,7 @@ class TelegramAdapter(BotAdapter):
     """Telegram Bot API adapter.
 
     Uses the Telegram Bot API directly via HTTP requests.
-    Supports MarkdownV2 formatting and inline keyboards.
+    Supports HTML formatting and inline keyboards.
     """
 
     platform = "telegram"
@@ -59,10 +59,12 @@ class TelegramAdapter(BotAdapter):
         """
         url = f"{self.api_base}/sendMessage"
 
+        text_content = content if isinstance(content, str) else str(content)
+
         payload: dict[str, Any] = {
             "chat_id": chat_id,
-            "text": content if isinstance(content, str) else str(content),
-            "parse_mode": "MarkdownV2",
+            "text": text_content,
+            "parse_mode": "HTML",
         }
 
         if reply_to:
@@ -76,11 +78,11 @@ class TelegramAdapter(BotAdapter):
                 error_desc = data.get("description", "Unknown error")
                 logger.error(f"Telegram send_message failed: {error_desc}")
 
-                # If MarkdownV2 parsing failed, retry without formatting
+                # If HTML parsing failed, retry without formatting
                 if "can't parse entities" in error_desc.lower():
-                    del payload["parse_mode"]  # Remove parse_mode entirely
-                    # Unescape markdown characters for plain text
-                    payload["text"] = self._unescape_markdown(payload["text"])
+                    del payload["parse_mode"]
+                    # Strip HTML tags for plain text fallback
+                    payload["text"] = self._strip_html(payload["text"])
                     response = await client.post(url, json=payload, timeout=30.0)
                     data = response.json()
 
@@ -89,12 +91,15 @@ class TelegramAdapter(BotAdapter):
             else:
                 raise RuntimeError(f"Failed to send Telegram message: {data.get('description')}")
 
-    def _unescape_markdown(self, text: str) -> str:
-        """Remove MarkdownV2 escaping from text."""
+    def _strip_html(self, text: str) -> str:
+        """Remove HTML tags and unescape entities for plain text fallback."""
         import re
 
-        # Remove backslash escapes
-        return re.sub(r"\\(.)", r"\1", text)
+        # Remove HTML tags
+        text = re.sub(r"<[^>]+>", "", text)
+        # Unescape HTML entities
+        text = text.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
+        return text
 
     async def send_typing_indicator(self, chat_id: str) -> None:
         """Send a typing indicator to show the bot is working.
@@ -393,22 +398,22 @@ class TelegramWebhookHandler:
 
         if account:
             welcome = (
-                "Welcome back\\! Your account is linked to Atlas\\.\n\n"
+                "👋 <b>Welcome back!</b> Your account is linked to Atlas.\n\n"
                 "You can chat with me directly or mention an agent:\n"
-                "• `@triage <message>` \\- Ticket analysis\n"
-                "• `@engineer <message>` \\- Technical investigation\n"
-                "• `@reviewer <message>` \\- Quality review\n\n"
-                "Type /help for more information\\."
+                "• <code>@triage</code> - Ticket analysis\n"
+                "• <code>@engineer</code> - Technical investigation\n"
+                "• <code>@reviewer</code> - Quality review\n\n"
+                "Type /help for more information."
             )
         else:
             welcome = (
-                "Welcome to Atlas Bot\\!\n\n"
-                "To use this bot, you need to link your Telegram account to Atlas\\.\n\n"
-                "1\\. Log in to Atlas web UI\n"
-                "2\\. Go to your profile settings\n"
-                "3\\. Generate a verification code for Telegram\n"
-                "4\\. Send /link <code> here\n\n"
-                "Example: `/link 123456`"
+                "👋 <b>Welcome to Atlas Bot!</b>\n\n"
+                "To use this bot, you need to link your Telegram account to Atlas.\n\n"
+                "1. Log in to Atlas web UI\n"
+                "2. Go to your profile settings\n"
+                "3. Generate a verification code for Telegram\n"
+                "4. Send <code>/link &lt;code&gt;</code> here\n\n"
+                "Example: <code>/link 123456</code>"
             )
 
         await self.adapter.send_message(chat_id, welcome, reply_to=message_id)
@@ -416,20 +421,20 @@ class TelegramWebhookHandler:
     async def _cmd_help(self, chat_id: str, message_id: str) -> None:
         """Handle /help command."""
         help_text = (
-            "*Atlas Bot Help*\n\n"
-            "*Commands:*\n"
-            "• `/start` \\- Welcome message\n"
-            "• `/help` \\- Show this help\n"
-            "• `/link <code>` \\- Link your account\n"
-            "• `/agents` \\- List available agents\n"
-            "• `/status` \\- Check your account status\n\n"
-            "*Chatting with Agents:*\n"
+            "📖 <b>Atlas Bot Help</b>\n\n"
+            "<b>Commands:</b>\n"
+            "• <code>/start</code> - Welcome message\n"
+            "• <code>/help</code> - Show this help\n"
+            "• <code>/link &lt;code&gt;</code> - Link your account\n"
+            "• <code>/agents</code> - List available agents\n"
+            "• <code>/status</code> - Check your account status\n\n"
+            "<b>Chatting with Agents:</b>\n"
             "• Send a message directly to chat with the default agent\n"
-            "• Use `@agent\\_name <message>` to chat with a specific agent\n\n"
-            "*Examples:*\n"
-            "• `What new tickets are there\\?`\n"
-            "• `@triage analyze ticket ESD\\-123`\n"
-            "• `@engineer check server status for web\\-01`"
+            "• Use <code>@agent_name message</code> to chat with a specific agent\n\n"
+            "<b>Examples:</b>\n"
+            "• <i>What new tickets are there?</i>\n"
+            "• <code>@triage analyze ticket ESD-123</code>\n"
+            "• <code>@engineer check server status for web-01</code>"
         )
         await self.adapter.send_message(chat_id, help_text, reply_to=message_id)
 
@@ -444,9 +449,9 @@ class TelegramWebhookHandler:
         """Handle /link command."""
         if not code.strip():
             error = (
-                "Please provide a verification code\\.\n\n"
-                "Usage: `/link <code>`\n"
-                "Example: `/link 123456`"
+                "⚠️ Please provide a verification code.\n\n"
+                "Usage: <code>/link &lt;code&gt;</code>\n"
+                "Example: <code>/link 123456</code>"
             )
             await self.adapter.send_message(chat_id, error, reply_to=message_id)
             return
@@ -461,15 +466,15 @@ class TelegramWebhookHandler:
 
         if account:
             success = (
-                "Your Telegram account has been successfully linked to Atlas\\!\n\n"
-                "You can now chat with Atlas agents\\. Try asking a question or use "
-                "`@agent\\_name <message>` to chat with a specific agent\\."
+                "✅ <b>Success!</b> Your Telegram account has been linked to Atlas.\n\n"
+                "You can now chat with Atlas agents. Try asking a question or use "
+                "<code>@agent_name message</code> to chat with a specific agent."
             )
             await self.adapter.send_message(chat_id, success, reply_to=message_id)
         else:
             error = (
-                "Invalid or expired verification code\\.\n\n"
-                "Please generate a new code from the Atlas web UI and try again\\."
+                "❌ <b>Invalid or expired verification code.</b>\n\n"
+                "Please generate a new code from the Atlas web UI and try again."
             )
             await self.adapter.send_message(chat_id, error, reply_to=message_id)
 
@@ -477,13 +482,13 @@ class TelegramWebhookHandler:
         """Handle /agents command."""
         agents = self.orchestrator.get_available_agents()
 
-        lines = ["*Available Agents:*\n"]
+        lines = ["🤖 <b>Available Agents:</b>\n"]
         for agent in agents:
-            # Escape special characters for MarkdownV2
-            desc = agent["description"].replace("-", "\\-").replace(".", "\\.").replace("(", "\\(").replace(")", "\\)")
-            lines.append(f"• *{agent['id']}* \\- {desc}")
+            # Escape HTML special characters
+            desc = agent["description"].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            lines.append(f"• <b>{agent['id']}</b> - {desc}")
 
-        lines.append("\nUse `@agent\\\\_id <message>` to chat with a specific agent\\.")
+        lines.append("\nUse <code>@agent_id message</code> to chat with a specific agent.")
 
         await self.adapter.send_message(chat_id, "\n".join(lines), reply_to=message_id)
 
@@ -493,16 +498,16 @@ class TelegramWebhookHandler:
 
         if account:
             username = account.user.username if account.user else "Unknown"
-            date_str = account.created_at.strftime("%Y-%m-%d").replace("-", "\\-")
+            date_str = account.created_at.strftime("%Y-%m-%d")
             status = (
-                "*Account Status:* Linked\n"
-                f"*Atlas User:* {username}\n"
-                f"*Linked Since:* {date_str}"
+                "✅ <b>Account Status:</b> Linked\n"
+                f"<b>Atlas User:</b> {username}\n"
+                f"<b>Linked Since:</b> {date_str}"
             )
         else:
             status = (
-                "*Account Status:* Not Linked\n\n"
-                "Use `/link <code>` to link your account\\."
+                "❌ <b>Account Status:</b> Not Linked\n\n"
+                "Use <code>/link &lt;code&gt;</code> to link your account."
             )
 
         await self.adapter.send_message(chat_id, status, reply_to=message_id)
