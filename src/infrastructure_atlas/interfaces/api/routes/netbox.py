@@ -219,6 +219,9 @@ def netbox_search(
             oob = pip  # fallback to primary IP when no explicit OOB is found
         ui_path = f"/dcim/devices/{it.get('id')}/" if it.get("id") is not None else ""
         updated = it.get("last_updated") or it.get("last_updated") or ""
+        description = it.get("description") or ""
+        asset_tag = it.get("asset_tag") or ""
+        serial = it.get("serial") or ""
         return {
             "Name": name,
             "Status": status,
@@ -229,8 +232,17 @@ def netbox_search(
             "Out-of-band IP": oob,
             "Platform": platform,
             "Device Type": dtype,
+            "Description": description,
+            "Asset Tag": asset_tag,
+            "Serial": serial,
             "Updated": updated,
             "ui_path": ui_path,
+            # Keep original fields for API consumers
+            "id": it.get("id"),
+            "name": name,
+            "description": description,
+            "asset_tag": asset_tag,
+            "type": "device",
         }
 
     def _map_vm(it):
@@ -244,16 +256,31 @@ def netbox_search(
         pip = pip4 or pip6
         ui_path = f"/virtualization/virtual-machines/{it.get('id')}/" if it.get("id") is not None else ""
         updated = it.get("last_updated") or ""
+        description = it.get("description") or ""
+        # VMs typically don't have asset_tag but check anyway
+        comments = it.get("comments") or ""
+        platform = (it.get("platform") or {}).get("name") or ""
+        site = (it.get("site") or {}).get("name") or ""
         return {
             "Name": name,
             "Status": status,
             "Cluster": cluster,
+            "Site": site,
             "Role": role,
             "Tenant": tenant,
             "Primary IP": pip,
+            "Platform": platform,
+            "Description": description,
+            "Comments": comments,
             "Updated": updated,
             "Out-of-band IP": "",
             "ui_path": ui_path,
+            # Keep original fields for API consumers
+            "id": it.get("id"),
+            "name": name,
+            "description": description,
+            "comments": comments,
+            "type": "virtual_machine",
         }
 
     rows: list[dict[str, Any]] = []

@@ -89,6 +89,9 @@ class AgentConfig:
     tools_enabled: bool = True
     streaming_enabled: bool = True
 
+    # Agent role (controls tool access)
+    role: str = "general"  # triage, engineer, general
+
     # Metadata
     description: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -106,6 +109,7 @@ class AgentConfig:
             "max_tokens": self.max_tokens,
             "tools_enabled": self.tools_enabled,
             "streaming_enabled": self.streaming_enabled,
+            "role": self.role,
             "description": self.description,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
@@ -124,6 +128,7 @@ class AgentConfig:
             max_tokens=data.get("max_tokens"),
             tools_enabled=data.get("tools_enabled", True),
             streaming_enabled=data.get("streaming_enabled", True),
+            role=data.get("role", "general"),
             description=data.get("description"),
             created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.now(UTC),
             updated_at=datetime.fromisoformat(data["updated_at"]) if "updated_at" in data else datetime.now(UTC),
@@ -211,6 +216,15 @@ class ToolCall:
             name=function_data.get("name", ""),
             arguments=arguments,
         )
+
+
+@dataclass
+class ToolStart:
+    """Event indicating a tool is starting execution."""
+
+    tool_call_id: str
+    tool_name: str
+    arguments: dict[str, Any] | None = None
 
 
 @dataclass
@@ -350,64 +364,41 @@ You are a seasoned infrastructure professional with deep expertise in:
 - Rollback procedures for risky changes"""
 
 
-TOOL_USE_SYSTEM_PROMPT = """## Available Tools
+TOOL_USE_SYSTEM_PROMPT = """## Tool Usage - MINIMAL CALLS
 
-You have access to integrated tools to query infrastructure systems. Use them proactively.
+### ⚠️ CRITICAL: Use Unified Tools - ONE Call Is Enough!
+**STOP calling multiple tools when ONE unified tool gives you everything!**
 
-### Documentation (PRIORITY for "how to" questions)
-- **search_confluence_docs**: Semantic AI search of documentation - USE FIRST for procedures, guides, runbooks
-- **generate_guide_from_docs**: Get FULL page content from multiple relevant docs - for comprehensive guides
-- **get_confluence_page**: Get complete page content by ID or title
-- **confluence_search**: Basic CQL keyword search (fallback)
-- **list_confluence_spaces**: List available Confluence spaces
+| Question Type | Use THIS (1 call) | NOT these (3+ calls) |
+|---------------|-------------------|----------------------|
+| "Tell me about server X" | `atlas_host_info` | ~~netbox_search + zabbix_alerts + commvault_backup_status~~ |
+| "What tickets for X" | `atlas_host_context` | ~~jira_search + search_confluence_docs~~ |
 
-### Infrastructure Discovery
-- **netbox_search**: Query devices, VMs, IP addresses, rack locations
-- **vcenter_list_instances**: List configured vCenter instances
-- **vcenter_get_vms**: Get VMs from a specific vCenter
-- **search_aggregate**: Cross-system search (NetBox, vCenter, Zabbix, Jira, Confluence)
+### Tool Selection Rules
+1. **Host info questions** → `atlas_host_info` ONLY
+   - Returns: NetBox identity, Zabbix status, Commvault backup - ALL IN ONE
+   - Automatically tries hostname aliases (vw↔vm)
+   - NEVER call netbox_search, zabbix_alerts, commvault_backup_status separately!
 
-### Monitoring & Alerts
-- **zabbix_alerts**: Get current alerts and problems
-- **zabbix_host_search**: Search for Zabbix hosts
-- **zabbix_group_search**: Search for host groups
+2. **History/ticket questions** → `atlas_host_context` ONLY
+   - Returns: Jira tickets, Confluence docs - ALL IN ONE
+   - NEVER call jira_search, search_confluence_docs separately!
 
-### Backup & Data Protection
-- **commvault_backup_status**: Check backup status and job history for a hostname
+3. **If `atlas_host_info` succeeds** → DO NOT call additional tools
+   - The response already contains monitoring and backup status
+   - Don't "verify" with separate zabbix/commvault calls
 
-### Issue Tracking (Jira)
-- **jira_search**: Search issues by text, project, or status
-- **jira_get_remote_links**: Get links attached to an issue
-- **jira_create_confluence_link**: Link documentation to tickets
-- **jira_list_attachments**: List attachments on an issue
-- **jira_attach_file**: Attach files from URLs to tickets
+### Source of Truth
+NetBox > vCenter > Zabbix > Commvault > Jira/Confluence
 
-### Ticket Management (Draft Tickets)
-- **ticket_list**, **ticket_create**, **ticket_get**, **ticket_update**, **ticket_search**, **ticket_delete**
+### Response Rules
+1. Execute immediately - don't describe what you could do
+2. Cite sources: "According to NetBox..." / "Zabbix shows..."
+3. Flag gaps from the unified response: "⚠️ No backup found"
+4. Include description/asset_tag from NetBox
 
-### System Health
-- **monitoring_stats**: Token usage and rate limits
-- **performance_metrics**: Atlas performance metrics
+### Error Handling
+- If `atlas_host_info` fails → try with alias (vw↔vm)
+- If still fails → THEN fall back to individual tools"""
 
-## Tool Usage Guidelines
-
-1. **Documentation queries** ("how to", "procedure for", "troubleshooting"):
-   - ALWAYS use search_confluence_docs FIRST
-   - Use generate_guide_from_docs for comprehensive procedures
-   - Cite source URLs in your response
-
-2. **Infrastructure lookups** (server info, IP, VM details):
-   - Use netbox_search or search_aggregate
-   - Cross-reference with vcenter_get_vms for VM details
-   - Check zabbix_alerts for related issues
-
-3. **Backup verification**:
-   - Use commvault_backup_status with the hostname
-
-4. **Incident investigation**:
-   - Use zabbix_alerts to check current problems
-   - Use jira_search to find related tickets
-   - Use search_aggregate for comprehensive context
-
-5. **Always verify** information with live queries rather than assumptions."""
 

@@ -17,9 +17,11 @@ from infrastructure_atlas.ai.models import (
     TokenUsage,
     ToolCall,
     ToolResult,
+    ToolStart,
 )
 from infrastructure_atlas.ai.providers import AIProvider, get_provider
 from infrastructure_atlas.ai.tools import ToolRegistry, get_tool_registry
+from infrastructure_atlas.ai.tools.definitions import get_role_system_prompt
 from infrastructure_atlas.infrastructure.logging import get_logger
 
 logger = get_logger(__name__)
@@ -59,10 +61,18 @@ class ChatAgent:
         return self._tool_registry
 
     def _get_system_prompt(self) -> str:
-        """Get the system prompt for this agent."""
+        """Get the system prompt for this agent, including role-specific additions."""
         base_prompt = self.config.system_prompt or DEFAULT_SYSTEM_PROMPT
+
         if self.config.tools_enabled:
+            # Get role-specific prompt addon
+            role_prompt = get_role_system_prompt(self.config.role)
+            if role_prompt:
+                # For roles, use a shorter, more focused prompt
+                return f"{base_prompt}\n\n{role_prompt}"
+            # Fallback to generic tool prompt
             return f"{base_prompt}\n\n{TOOL_USE_SYSTEM_PROMPT}"
+
         return base_prompt
 
     def _build_messages(self, user_message: str) -> list[ChatMessage]:
@@ -98,7 +108,7 @@ class ChatAgent:
         )
 
         messages = self._build_messages(message)
-        tools = self.tool_registry.get_tools() if self.config.tools_enabled else None
+        tools = self.tool_registry.get_tools(role=self.config.role) if self.config.tools_enabled else None
 
         # Add user message to history
         self._history.append(ChatMessage.user(message))
@@ -211,7 +221,7 @@ class ChatAgent:
         )
 
         messages = self._build_messages(message)
-        tools = self.tool_registry.get_tools() if self.config.tools_enabled else None
+        tools = self.tool_registry.get_tools(role=self.config.role) if self.config.tools_enabled else None
 
         self._history.append(ChatMessage.user(message))
 
@@ -270,6 +280,13 @@ class ChatAgent:
                         "agent_id": self.config.agent_id,
                         "tool_name": tool_call.name,
                     },
+                )
+
+                # Yield tool start event for UI feedback
+                yield ToolStart(
+                    tool_call_id=tool_call.id,
+                    tool_name=tool_call.name,
+                    arguments=tool_call.arguments,
                 )
 
                 result = await self.tool_registry.execute(tool_call)
@@ -345,6 +362,8 @@ def create_chat_agent(
     streaming_enabled: bool = True,
     api_base_url: str = "http://127.0.0.1:8000",
     api_token: str | None = None,
+    session_cookie: str | None = None,
+    role: str = "general",
 ) -> ChatAgent:
     """Create a new chat agent with the specified configuration.
 
@@ -359,6 +378,8 @@ def create_chat_agent(
         streaming_enabled: Enable streaming responses
         api_base_url: Atlas API base URL for tool execution
         api_token: Atlas API token for authentication
+        session_cookie: Session cookie for authenticated API calls
+        role: Agent role (triage, engineer, general) - controls available tools
 
     Returns:
         Configured ChatAgent instance
@@ -381,11 +402,13 @@ def create_chat_agent(
         max_tokens=max_tokens or 16384,  # Default to 16384 tokens
         tools_enabled=tools_enabled,
         streaming_enabled=streaming_enabled,
+        role=role,
     )
 
     tool_registry = ToolRegistry(
         api_base_url=api_base_url,
         api_token=api_token,
+        session_cookie=session_cookie,
     )
 
     return ChatAgent(config=config, tool_registry=tool_registry)

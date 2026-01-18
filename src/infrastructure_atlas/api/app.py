@@ -1511,6 +1511,14 @@ try:
 except ImportError:
     logger.warning("Zabbix routes not available - optional dependencies missing")
 
+# Include Atlas host lookup routes (unified tool endpoints)
+try:
+    from infrastructure_atlas.interfaces.api.routes.atlas_host import router as atlas_host_router
+
+    app.include_router(atlas_host_router)
+except ImportError:
+    logger.warning("Atlas host routes not available")
+
 # Re-export functions for CLI compatibility (these live in route modules but CLI imports from app.py)
 from infrastructure_atlas.interfaces.api.routes.jira import jira_search  # noqa: E402, F401
 from infrastructure_atlas.interfaces.api.routes.netbox import netbox_search  # noqa: E402, F401
