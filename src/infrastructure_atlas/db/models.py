@@ -253,3 +253,192 @@ class AIModelConfig(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
     )
+
+
+# ============================================================================
+# Atlas Agents Platform - Workflow and Skills Tables
+# ============================================================================
+
+
+class Workflow(Base):
+    """Workflow definition with LangGraph graph and visual layout."""
+
+    __tablename__ = "workflows"
+    __table_args__ = (UniqueConstraint("name", name="uq_workflow_name"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Trigger configuration
+    trigger_type: Mapped[str] = mapped_column(String(50), nullable=False)  # manual, webhook, schedule, event
+    trigger_config: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+    # Graph definitions
+    graph_definition: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)  # LangGraph compatible
+    visual_definition: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)  # React Flow positions
+
+    # Versioning
+    version: Mapped[int] = mapped_column(default=1, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+
+    # Relationships
+    executions: Mapped[list[WorkflowExecution]] = relationship(
+        back_populates="workflow", cascade="all, delete-orphan"
+    )
+
+
+class WorkflowExecution(Base):
+    """Runtime execution tracking for workflows."""
+
+    __tablename__ = "workflow_executions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    workflow_id: Mapped[str] = mapped_column(String(36), ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False)
+
+    # Status tracking
+    status: Mapped[str] = mapped_column(String(50), nullable=False)  # running, paused, completed, failed, waiting_human
+
+    # Context
+    trigger_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    current_state: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)  # LangGraph state snapshot
+    current_node: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Timestamps
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Error handling
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Relationships
+    workflow: Mapped[Workflow] = relationship(back_populates="executions")
+    steps: Mapped[list[ExecutionStep]] = relationship(
+        back_populates="execution", cascade="all, delete-orphan", order_by="ExecutionStep.created_at"
+    )
+    interventions: Mapped[list[HumanIntervention]] = relationship(
+        back_populates="execution", cascade="all, delete-orphan"
+    )
+
+
+class ExecutionStep(Base):
+    """Individual node execution logs with LLM details."""
+
+    __tablename__ = "execution_steps"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    execution_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("workflow_executions.id", ondelete="CASCADE"), nullable=False
+    )
+
+    # Node info
+    node_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    node_type: Mapped[str] = mapped_column(String(50), nullable=False)  # agent, tool, condition, human
+
+    # Data
+    input_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    output_data: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    llm_messages: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)  # For debugging
+
+    # Metrics
+    tokens_used: Mapped[int | None] = mapped_column(nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(nullable=True)
+
+    # Status
+    status: Mapped[str] = mapped_column(String(50), nullable=False)  # pending, running, completed, failed, skipped
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    # Relationships
+    execution: Mapped[WorkflowExecution] = relationship(back_populates="steps")
+
+
+class HumanIntervention(Base):
+    """Human-in-the-loop approval requests."""
+
+    __tablename__ = "human_interventions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    execution_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("workflow_executions.id", ondelete="CASCADE"), nullable=False
+    )
+    step_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("execution_steps.id", ondelete="CASCADE"), nullable=True
+    )
+
+    # Intervention details
+    intervention_type: Mapped[str] = mapped_column(String(50), nullable=False)  # approval, input, review, decision
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    options: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)  # Available choices
+
+    # Assignment
+    assigned_to: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Response
+    response: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    # Relationships
+    execution: Mapped[WorkflowExecution] = relationship(back_populates="interventions")
+
+
+class Skill(Base):
+    """Registered skill capabilities."""
+
+    __tablename__ = "skills"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    category: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Implementation
+    python_module: Mapped[str] = mapped_column(String(255), nullable=False)  # Module path for import
+
+    # Schemas (JSON Schema format)
+    config_schema: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    input_schema: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    output_schema: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+    # Settings
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    requires_approval: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    # Relationships
+    actions: Mapped[list[SkillAction]] = relationship(back_populates="skill", cascade="all, delete-orphan")
+
+
+class SkillAction(Base):
+    """Individual actions within skills."""
+
+    __tablename__ = "skill_actions"
+    __table_args__ = (UniqueConstraint("skill_id", "name", name="uq_skill_action"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    skill_id: Mapped[str] = mapped_column(String(36), ForeignKey("skills.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Schemas
+    input_schema: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    output_schema: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+    # Flags
+    is_destructive: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Relationships
+    skill: Mapped[Skill] = relationship(back_populates="actions")

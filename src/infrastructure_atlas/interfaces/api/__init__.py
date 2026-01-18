@@ -127,6 +127,18 @@ def bootstrap_api() -> APIRouter:
     except Exception as e:
         logger.warning(f"Confluence RAG routes not available: {e}")
 
+    # Atlas Agents Platform - Workflow routes
+    try:
+        from .routes import executions, workflows
+        from .websocket import router as ws_router
+
+        router.include_router(workflows.router)
+        router.include_router(executions.router)
+        router.include_router(ws_router)
+        logger.info("Enabled Atlas Agents Platform routes (workflows, executions, websocket)")
+    except Exception as e:
+        logger.warning(f"Atlas Agents routes not available: {e}")
+
     return router
 
 
