@@ -465,12 +465,50 @@ class JiraSkill(BaseSkill):
             "transition_id": target_transition["id"],
         }
 
+    def find_user(self, query: str) -> dict[str, Any] | None:
+        """Find a Jira user by username, email, or display name.
+
+        Args:
+            query: Search query (username, email, or name)
+
+        Returns:
+            User dict with accountId, displayName, emailAddress, or None if not found
+        """
+        if not self._session:
+            raise RuntimeError("Jira skill not initialized")
+
+        # Use user search endpoint
+        url = f"{self._api_root}/user/search"
+        params = {"query": query, "maxResults": 10}
+
+        response = self._session.get(url, params=params, timeout=30)
+        response.raise_for_status()
+
+        users = response.json()
+        if not users:
+            return None
+
+        # Try exact match first (case-insensitive)
+        query_lower = query.lower()
+        for user in users:
+            display_name = user.get("displayName", "").lower()
+            email = user.get("emailAddress", "").lower()
+            # Check for exact matches
+            if display_name == query_lower or email == query_lower:
+                return user
+            # Check if query is part of email (username portion)
+            if email and query_lower in email.split("@")[0]:
+                return user
+
+        # Return first result if no exact match
+        return users[0]
+
     def assign_issue(self, issue_key: str, assignee: str) -> dict[str, Any]:
         """Assign issue to a user.
 
         Args:
             issue_key: Issue key
-            assignee: Username or account ID
+            assignee: Username, email, display name, or account ID
 
         Returns:
             Result dict
@@ -478,12 +516,24 @@ class JiraSkill(BaseSkill):
         if not self._session:
             raise RuntimeError("Jira skill not initialized")
 
+        # Resolve assignee to account ID if it doesn't look like one
+        # Jira account IDs are typically 24 character hex strings
+        account_id = assignee
+        if assignee and not (len(assignee) == 24 and assignee.isalnum()):
+            # Try to look up the user
+            user = self.find_user(assignee)
+            if user:
+                account_id = user.get("accountId")
+                logger.info(f"Resolved '{assignee}' to account ID: {account_id} ({user.get('displayName')})")
+            else:
+                raise ValueError(f"Could not find Jira user matching '{assignee}'")
+
         # Use the main issue endpoint to update assignee field
         # The /issue/{key}/assignee endpoint doesn't exist in Jira Cloud API v3
         url = f"{self._api_root}/issue/{issue_key}"
         payload = {
             "fields": {
-                "assignee": {"accountId": assignee} if assignee else None
+                "assignee": {"accountId": account_id} if account_id else None
             }
         }
 
@@ -497,8 +547,8 @@ class JiraSkill(BaseSkill):
 
         response.raise_for_status()
 
-        logger.info(f"Assigned {issue_key} to {assignee}")
-        return {"success": True, "issue_key": issue_key, "assignee": assignee}
+        logger.info(f"Assigned {issue_key} to {account_id}")
+        return {"success": True, "issue_key": issue_key, "assignee": account_id}
 
     def get_similar_issues(
         self,
