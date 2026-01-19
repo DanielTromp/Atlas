@@ -43,6 +43,60 @@ def _require_bots_enabled() -> None:
         raise typer.Exit(code=1)
 
 
+def _get_storage_backend() -> str:
+    """Get the configured storage backend."""
+    return os.getenv("ATLAS_STORAGE_BACKEND", "sqlite").lower()
+
+
+def _save_webhook_config(
+    platform: str,
+    bot_token_secret: str,
+    webhook_secret: str | None = None,
+) -> None:
+    """Save webhook configuration to the database (MongoDB or SQLite)."""
+    backend = _get_storage_backend()
+
+    if backend == "mongodb":
+        from infrastructure_atlas.infrastructure.mongodb.client import get_mongodb_client
+
+        db = get_mongodb_client().atlas
+        collection = db["bot_webhook_configs"]
+
+        doc = {
+            "platform": platform,
+            "enabled": True,
+            "bot_token_secret": bot_token_secret,
+            "webhook_secret": webhook_secret,
+            "updated_at": datetime.now(UTC),
+        }
+
+        collection.update_one(
+            {"platform": platform},
+            {"$set": doc, "$setOnInsert": {"created_at": datetime.now(UTC)}},
+            upsert=True,
+        )
+    else:
+        # SQLite via SQLAlchemy
+        ctx = _service_context()
+        with ctx.session_scope() as session:
+            config = session.query(BotWebhookConfig).filter_by(platform=platform).first()
+
+            if config:
+                config.bot_token_secret = bot_token_secret
+                config.webhook_secret = webhook_secret
+                config.enabled = True
+            else:
+                config = BotWebhookConfig(
+                    platform=platform,
+                    enabled=True,
+                    bot_token_secret=bot_token_secret,
+                    webhook_secret=webhook_secret,
+                )
+                session.add(config)
+
+            session.commit()
+
+
 @app.callback()
 def callback():
     """Bot platform management commands.
@@ -156,25 +210,12 @@ def setup_telegram(
         print(f"[red]Failed to verify bot token:[/red] {e}")
         raise typer.Exit(code=1)
 
-    # Store in database
-    ctx = _service_context()
-    with ctx.session_scope() as session:
-        config = session.query(BotWebhookConfig).filter_by(platform="telegram").first()
-
-        if config:
-            config.bot_token_secret = "TELEGRAM_BOT_TOKEN"  # Env var reference
-            config.webhook_secret = webhook_secret
-            config.enabled = True
-        else:
-            config = BotWebhookConfig(
-                platform="telegram",
-                enabled=True,
-                bot_token_secret="TELEGRAM_BOT_TOKEN",
-                webhook_secret=webhook_secret,
-            )
-            session.add(config)
-
-        session.commit()
+    # Store in database (MongoDB or SQLite)
+    _save_webhook_config(
+        platform="telegram",
+        bot_token_secret="TELEGRAM_BOT_TOKEN",
+        webhook_secret=webhook_secret,
+    )
 
     print("[green]Telegram bot configuration saved[/green]")
 
@@ -561,25 +602,12 @@ def setup_slack(
         print(f"[red]Failed to verify bot tokens:[/red] {e}")
         raise typer.Exit(code=1)
 
-    # Store in database
-    ctx = _service_context()
-    with ctx.session_scope() as session:
-        config = session.query(BotWebhookConfig).filter_by(platform="slack").first()
-
-        if config:
-            config.bot_token_secret = "SLACK_BOT_TOKEN"  # Env var reference
-            config.webhook_secret = "SLACK_APP_TOKEN"  # Using this field for app token ref
-            config.enabled = True
-        else:
-            config = BotWebhookConfig(
-                platform="slack",
-                enabled=True,
-                bot_token_secret="SLACK_BOT_TOKEN",
-                webhook_secret="SLACK_APP_TOKEN",  # App token reference
-            )
-            session.add(config)
-
-        session.commit()
+    # Store in database (MongoDB or SQLite)
+    _save_webhook_config(
+        platform="slack",
+        bot_token_secret="SLACK_BOT_TOKEN",
+        webhook_secret="SLACK_APP_TOKEN",
+    )
 
     print("[green]Slack bot configuration saved[/green]")
     print()
