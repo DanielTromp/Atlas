@@ -488,6 +488,13 @@ class JiraSkill(BaseSkill):
         }
 
         response = self._session.put(url, json=payload, timeout=30)
+
+        if response.status_code == 400:
+            # Log the actual error from Jira to help debugging
+            error_detail = response.text[:500] if response.text else "No error details"
+            logger.error(f"Jira assign_issue 400 error for {issue_key}: {error_detail}")
+            raise ValueError(f"Failed to assign issue: {error_detail}")
+
         response.raise_for_status()
 
         logger.info(f"Assigned {issue_key} to {assignee}")

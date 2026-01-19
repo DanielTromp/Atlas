@@ -846,54 +846,99 @@ class PlaygroundRuntime:
         return session
 
     def _save_session_to_db(self, session: PlaygroundSession) -> None:
-        """Save a session to the database."""
-        if not self.db_session:
-            return
+        """Save a session to the database (MongoDB or SQLite)."""
+        import os
+        from datetime import UTC, datetime
 
-        try:
-            from infrastructure_atlas.db.models import PlaygroundSession as DBSession
+        backend = os.getenv("ATLAS_STORAGE_BACKEND", "sqlite").lower()
 
-            db_session = self.db_session.query(DBSession).filter_by(id=session.session_id).first()
+        if backend == "mongodb":
+            try:
+                from infrastructure_atlas.infrastructure.mongodb.client import get_mongodb_client
 
-            if db_session:
-                # Update existing
-                db_session.agent_id = session.agent_id
-                db_session.user_id = session.user_id
-                db_session.client = session.client
-                db_session.messages = session.messages
-                db_session.state = session.state
-                db_session.config_override = session.config_override
-                db_session.total_tokens = session.total_tokens
-                db_session.total_cost_usd = session.total_cost_usd
-            else:
-                # Create new
-                db_session = DBSession(
-                    id=session.session_id,
-                    agent_id=session.agent_id,
-                    user_id=session.user_id,
-                    client=session.client,
-                    messages=session.messages,
-                    state=session.state,
-                    config_override=session.config_override,
-                    total_tokens=session.total_tokens,
-                    total_cost_usd=session.total_cost_usd,
-                )
-                self.db_session.add(db_session)
+                db = get_mongodb_client().atlas
+                collection = db["playground_sessions"]
 
-            self.db_session.commit()
-        except Exception as e:
-            logger.error(f"Failed to save session to DB: {e!s}")
-            self.db_session.rollback()
+                doc = {
+                    "_id": session.session_id,
+                    "agent_id": session.agent_id,
+                    "user_id": session.user_id,
+                    "client": session.client,
+                    "messages": session.messages,
+                    "state": session.state,
+                    "config_override": session.config_override,
+                    "total_tokens": session.total_tokens,
+                    "total_cost_usd": session.total_cost_usd,
+                    "updated_at": datetime.now(UTC),
+                }
+
+                collection.replace_one({"_id": session.session_id}, doc, upsert=True)
+            except Exception as e:
+                logger.error(f"Failed to save session to MongoDB: {e!s}")
+        else:
+            # SQLite fallback
+            if not self.db_session:
+                return
+
+            try:
+                from infrastructure_atlas.db.models import PlaygroundSession as DBSession
+
+                db_session = self.db_session.query(DBSession).filter_by(id=session.session_id).first()
+
+                if db_session:
+                    # Update existing
+                    db_session.agent_id = session.agent_id
+                    db_session.user_id = session.user_id
+                    db_session.client = session.client
+                    db_session.messages = session.messages
+                    db_session.state = session.state
+                    db_session.config_override = session.config_override
+                    db_session.total_tokens = session.total_tokens
+                    db_session.total_cost_usd = session.total_cost_usd
+                else:
+                    # Create new
+                    db_session = DBSession(
+                        id=session.session_id,
+                        agent_id=session.agent_id,
+                        user_id=session.user_id,
+                        client=session.client,
+                        messages=session.messages,
+                        state=session.state,
+                        config_override=session.config_override,
+                        total_tokens=session.total_tokens,
+                        total_cost_usd=session.total_cost_usd,
+                    )
+                    self.db_session.add(db_session)
+
+                self.db_session.commit()
+            except Exception as e:
+                logger.error(f"Failed to save session to DB: {e!s}")
+                self.db_session.rollback()
 
     def _delete_session_from_db(self, session_id: str) -> None:
-        """Delete a session from the database."""
-        if not self.db_session:
-            return
+        """Delete a session from the database (MongoDB or SQLite)."""
+        import os
 
-        from infrastructure_atlas.db.models import PlaygroundSession as DBSession
+        backend = os.getenv("ATLAS_STORAGE_BACKEND", "sqlite").lower()
 
-        self.db_session.query(DBSession).filter_by(id=session_id).delete()
-        self.db_session.commit()
+        if backend == "mongodb":
+            try:
+                from infrastructure_atlas.infrastructure.mongodb.client import get_mongodb_client
+
+                db = get_mongodb_client().atlas
+                collection = db["playground_sessions"]
+                collection.delete_one({"_id": session_id})
+            except Exception as e:
+                logger.error(f"Failed to delete session from MongoDB: {e!s}")
+        else:
+            # SQLite fallback
+            if not self.db_session:
+                return
+
+            from infrastructure_atlas.db.models import PlaygroundSession as DBSession
+
+            self.db_session.query(DBSession).filter_by(id=session_id).delete()
+            self.db_session.commit()
 
 
 # Factory function for dependency injection
