@@ -82,9 +82,23 @@ def status():
                     except Exception as e:
                         bot_name = f"[red]Error: {e}[/red]"
             elif platform == "slack":
-                configured = bool(os.getenv("SLACK_BOT_TOKEN"))
-                if configured:
-                    bot_name = "[dim]Configured[/dim]"
+                slack_bot_token = os.getenv("SLACK_BOT_TOKEN")
+                slack_app_token = os.getenv("SLACK_APP_TOKEN")
+                if slack_bot_token and slack_app_token:
+                    configured = True
+                    try:
+                        from infrastructure_atlas.bots.adapters.slack import SlackAdapter
+
+                        adapter = SlackAdapter(bot_token=slack_bot_token)
+                        info = asyncio.run(adapter.get_bot_info())
+                        bot_name = f"@{info.get('username', 'unknown')} ({info.get('team', '')})"
+                    except ImportError:
+                        bot_name = "[yellow]slack-bolt not installed[/yellow]"
+                    except Exception as e:
+                        bot_name = f"[red]Error: {e}[/red]"
+                elif slack_bot_token:
+                    configured = False
+                    bot_name = "[yellow]Missing SLACK_APP_TOKEN[/yellow]"
             elif platform == "teams":
                 configured = bool(os.getenv("TEAMS_APP_ID") and os.getenv("TEAMS_APP_PASSWORD"))
                 if configured:
@@ -488,4 +502,178 @@ def run_telegram():
         print("\n[yellow]Bot stopped[/yellow]")
     except Exception as e:
         print(f"[red]Bot error:[/red] {e}")
+        raise typer.Exit(code=1)
+
+
+# ============================================================================
+# Slack Commands
+# ============================================================================
+
+
+@app.command("setup-slack")
+def setup_slack(
+    bot_token: str = typer.Option(None, "--bot-token", help="Slack Bot Token (xoxb-...)"),
+    app_token: str = typer.Option(None, "--app-token", help="Slack App Token for Socket Mode (xapp-...)"),
+):
+    """Configure Slack bot for Socket Mode (no public endpoints needed).
+
+    Socket Mode connects via WebSocket - perfect for internal deployments.
+
+    \b
+    To set up:
+    1. Go to https://api.slack.com/apps and create a new app
+    2. Enable Socket Mode in the app settings
+    3. Generate an App-Level Token with 'connections:write' scope
+    4. Add Bot Token Scopes:
+       - app_mentions:read, chat:write, im:history, im:read, im:write, users:read
+    5. Subscribe to events: message.im, app_mention
+    6. Install the app to your workspace
+    """
+    _require_bots_enabled()
+
+    # Get tokens from args or env
+    bot_token = bot_token or os.getenv("SLACK_BOT_TOKEN")
+    app_token = app_token or os.getenv("SLACK_APP_TOKEN")
+
+    if not bot_token:
+        print("[red]Bot token required[/red]")
+        print("[dim]Use --bot-token or set SLACK_BOT_TOKEN env var[/dim]")
+        raise typer.Exit(code=1)
+
+    if not app_token:
+        print("[red]App token required for Socket Mode[/red]")
+        print("[dim]Use --app-token or set SLACK_APP_TOKEN env var[/dim]")
+        print("[dim]Generate one at: https://api.slack.com/apps > Your App > Basic Information > App-Level Tokens[/dim]")
+        raise typer.Exit(code=1)
+
+    # Test the tokens
+    try:
+        from infrastructure_atlas.bots.adapters.slack import SlackAdapter
+
+        adapter = SlackAdapter(bot_token=bot_token, app_token=app_token)
+        info = asyncio.run(adapter.get_bot_info())
+        print(f"[green]Bot verified:[/green] @{info.get('username')} (team: {info.get('team')})")
+    except ImportError:
+        print("[red]slack-bolt package not installed[/red]")
+        print("[dim]Run: uv add slack-bolt slack-sdk[/dim]")
+        raise typer.Exit(code=1)
+    except Exception as e:
+        print(f"[red]Failed to verify bot tokens:[/red] {e}")
+        raise typer.Exit(code=1)
+
+    # Store in database
+    ctx = _service_context()
+    with ctx.session_scope() as session:
+        config = session.query(BotWebhookConfig).filter_by(platform="slack").first()
+
+        if config:
+            config.bot_token_secret = "SLACK_BOT_TOKEN"  # Env var reference
+            config.webhook_secret = "SLACK_APP_TOKEN"  # Using this field for app token ref
+            config.enabled = True
+        else:
+            config = BotWebhookConfig(
+                platform="slack",
+                enabled=True,
+                bot_token_secret="SLACK_BOT_TOKEN",
+                webhook_secret="SLACK_APP_TOKEN",  # App token reference
+            )
+            session.add(config)
+
+        session.commit()
+
+    print("[green]Slack bot configuration saved[/green]")
+    print()
+    print("[bold]Next steps:[/bold]")
+    print("1. Add these environment variables to your .env file:")
+    print(f"   SLACK_BOT_TOKEN={bot_token[:20]}...")
+    print(f"   SLACK_APP_TOKEN={app_token[:20]}...")
+    print("2. Run the bot: [cyan]atlas bots run-slack[/cyan]")
+    print()
+    print("[dim]Users can link their accounts with /link <code> in Slack DMs[/dim]")
+
+
+@app.command("run-slack")
+def run_slack():
+    """Run the Slack bot in Socket Mode (no public URL required).
+
+    This starts a persistent WebSocket connection to Slack.
+    Use Ctrl+C to stop.
+
+    Socket Mode is ideal for:
+    - Internal deployments behind firewalls
+    - Development and testing
+    - Environments without public HTTPS endpoints
+
+    \b
+    Required environment variables:
+    - SLACK_BOT_TOKEN: Bot User OAuth Token (xoxb-...)
+    - SLACK_APP_TOKEN: App-Level Token for Socket Mode (xapp-...)
+    """
+    _require_bots_enabled()
+
+    bot_token = os.getenv("SLACK_BOT_TOKEN")
+    app_token = os.getenv("SLACK_APP_TOKEN")
+
+    if not bot_token:
+        print("[red]SLACK_BOT_TOKEN not set[/red]")
+        print("[dim]Add SLACK_BOT_TOKEN=xoxb-... to your .env file[/dim]")
+        raise typer.Exit(code=1)
+
+    if not app_token:
+        print("[red]SLACK_APP_TOKEN not set[/red]")
+        print("[dim]Add SLACK_APP_TOKEN=xapp-... to your .env file[/dim]")
+        print("[dim]This is required for Socket Mode (no webhooks needed)[/dim]")
+        raise typer.Exit(code=1)
+
+    print("[bold]Starting Slack bot in Socket Mode...[/bold]")
+    print("[dim]Press Ctrl+C to stop[/dim]\n")
+
+    try:
+        from infrastructure_atlas.bots.adapters.slack_socket import run_socket_mode_bot
+
+        asyncio.run(run_socket_mode_bot(bot_token=bot_token, app_token=app_token))
+    except ImportError as e:
+        print(f"[red]Missing dependency:[/red] {e}")
+        print("[dim]Run: uv add slack-bolt slack-sdk[/dim]")
+        raise typer.Exit(code=1)
+    except KeyboardInterrupt:
+        print("\n[yellow]Bot stopped[/yellow]")
+    except Exception as e:
+        print(f"[red]Bot error:[/red] {e}")
+        raise typer.Exit(code=1)
+
+
+@app.command("test-slack")
+def test_slack(
+    channel_id: str = typer.Argument(..., help="Channel or DM ID to send test message to"),
+):
+    """Send a test message to a Slack channel or DM.
+
+    The channel ID looks like C01234567 (channels) or D01234567 (DMs).
+    You can find it by right-clicking a channel > View channel details > Copy ID.
+    """
+    _require_bots_enabled()
+
+    token = os.getenv("SLACK_BOT_TOKEN")
+    if not token:
+        print("[red]SLACK_BOT_TOKEN not set[/red]")
+        raise typer.Exit(code=1)
+
+    try:
+        from infrastructure_atlas.bots.adapters.slack import SlackAdapter
+
+        adapter = SlackAdapter(bot_token=token)
+        message_id = asyncio.run(
+            adapter.send_message(
+                chat_id=channel_id,
+                content="*Test message from Atlas* :robot_face:\n\nIf you see this, the bot is working correctly!",
+            )
+        )
+        print(f"[green]Test message sent successfully[/green] (ts: {message_id})")
+    except ImportError:
+        print("[red]slack-bolt package not installed[/red]")
+        print("[dim]Run: uv add slack-bolt slack-sdk[/dim]")
+        raise typer.Exit(code=1)
+    except Exception as e:
+        print(f"[red]Failed to send test message:[/red] {e}")
         raise typer.Exit(code=1)
