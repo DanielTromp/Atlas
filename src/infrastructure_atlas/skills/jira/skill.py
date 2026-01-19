@@ -478,8 +478,14 @@ class JiraSkill(BaseSkill):
         if not self._session:
             raise RuntimeError("Jira skill not initialized")
 
-        url = f"{self._api_root}/issue/{issue_key}/assignee"
-        payload = {"accountId": assignee}
+        # Use the main issue endpoint to update assignee field
+        # The /issue/{key}/assignee endpoint doesn't exist in Jira Cloud API v3
+        url = f"{self._api_root}/issue/{issue_key}"
+        payload = {
+            "fields": {
+                "assignee": {"accountId": assignee} if assignee else None
+            }
+        }
 
         response = self._session.put(url, json=payload, timeout=30)
         response.raise_for_status()
