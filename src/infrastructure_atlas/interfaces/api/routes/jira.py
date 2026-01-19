@@ -278,6 +278,279 @@ def jira_search(
     return {"total": total, "issues": out, "jql": jql_str, "endpoint": used_endpoint}
 
 
+@router.get("/issue/{key}")
+def get_issue(key: str):
+    """Get a single Jira issue by key."""
+    require_jira_enabled()
+    sess, base = _jira_session()
+
+    url = f"{base}/rest/api/3/issue/{key}"
+    fields = [
+        "key", "summary", "status", "assignee", "priority", "updated", "created",
+        "issuetype", "project", "description", "labels", "comment"
+    ]
+
+    try:
+        r = sess.get(url, params={"fields": ",".join(fields)}, timeout=30)
+        if r.status_code == 404:
+            raise HTTPException(status_code=404, detail=f"Issue {key} not found")
+        r.raise_for_status()
+        data = r.json()
+
+        f = data.get("fields", {})
+        return {
+            "key": data.get("key", ""),
+            "summary": f.get("summary", ""),
+            "status": (f.get("status") or {}).get("name", ""),
+            "assignee": (f.get("assignee") or {}).get("displayName", ""),
+            "assignee_account_id": (f.get("assignee") or {}).get("accountId", ""),
+            "priority": (f.get("priority") or {}).get("name", ""),
+            "issuetype": (f.get("issuetype") or {}).get("name", ""),
+            "project": (f.get("project") or {}).get("key", ""),
+            "labels": f.get("labels", []),
+            "updated": f.get("updated", ""),
+            "created": f.get("created", ""),
+            "url": f"{base}/browse/{key}",
+        }
+    except requests.HTTPError as ex:
+        raise HTTPException(status_code=ex.response.status_code, detail=str(ex))
+    except Exception as ex:
+        raise HTTPException(status_code=502, detail=f"Jira error: {ex}")
+
+
+# Issue Models
+class CreateIssueRequest(BaseModel):
+    """Request to create a Jira issue."""
+    project_key: str
+    issue_type: str = "Task"
+    summary: str
+    description: str | None = None
+    priority: str | None = None
+    assignee: str | None = None  # Account ID or email
+    labels: list[str] | None = None
+    linked_issues: list[dict[str, str]] | None = None  # [{issue_key, link_type}]
+    custom_fields: dict[str, Any] | None = None
+
+
+class UpdateIssueRequest(BaseModel):
+    """Request to update a Jira issue."""
+    summary: str | None = None
+    description: str | None = None
+    priority: str | None = None
+    assignee: str | None = None
+    labels: list[str] | None = None
+    custom_fields: dict[str, Any] | None = None
+
+
+class AddCommentRequest(BaseModel):
+    """Request to add a comment to a Jira issue."""
+    body: str
+
+
+@router.post("/issues")
+def create_issue(req: CreateIssueRequest):
+    """Create a new Jira issue."""
+    require_jira_enabled()
+    sess, base = _jira_session()
+
+    # Build the issue fields
+    fields: dict[str, Any] = {
+        "project": {"key": req.project_key},
+        "issuetype": {"name": req.issue_type},
+        "summary": req.summary,
+    }
+
+    # Add description in ADF format if provided
+    if req.description:
+        fields["description"] = {
+            "type": "doc",
+            "version": 1,
+            "content": [
+                {
+                    "type": "paragraph",
+                    "content": [{"type": "text", "text": req.description}],
+                }
+            ],
+        }
+
+    if req.priority:
+        fields["priority"] = {"name": req.priority}
+
+    if req.assignee:
+        fields["assignee"] = {"accountId": req.assignee}
+
+    if req.labels:
+        fields["labels"] = req.labels
+
+    # Add custom fields
+    if req.custom_fields:
+        for field_id, value in req.custom_fields.items():
+            if not field_id.startswith("customfield_") and field_id.isdigit():
+                field_id = f"customfield_{field_id}"
+            fields[field_id] = value
+
+    payload = {"fields": fields}
+
+    url = f"{base}/rest/api/3/issue"
+    try:
+        r = sess.post(url, json=payload, headers={"Content-Type": "application/json"}, timeout=30)
+        if r.status_code == 401:
+            raise HTTPException(status_code=401, detail="Unauthorized: check ATLASSIAN_EMAIL/ATLASSIAN_API_TOKEN")
+        if r.status_code == 400:
+            error_data = r.json() if r.text else {}
+            errors = error_data.get("errors", {})
+            error_messages = error_data.get("errorMessages", [])
+            detail = "; ".join(error_messages) if error_messages else str(errors)
+            raise HTTPException(status_code=400, detail=f"Invalid issue data: {detail}")
+        if r.status_code == 403:
+            raise HTTPException(status_code=403, detail=f"Forbidden: missing create permission for project {req.project_key}")
+        r.raise_for_status()
+
+        result = r.json()
+        issue_key = result.get("key", "")
+        issue_id = result.get("id", "")
+
+        # Create issue links if provided
+        if req.linked_issues:
+            for link in req.linked_issues:
+                link_issue_key = link.get("issue_key")
+                link_type = link.get("link_type", "relates to")
+                if link_issue_key:
+                    try:
+                        link_url = f"{base}/rest/api/3/issueLink"
+                        link_payload = {
+                            "type": {"name": link_type},
+                            "inwardIssue": {"key": issue_key},
+                            "outwardIssue": {"key": link_issue_key},
+                        }
+                        sess.post(link_url, json=link_payload, timeout=15)
+                    except Exception:
+                        pass  # Best effort linking
+
+        return {
+            "success": True,
+            "key": issue_key,
+            "id": issue_id,
+            "url": f"{base}/browse/{issue_key}",
+        }
+    except HTTPException:
+        raise
+    except requests.HTTPError as ex:
+        msg = getattr(ex.response, "text", str(ex))[:300]
+        raise HTTPException(status_code=502, detail=f"Jira error: {msg}")
+    except Exception as ex:
+        raise HTTPException(status_code=502, detail=f"Jira error: {ex}")
+
+
+@router.put("/issue/{key}")
+def update_issue(key: str, req: UpdateIssueRequest):
+    """Update an existing Jira issue."""
+    require_jira_enabled()
+    sess, base = _jira_session()
+
+    fields: dict[str, Any] = {}
+
+    if req.summary is not None:
+        fields["summary"] = req.summary
+
+    if req.description is not None:
+        fields["description"] = {
+            "type": "doc",
+            "version": 1,
+            "content": [
+                {
+                    "type": "paragraph",
+                    "content": [{"type": "text", "text": req.description}],
+                }
+            ],
+        }
+
+    if req.priority is not None:
+        fields["priority"] = {"name": req.priority}
+
+    if req.assignee is not None:
+        fields["assignee"] = {"accountId": req.assignee} if req.assignee else None
+
+    if req.labels is not None:
+        fields["labels"] = req.labels
+
+    if req.custom_fields:
+        for field_id, value in req.custom_fields.items():
+            if not field_id.startswith("customfield_") and field_id.isdigit():
+                field_id = f"customfield_{field_id}"
+            fields[field_id] = value
+
+    if not fields:
+        return {"success": True, "message": "No fields to update", "key": key, "url": f"{base}/browse/{key}"}
+
+    payload = {"fields": fields}
+
+    url = f"{base}/rest/api/3/issue/{key}"
+    try:
+        r = sess.put(url, json=payload, headers={"Content-Type": "application/json"}, timeout=30)
+        if r.status_code == 401:
+            raise HTTPException(status_code=401, detail="Unauthorized: check ATLASSIAN_EMAIL/ATLASSIAN_API_TOKEN")
+        if r.status_code == 404:
+            raise HTTPException(status_code=404, detail=f"Issue {key} not found")
+        if r.status_code == 400:
+            error_data = r.json() if r.text else {}
+            errors = error_data.get("errors", {})
+            error_messages = error_data.get("errorMessages", [])
+            detail = "; ".join(error_messages) if error_messages else str(errors)
+            raise HTTPException(status_code=400, detail=f"Invalid update data: {detail}")
+        r.raise_for_status()
+
+        return {"success": True, "key": key, "url": f"{base}/browse/{key}"}
+    except HTTPException:
+        raise
+    except requests.HTTPError as ex:
+        msg = getattr(ex.response, "text", str(ex))[:300]
+        raise HTTPException(status_code=502, detail=f"Jira error: {msg}")
+    except Exception as ex:
+        raise HTTPException(status_code=502, detail=f"Jira error: {ex}")
+
+
+@router.post("/issue/{key}/comment")
+def add_comment(key: str, req: AddCommentRequest):
+    """Add a comment to a Jira issue."""
+    require_jira_enabled()
+    sess, base = _jira_session()
+
+    payload = {
+        "body": {
+            "type": "doc",
+            "version": 1,
+            "content": [
+                {
+                    "type": "paragraph",
+                    "content": [{"type": "text", "text": req.body}],
+                }
+            ],
+        }
+    }
+
+    url = f"{base}/rest/api/3/issue/{key}/comment"
+    try:
+        r = sess.post(url, json=payload, headers={"Content-Type": "application/json"}, timeout=30)
+        if r.status_code == 404:
+            raise HTTPException(status_code=404, detail=f"Issue {key} not found")
+        r.raise_for_status()
+
+        result = r.json()
+        return {
+            "success": True,
+            "id": result.get("id", ""),
+            "created": result.get("created", ""),
+        }
+    except HTTPException:
+        raise
+    except requests.HTTPError as ex:
+        msg = getattr(ex.response, "text", str(ex))[:300]
+        raise HTTPException(status_code=502, detail=f"Jira error: {msg}")
+    except Exception as ex:
+        raise HTTPException(status_code=502, detail=f"Jira error: {ex}")
+
+
 # Remote Link Models
 class ConfluenceRemoteLinkReq(BaseModel):
     page_id: str

@@ -13,6 +13,7 @@ from typing import Any
 
 import requests
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 
 from infrastructure_atlas.infrastructure.modules import get_module_registry
 
@@ -267,3 +268,253 @@ def confluence_search(
     if not total:
         total = len(out)
     return {"total": total, "cql": cql, "results": out}
+
+
+# Page Management Models
+class CreatePageRequest(BaseModel):
+    """Request to create a Confluence page."""
+    space_key: str
+    title: str
+    content: str
+    parent_page_id: str | None = None
+    labels: list[str] | None = None
+    content_format: str = "storage"  # "storage" or "markdown"
+
+
+class UpdatePageRequest(BaseModel):
+    """Request to update a Confluence page."""
+    title: str | None = None
+    content: str | None = None
+    content_format: str = "storage"
+    version_comment: str | None = None
+    minor_edit: bool = False
+
+
+def _markdown_to_storage(markdown: str) -> str:
+    """Convert markdown to Confluence storage format (basic conversion)."""
+    import re
+
+    content = markdown
+
+    # Headers
+    content = re.sub(r'^### (.+)$', r'<h3>\1</h3>', content, flags=re.MULTILINE)
+    content = re.sub(r'^## (.+)$', r'<h2>\1</h2>', content, flags=re.MULTILINE)
+    content = re.sub(r'^# (.+)$', r'<h1>\1</h1>', content, flags=re.MULTILINE)
+
+    # Bold and italic
+    content = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', content)
+    content = re.sub(r'\*(.+?)\*', r'<em>\1</em>', content)
+
+    # Code blocks
+    content = re.sub(r'```(\w+)?\n(.*?)\n```', r'<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">\1</ac:parameter><ac:plain-text-body><![CDATA[\2]]></ac:plain-text-body></ac:structured-macro>', content, flags=re.DOTALL)
+    content = re.sub(r'`([^`]+)`', r'<code>\1</code>', content)
+
+    # Lists (basic)
+    lines = content.split('\n')
+    in_list = False
+    result = []
+    for line in lines:
+        if line.startswith('- '):
+            if not in_list:
+                result.append('<ul>')
+                in_list = True
+            result.append(f'<li>{line[2:]}</li>')
+        elif line.startswith('* '):
+            if not in_list:
+                result.append('<ul>')
+                in_list = True
+            result.append(f'<li>{line[2:]}</li>')
+        else:
+            if in_list:
+                result.append('</ul>')
+                in_list = False
+            result.append(line)
+    if in_list:
+        result.append('</ul>')
+    content = '\n'.join(result)
+
+    # Paragraphs (wrap non-html lines)
+    lines = content.split('\n')
+    result = []
+    for line in lines:
+        line = line.strip()
+        if line and not line.startswith('<'):
+            result.append(f'<p>{line}</p>')
+        else:
+            result.append(line)
+
+    return '\n'.join(result)
+
+
+@router.get("/page/{page_id}")
+def get_page(page_id: str):
+    """Get a Confluence page by ID."""
+    require_confluence_enabled()
+    sess, wiki = _conf_session()
+
+    url = f"{wiki}/rest/api/content/{page_id}"
+    params = {"expand": "body.storage,version,space,ancestors"}
+
+    try:
+        r = sess.get(url, params=params, timeout=30)
+        if r.status_code == 404:
+            raise HTTPException(status_code=404, detail=f"Page {page_id} not found")
+        r.raise_for_status()
+        data = r.json()
+
+        return {
+            "page_id": data.get("id", ""),
+            "title": data.get("title", ""),
+            "space_key": (data.get("space") or {}).get("key", ""),
+            "version": (data.get("version") or {}).get("number", 1),
+            "content": (data.get("body", {}).get("storage", {}) or {}).get("value", ""),
+            "url": f"{wiki}{(data.get('_links') or {}).get('webui', '')}",
+            "ancestors": [{"id": a.get("id"), "title": a.get("title")} for a in (data.get("ancestors") or [])],
+        }
+    except requests.HTTPError as ex:
+        raise HTTPException(status_code=ex.response.status_code, detail=str(ex))
+    except Exception as ex:
+        raise HTTPException(status_code=502, detail=f"Confluence error: {ex}")
+
+
+@router.post("/pages")
+def create_page(req: CreatePageRequest):
+    """Create a new Confluence page."""
+    require_confluence_enabled()
+    sess, wiki = _conf_session()
+
+    # Convert markdown if needed
+    content = req.content
+    if req.content_format == "markdown":
+        content = _markdown_to_storage(req.content)
+
+    payload: dict[str, Any] = {
+        "type": "page",
+        "title": req.title,
+        "space": {"key": req.space_key},
+        "body": {
+            "storage": {
+                "value": content,
+                "representation": "storage",
+            }
+        },
+    }
+
+    if req.parent_page_id:
+        payload["ancestors"] = [{"id": req.parent_page_id}]
+
+    url = f"{wiki}/rest/api/content"
+    try:
+        r = sess.post(url, json=payload, headers={"Content-Type": "application/json"}, timeout=30)
+        if r.status_code == 401:
+            raise HTTPException(status_code=401, detail="Unauthorized: check ATLASSIAN_EMAIL/ATLASSIAN_API_TOKEN")
+        if r.status_code == 400:
+            error_data = r.json() if r.text else {}
+            detail = error_data.get("message", str(error_data))
+            raise HTTPException(status_code=400, detail=f"Invalid page data: {detail}")
+        r.raise_for_status()
+
+        result = r.json()
+        page_id = result.get("id", "")
+
+        # Add labels if provided
+        if req.labels:
+            try:
+                labels_url = f"{wiki}/rest/api/content/{page_id}/label"
+                labels_payload = [{"name": label} for label in req.labels]
+                sess.post(labels_url, json=labels_payload, timeout=15)
+            except Exception:
+                pass  # Best effort labeling
+
+        return {
+            "success": True,
+            "page_id": page_id,
+            "title": result.get("title", ""),
+            "space_key": (result.get("space") or {}).get("key", ""),
+            "version": (result.get("version") or {}).get("number", 1),
+            "url": f"{wiki}{(result.get('_links') or {}).get('webui', '')}",
+        }
+    except HTTPException:
+        raise
+    except requests.HTTPError as ex:
+        msg = getattr(ex.response, "text", str(ex))[:300]
+        raise HTTPException(status_code=502, detail=f"Confluence error: {msg}")
+    except Exception as ex:
+        raise HTTPException(status_code=502, detail=f"Confluence error: {ex}")
+
+
+@router.put("/pages/{page_id}")
+def update_page(page_id: str, req: UpdatePageRequest):
+    """Update an existing Confluence page."""
+    require_confluence_enabled()
+    sess, wiki = _conf_session()
+
+    # First get current page to get version number
+    get_url = f"{wiki}/rest/api/content/{page_id}"
+    try:
+        r = sess.get(get_url, params={"expand": "version,space"}, timeout=30)
+        if r.status_code == 404:
+            raise HTTPException(status_code=404, detail=f"Page {page_id} not found")
+        r.raise_for_status()
+        current = r.json()
+    except requests.HTTPError as ex:
+        raise HTTPException(status_code=ex.response.status_code, detail=str(ex))
+
+    current_version = (current.get("version") or {}).get("number", 0)
+    current_title = current.get("title", "")
+    space_key = (current.get("space") or {}).get("key", "")
+
+    # Build update payload
+    title = req.title if req.title is not None else current_title
+
+    payload: dict[str, Any] = {
+        "type": "page",
+        "title": title,
+        "version": {
+            "number": current_version + 1,
+            "minorEdit": req.minor_edit,
+        },
+    }
+
+    if req.version_comment:
+        payload["version"]["message"] = req.version_comment
+
+    if req.content is not None:
+        content = req.content
+        if req.content_format == "markdown":
+            content = _markdown_to_storage(req.content)
+        payload["body"] = {
+            "storage": {
+                "value": content,
+                "representation": "storage",
+            }
+        }
+
+    url = f"{wiki}/rest/api/content/{page_id}"
+    try:
+        r = sess.put(url, json=payload, headers={"Content-Type": "application/json"}, timeout=30)
+        if r.status_code == 401:
+            raise HTTPException(status_code=401, detail="Unauthorized: check ATLASSIAN_EMAIL/ATLASSIAN_API_TOKEN")
+        if r.status_code == 400:
+            error_data = r.json() if r.text else {}
+            detail = error_data.get("message", str(error_data))
+            raise HTTPException(status_code=400, detail=f"Invalid update data: {detail}")
+        r.raise_for_status()
+
+        result = r.json()
+
+        return {
+            "success": True,
+            "page_id": result.get("id", ""),
+            "title": result.get("title", ""),
+            "space_key": space_key,
+            "version": (result.get("version") or {}).get("number", current_version + 1),
+            "url": f"{wiki}{(result.get('_links') or {}).get('webui', '')}",
+        }
+    except HTTPException:
+        raise
+    except requests.HTTPError as ex:
+        msg = getattr(ex.response, "text", str(ex))[:300]
+        raise HTTPException(status_code=502, detail=f"Confluence error: {msg}")
+    except Exception as ex:
+        raise HTTPException(status_code=502, detail=f"Confluence error: {ex}")

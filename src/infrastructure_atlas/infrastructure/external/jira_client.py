@@ -250,6 +250,293 @@ class JiraClient:
             msg = getattr(ex.response, "text", str(ex))[:500]
             raise JiraAPIError(f"Failed to delete attachment: {msg}") from ex
 
+    def create_issue(
+        self,
+        *,
+        project_key: str,
+        issue_type: str,
+        summary: str,
+        description: str | None = None,
+        priority: str | None = None,
+        assignee_account_id: str | None = None,
+        labels: list[str] | None = None,
+        custom_fields: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Create a new Jira issue.
+
+        Args:
+            project_key: Project key (e.g., "ESD", "SYS")
+            issue_type: Issue type name (e.g., "Task", "Bug", "RFC")
+            summary: Issue title/summary
+            description: Detailed description (optional)
+            priority: Priority name (e.g., "Medium", "High")
+            assignee_account_id: Account ID of assignee (optional)
+            labels: List of labels (optional)
+            custom_fields: Additional custom field values (optional)
+
+        Returns:
+            Dict with issue key, id, and URL
+
+        Raises:
+            JiraAuthError: If authentication fails
+            JiraAPIError: If the API request fails
+        """
+        url = f"{self._config.api_root()}/issue"
+
+        # Build the issue fields
+        fields: dict[str, Any] = {
+            "project": {"key": project_key},
+            "issuetype": {"name": issue_type},
+            "summary": summary,
+        }
+
+        # Add description in ADF format if provided
+        if description:
+            fields["description"] = {
+                "type": "doc",
+                "version": 1,
+                "content": [
+                    {
+                        "type": "paragraph",
+                        "content": [{"type": "text", "text": description}],
+                    }
+                ],
+            }
+
+        if priority:
+            fields["priority"] = {"name": priority}
+
+        if assignee_account_id:
+            fields["assignee"] = {"accountId": assignee_account_id}
+
+        if labels:
+            fields["labels"] = labels
+
+        # Add custom fields
+        if custom_fields:
+            for field_id, value in custom_fields.items():
+                # Support both "customfield_12345" format and raw field IDs
+                if not field_id.startswith("customfield_") and field_id.isdigit():
+                    field_id = f"customfield_{field_id}"
+                fields[field_id] = value
+
+        payload = {"fields": fields}
+
+        try:
+            response = self._session.post(
+                url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=self._timeout,
+            )
+
+            if response.status_code == 401:
+                raise JiraAuthError("Authentication failed: check email and API token")
+            if response.status_code == 400:
+                # Parse validation errors
+                error_data = response.json() if response.text else {}
+                errors = error_data.get("errors", {})
+                error_messages = error_data.get("errorMessages", [])
+                detail = "; ".join(error_messages) if error_messages else str(errors)
+                raise JiraAPIError(f"Invalid issue data: {detail}")
+            if response.status_code == 403:
+                raise JiraAPIError(f"Forbidden: missing create permission for project {project_key}")
+
+            response.raise_for_status()
+
+            result = response.json()
+            issue_key = result.get("key", "")
+            issue_id = result.get("id", "")
+
+            return {
+                "key": issue_key,
+                "id": issue_id,
+                "url": f"{self._config.base_url}/browse/{issue_key}",
+                "self": result.get("self", ""),
+            }
+
+        except JiraAuthError:
+            raise
+        except JiraAPIError:
+            raise
+        except requests.HTTPError as ex:
+            msg = getattr(ex.response, "text", str(ex))[:500]
+            raise JiraAPIError(f"Failed to create issue: {msg}") from ex
+        except requests.RequestException as ex:
+            raise JiraAPIError(f"Request failed: {ex}") from ex
+
+    def update_issue(
+        self,
+        issue_key: str,
+        *,
+        summary: str | None = None,
+        description: str | None = None,
+        priority: str | None = None,
+        assignee_account_id: str | None = None,
+        labels: list[str] | None = None,
+        custom_fields: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Update an existing Jira issue.
+
+        Args:
+            issue_key: Issue key (e.g., "ESD-38215")
+            summary: New summary (optional)
+            description: New description (optional)
+            priority: New priority (optional)
+            assignee_account_id: New assignee account ID (optional)
+            labels: New labels (replaces existing, optional)
+            custom_fields: Custom field updates (optional)
+
+        Returns:
+            Dict with success status and issue URL
+
+        Raises:
+            JiraAuthError: If authentication fails
+            JiraAPIError: If the API request fails
+        """
+        url = f"{self._config.api_root()}/issue/{issue_key}"
+
+        fields: dict[str, Any] = {}
+
+        if summary is not None:
+            fields["summary"] = summary
+
+        if description is not None:
+            fields["description"] = {
+                "type": "doc",
+                "version": 1,
+                "content": [
+                    {
+                        "type": "paragraph",
+                        "content": [{"type": "text", "text": description}],
+                    }
+                ],
+            }
+
+        if priority is not None:
+            fields["priority"] = {"name": priority}
+
+        if assignee_account_id is not None:
+            fields["assignee"] = {"accountId": assignee_account_id} if assignee_account_id else None
+
+        if labels is not None:
+            fields["labels"] = labels
+
+        if custom_fields:
+            for field_id, value in custom_fields.items():
+                if not field_id.startswith("customfield_") and field_id.isdigit():
+                    field_id = f"customfield_{field_id}"
+                fields[field_id] = value
+
+        if not fields:
+            return {
+                "success": True,
+                "message": "No fields to update",
+                "key": issue_key,
+                "url": f"{self._config.base_url}/browse/{issue_key}",
+            }
+
+        payload = {"fields": fields}
+
+        try:
+            response = self._session.put(
+                url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=self._timeout,
+            )
+
+            if response.status_code == 401:
+                raise JiraAuthError("Authentication failed: check email and API token")
+            if response.status_code == 404:
+                raise JiraAPIError(f"Issue not found: {issue_key}")
+            if response.status_code == 400:
+                error_data = response.json() if response.text else {}
+                errors = error_data.get("errors", {})
+                error_messages = error_data.get("errorMessages", [])
+                detail = "; ".join(error_messages) if error_messages else str(errors)
+                raise JiraAPIError(f"Invalid update data: {detail}")
+
+            response.raise_for_status()
+
+            return {
+                "success": True,
+                "key": issue_key,
+                "url": f"{self._config.base_url}/browse/{issue_key}",
+            }
+
+        except JiraAuthError:
+            raise
+        except JiraAPIError:
+            raise
+        except requests.HTTPError as ex:
+            msg = getattr(ex.response, "text", str(ex))[:500]
+            raise JiraAPIError(f"Failed to update issue: {msg}") from ex
+        except requests.RequestException as ex:
+            raise JiraAPIError(f"Request failed: {ex}") from ex
+
+    def add_comment(
+        self,
+        issue_key: str,
+        body: str,
+    ) -> dict[str, Any]:
+        """
+        Add a comment to a Jira issue.
+
+        Args:
+            issue_key: Issue key (e.g., "ESD-38215")
+            body: Comment text
+
+        Returns:
+            Dict with comment details
+
+        Raises:
+            JiraAPIError: If the API request fails
+        """
+        url = f"{self._config.api_root()}/issue/{issue_key}/comment"
+
+        # Use ADF format for comment body
+        payload = {
+            "body": {
+                "type": "doc",
+                "version": 1,
+                "content": [
+                    {
+                        "type": "paragraph",
+                        "content": [{"type": "text", "text": body}],
+                    }
+                ],
+            }
+        }
+
+        try:
+            response = self._session.post(
+                url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=self._timeout,
+            )
+
+            if response.status_code == 404:
+                raise JiraAPIError(f"Issue not found: {issue_key}")
+
+            response.raise_for_status()
+
+            result = response.json()
+            return {
+                "id": result.get("id", ""),
+                "self": result.get("self", ""),
+                "created": result.get("created", ""),
+            }
+
+        except JiraAPIError:
+            raise
+        except requests.HTTPError as ex:
+            msg = getattr(ex.response, "text", str(ex))[:500]
+            raise JiraAPIError(f"Failed to add comment: {msg}") from ex
+
     def close(self) -> None:
         """Close the session."""
         self._session.close()

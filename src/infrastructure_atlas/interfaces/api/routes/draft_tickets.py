@@ -123,7 +123,22 @@ def get_ticket(
     """Get a single draft ticket by ID."""
     entity = service.get_by_id(ticket_id)
     if entity is None:
-        raise HTTPException(status_code=404, detail="Draft ticket not found")
+        # Get count of available tickets to help with error message
+        try:
+            all_tickets = service.list_all()
+            available_count = len(all_tickets)
+        except Exception:
+            available_count = 0
+
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "TICKET_NOT_FOUND",
+                "message": f"Draft ticket {ticket_id} not found",
+                "suggestion": "Use ticket_list() to see all available tickets",
+                "available_count": available_count,
+            },
+        )
 
     return draft_ticket_to_dto(entity).dict_clean()
 

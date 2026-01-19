@@ -67,6 +67,25 @@ class ToolRegistry:
                 "endpoint": "/jira/search",
                 "params": ["q:query", "project", "status", "max:max_results"],
             },
+            "jira_get_issue": {
+                "method": "GET",
+                "endpoint": "/jira/issue/{issue_key}",
+            },
+            "jira_create_issue": {
+                "method": "POST",
+                "endpoint": "/jira/issues",
+                "body": ["project_key", "issue_type", "summary", "description", "priority", "assignee", "labels", "linked_issues", "custom_fields"],
+            },
+            "jira_update_issue": {
+                "method": "PUT",
+                "endpoint": "/jira/issue/{issue_key}",
+                "body": ["summary", "description", "priority", "assignee", "labels", "custom_fields"],
+            },
+            "jira_add_comment": {
+                "method": "POST",
+                "endpoint": "/jira/issue/{issue_key}/comment",
+                "body": ["body"],
+            },
             "search_confluence_docs": {
                 "method": "POST",
                 "endpoint": "/confluence-rag/search",
@@ -77,6 +96,20 @@ class ToolRegistry:
                 "method": "GET",
                 "endpoint": "/confluence/search",
                 "params": ["q:query", "space", "max:max_results"],
+            },
+            "confluence_get_page": {
+                "method": "GET",
+                "endpoint": "/confluence/page/{page_id}",
+            },
+            "confluence_create_page": {
+                "method": "POST",
+                "endpoint": "/confluence/pages",
+                "body": ["space_key", "title", "content", "parent_page_id", "labels", "content_format"],
+            },
+            "confluence_update_page": {
+                "method": "PUT",
+                "endpoint": "/confluence/pages/{page_id}",
+                "body": ["title", "content", "content_format", "version_comment", "minor_edit"],
             },
             "vcenter_list_instances": {
                 "method": "GET",

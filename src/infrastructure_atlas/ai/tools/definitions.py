@@ -165,6 +165,137 @@ ATLAS_TOOLS: list[ToolDefinition] = [
         },
         category="issues",
     ),
+    ToolDefinition(
+        name="jira_get_issue",
+        description="Get details of a specific Jira issue by key. Returns summary, status, assignee, priority, labels, and URL.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "issue_key": {
+                    "type": "string",
+                    "description": "Jira issue key (e.g., 'ESD-38215', 'SYS-1234')",
+                },
+            },
+            "required": ["issue_key"],
+        },
+        category="issues",
+    ),
+    ToolDefinition(
+        name="jira_create_issue",
+        description="""Create a new Jira issue (ticket, RFC, incident, etc.).
+Use this to create actual Jira tickets when the user asks to create a ticket or RFC.
+
+Returns the created issue key, ID, and URL (e.g., ESD-38216).""",
+        parameters={
+            "type": "object",
+            "properties": {
+                "project_key": {
+                    "type": "string",
+                    "description": "Project key (e.g., 'ESD', 'SYS', 'OPS')",
+                },
+                "issue_type": {
+                    "type": "string",
+                    "description": "Issue type (e.g., 'Task', 'Bug', 'RFC', 'Incident', 'Change Request')",
+                    "default": "Task",
+                },
+                "summary": {
+                    "type": "string",
+                    "description": "Issue title/summary (max 255 characters)",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Detailed description of the issue",
+                },
+                "priority": {
+                    "type": "string",
+                    "enum": ["Lowest", "Low", "Medium", "High", "Highest"],
+                    "description": "Priority level",
+                    "default": "Medium",
+                },
+                "assignee": {
+                    "type": "string",
+                    "description": "Account ID of assignee (optional)",
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Labels/tags for the issue",
+                },
+                "linked_issues": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "issue_key": {"type": "string"},
+                            "link_type": {
+                                "type": "string",
+                                "enum": ["relates to", "blocks", "is blocked by", "duplicates", "causes"],
+                            },
+                        },
+                    },
+                    "description": "Issues to link to the new issue",
+                },
+            },
+            "required": ["project_key", "summary"],
+        },
+        category="issues",
+    ),
+    ToolDefinition(
+        name="jira_update_issue",
+        description="Update an existing Jira issue. Only the fields you provide will be updated.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "issue_key": {
+                    "type": "string",
+                    "description": "Jira issue key (e.g., 'ESD-38215')",
+                },
+                "summary": {
+                    "type": "string",
+                    "description": "New issue title/summary",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "New description",
+                },
+                "priority": {
+                    "type": "string",
+                    "enum": ["Lowest", "Low", "Medium", "High", "Highest"],
+                    "description": "New priority level",
+                },
+                "assignee": {
+                    "type": "string",
+                    "description": "New assignee account ID (empty string to unassign)",
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "New labels (replaces existing labels)",
+                },
+            },
+            "required": ["issue_key"],
+        },
+        category="issues",
+    ),
+    ToolDefinition(
+        name="jira_add_comment",
+        description="Add a comment to a Jira issue.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "issue_key": {
+                    "type": "string",
+                    "description": "Jira issue key (e.g., 'ESD-38215')",
+                },
+                "body": {
+                    "type": "string",
+                    "description": "Comment text",
+                },
+            },
+            "required": ["issue_key", "body"],
+        },
+        category="issues",
+    ),
     # Confluence tools
     ToolDefinition(
         name="search_confluence_docs",
@@ -221,6 +352,100 @@ Returns relevant document excerpts with citations and source links.""",
                 },
             },
             "required": ["query"],
+        },
+        category="documentation",
+    ),
+    ToolDefinition(
+        name="confluence_get_page",
+        description="Get a Confluence page by ID. Returns full page content, version, and URL.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "page_id": {
+                    "type": "string",
+                    "description": "Confluence page ID",
+                },
+            },
+            "required": ["page_id"],
+        },
+        category="documentation",
+    ),
+    ToolDefinition(
+        name="confluence_create_page",
+        description="""Create a new Confluence page (SOP, runbook, documentation).
+Use this to create actual Confluence documentation when the user asks to create a page or SOP.
+
+Returns the created page ID, URL, and version.""",
+        parameters={
+            "type": "object",
+            "properties": {
+                "space_key": {
+                    "type": "string",
+                    "description": "Confluence space key (e.g., 'SYS', 'OPS', 'NET')",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Page title",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Page content in Confluence storage format (HTML) or markdown",
+                },
+                "parent_page_id": {
+                    "type": "string",
+                    "description": "Parent page ID to nest this page under (optional)",
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Labels/tags for the page",
+                },
+                "content_format": {
+                    "type": "string",
+                    "enum": ["storage", "markdown"],
+                    "description": "Format of the content parameter",
+                    "default": "storage",
+                },
+            },
+            "required": ["space_key", "title", "content"],
+        },
+        category="documentation",
+    ),
+    ToolDefinition(
+        name="confluence_update_page",
+        description="Update an existing Confluence page. Only the fields you provide will be updated.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "page_id": {
+                    "type": "string",
+                    "description": "Page ID to update",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "New page title (optional)",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Updated page content",
+                },
+                "content_format": {
+                    "type": "string",
+                    "enum": ["storage", "markdown"],
+                    "description": "Format of the content parameter",
+                    "default": "storage",
+                },
+                "version_comment": {
+                    "type": "string",
+                    "description": "Comment describing the changes",
+                },
+                "minor_edit": {
+                    "type": "boolean",
+                    "description": "Mark as minor edit (doesn't notify watchers)",
+                    "default": False,
+                },
+            },
+            "required": ["page_id", "content"],
         },
         category="documentation",
     ),

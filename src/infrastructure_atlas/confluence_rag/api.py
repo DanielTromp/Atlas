@@ -405,17 +405,89 @@ async def get_analytics(period: str = Query(default="week", regex="^(today|week|
 
 @router.get("/page/{page_id}")
 async def get_page_chunks(page_id: str):
-    """Get all chunks for a specific page from Qdrant."""
+    """Get all chunks for a specific page from Qdrant.
+
+    Falls back to Confluence API if the page is not in the RAG index.
+    """
+    import os
+    import requests
+
     engine = get_search_engine()
     page, chunks = engine.get_page(page_id)
 
-    if not page:
-        raise HTTPException(404, "Page not found")
+    if page:
+        return {
+            "page": page.model_dump(),
+            "chunks": [c.model_dump() for c in chunks],
+            "source": "rag_index",
+        }
 
-    return {
-        "page": page.model_dump(),
-        "chunks": [c.model_dump() for c in chunks],
-    }
+    # Fallback: Try to fetch from Confluence API directly
+    base_url = os.getenv("ATLASSIAN_BASE_URL", "").strip()
+    email = os.getenv("ATLASSIAN_EMAIL", "").strip()
+    token = os.getenv("ATLASSIAN_API_TOKEN", "").strip()
+
+    if not (base_url and email and token):
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "PAGE_NOT_IN_INDEX",
+                "message": f"Page {page_id} not found in RAG index",
+                "suggestion": "Use confluence_search with page title instead, or index this page first",
+            },
+        )
+
+    # Try Confluence API
+    try:
+        sess = requests.Session()
+        sess.auth = (email, token)
+        sess.headers.update({"Accept": "application/json"})
+        wiki_url = base_url.rstrip("/") + "/wiki"
+
+        url = f"{wiki_url}/rest/api/content/{page_id}"
+        params = {"expand": "body.storage,version,space"}
+        r = sess.get(url, params=params, timeout=30)
+
+        if r.status_code == 404:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "error": "PAGE_NOT_FOUND",
+                    "message": f"Page {page_id} not found in RAG index or Confluence",
+                    "suggestion": "Verify the page ID is correct",
+                },
+            )
+
+        r.raise_for_status()
+        data = r.json()
+
+        return {
+            "page": {
+                "page_id": data.get("id", ""),
+                "title": data.get("title", ""),
+                "space_key": (data.get("space") or {}).get("key", ""),
+                "url": f"{wiki_url}{(data.get('_links') or {}).get('webui', '')}",
+                "version": (data.get("version") or {}).get("number", 1),
+            },
+            "content": (data.get("body", {}).get("storage", {}) or {}).get("value", ""),
+            "chunks": [],  # No chunks when fetched directly
+            "source": "confluence_api",
+            "note": "Page fetched directly from Confluence API (not indexed in RAG)",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"Failed to fetch page {page_id} from Confluence API: {e}")
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "PAGE_NOT_IN_INDEX",
+                "message": f"Page {page_id} not found in RAG index",
+                "fallback_failed": True,
+                "fallback_error": str(e),
+                "suggestion": "Use confluence_search with page title instead",
+            },
+        )
 
 
 @router.get("/spaces")
@@ -495,24 +567,47 @@ async def generate_guide_from_docs(request: GuideRequest):
     Returns:
         Full page content from the most relevant documentation pages.
     """
-    engine = get_search_engine()
-    store = get_qdrant_store()
+    try:
+        engine = get_search_engine()
+    except Exception as e:
+        logger.error(f"Failed to initialize search engine: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "RAG_INITIALIZATION_FAILED",
+                "message": "Failed to initialize RAG search engine",
+                "details": str(e),
+                "fallback_action": "Use search_confluence_docs or confluence_search instead",
+            },
+        )
 
     # First search for relevant pages
-    config = SearchConfig(
-        top_k=request.max_pages * 3,  # Get more candidates to find unique pages
-        include_citations=True,
-        space_keys=None,
-    )
+    try:
+        config = SearchConfig(
+            top_k=request.max_pages * 3,  # Get more candidates to find unique pages
+            include_citations=True,
+            space_keys=None,
+        )
 
-    search_result = await engine.search(request.query, config)
+        search_result = await engine.search(request.query, config)
+    except Exception as e:
+        logger.error(f"RAG search failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": "RAG_QUERY_FAILED",
+                "message": "Failed to search documentation",
+                "details": str(e),
+                "fallback_action": "Use search_confluence_docs or confluence_search instead",
+            },
+        )
 
     # Collect unique page IDs from search results
     seen_page_ids: set[str] = set()
     page_ids: list[str] = []
 
     for result in search_result.results:
-        page_id = result.metadata.get("page_id")
+        page_id = result.page.page_id
         if page_id and page_id not in seen_page_ids:
             seen_page_ids.add(page_id)
             page_ids.append(page_id)
@@ -534,14 +629,14 @@ async def generate_guide_from_docs(request: GuideRequest):
             page, chunks = engine.get_page(page_id)
             if page:
                 # Reconstruct full content from chunks
-                full_content = "\n\n".join(c.text for c in chunks)
+                full_content = "\n\n".join(c.content for c in chunks)
                 pages.append({
                     "page_id": page_id,
                     "title": page.title,
                     "space_key": page.space_key,
                     "url": page.url,
                     "content": full_content,
-                    "last_modified": page.last_modified.isoformat() if page.last_modified else None,
+                    "last_modified": page.updated_at.isoformat() if page.updated_at else None,
                 })
         except Exception as e:
             logger.warning(f"Failed to fetch page {page_id}: {e}")
