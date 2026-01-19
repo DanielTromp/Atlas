@@ -465,11 +465,12 @@ class JiraSkill(BaseSkill):
             "transition_id": target_transition["id"],
         }
 
-    def find_user(self, query: str) -> dict[str, Any] | None:
+    def find_user(self, query: str, project: str | None = None) -> dict[str, Any] | None:
         """Find a Jira user by username, email, or display name.
 
         Args:
             query: Search query (username, email, or name)
+            project: Optional project key to filter to assignable users only
 
         Returns:
             User dict with accountId, displayName, emailAddress, or None if not found
@@ -477,9 +478,13 @@ class JiraSkill(BaseSkill):
         if not self._session:
             raise RuntimeError("Jira skill not initialized")
 
-        # Use user search endpoint
-        url = f"{self._api_root}/user/search"
-        params = {"query": query, "maxResults": 10}
+        # Use assignable search if project is specified (only returns users who can be assigned)
+        if project:
+            url = f"{self._api_root}/user/assignable/search"
+            params = {"query": query, "project": project, "maxResults": 10}
+        else:
+            url = f"{self._api_root}/user/search"
+            params = {"query": query, "maxResults": 10}
 
         response = self._session.get(url, params=params, timeout=30)
         response.raise_for_status()
@@ -516,17 +521,23 @@ class JiraSkill(BaseSkill):
         if not self._session:
             raise RuntimeError("Jira skill not initialized")
 
+        # Extract project key from issue key (e.g., "ESD-40371" -> "ESD")
+        project_key = issue_key.split("-")[0] if "-" in issue_key else None
+
         # Resolve assignee to account ID if it doesn't look like one
-        # Jira account IDs are typically 24 character hex strings
+        # Jira account IDs are typically long strings with colons (e.g., "712020:f65d8e85-...")
         account_id = assignee
-        if assignee and not (len(assignee) == 24 and assignee.isalnum()):
-            # Try to look up the user
-            user = self.find_user(assignee)
+        if assignee and ":" not in assignee:
+            # Try to look up the user - use project-specific search to only find assignable users
+            user = self.find_user(assignee, project=project_key)
             if user:
                 account_id = user.get("accountId")
                 logger.info(f"Resolved '{assignee}' to account ID: {account_id} ({user.get('displayName')})")
             else:
-                raise ValueError(f"Could not find Jira user matching '{assignee}'")
+                raise ValueError(
+                    f"Could not find assignable user matching '{assignee}' in project {project_key}. "
+                    f"The user may not have permission to be assigned issues in this project."
+                )
 
         # Use the main issue endpoint to update assignee field
         # The /issue/{key}/assignee endpoint doesn't exist in Jira Cloud API v3
