@@ -196,8 +196,8 @@ class ToolRegistry:
             # Confluence RAG advanced tools
             "get_confluence_page": {
                 "method": "GET",
-                "endpoint": "/confluence-rag/page",
-                "params": ["page_id", "page_title", "space_key"],
+                "endpoint": "/confluence-rag/page/{page_id}",
+                # page_id is a path parameter, handled via {page_id} substitution
             },
             "list_confluence_spaces": {
                 "method": "GET",
@@ -419,7 +419,30 @@ class ToolRegistry:
                 cookies=self._get_cookies(),
             )
 
-        response.raise_for_status()
+        # Check for errors and include response body in error message
+        if response.status_code >= 400:
+            try:
+                error_body = response.json()
+            except Exception:
+                error_body = response.text[:500] if response.text else "No response body"
+
+            logger.error(
+                f"API call failed: {method} {url}",
+                extra={
+                    "status_code": response.status_code,
+                    "error_body": error_body,
+                    "tool_name": tool_call.name,
+                },
+            )
+
+            # Raise with detailed error message
+            error_detail = error_body if isinstance(error_body, str) else str(error_body)
+            raise httpx.HTTPStatusError(
+                f"{response.status_code}: {error_detail}",
+                request=response.request,
+                response=response,
+            )
+
         return response.json()
 
     def get_tools(self, categories: list[str] | None = None, role: str | None = None) -> list[dict[str, Any]]:
