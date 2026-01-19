@@ -37,12 +37,23 @@ from infrastructure_atlas.api.app import (
     CurrentUserDep,
     DbSessionDep,
     OptionalUserDep,
-    SessionLocal,
     _csv_path,
     _normalise_usage,
     _safe_json_loads,
     require_permission,
 )
+
+
+def _get_session_local():
+    """Get SQLAlchemy SessionLocal (lazy init to support MongoDB-only mode)."""
+    from infrastructure_atlas.db import get_sessionmaker
+    return get_sessionmaker()
+
+
+def _get_storage_backend() -> str:
+    """Get the configured storage backend."""
+    from infrastructure_atlas.infrastructure.repository_factory import get_storage_backend
+    return get_storage_backend()
 
 
 def _get_user_api_key(db: Session, user_id: str, provider: str) -> UserAPIKey | None:
@@ -125,6 +136,7 @@ CHAT_QUERY_STOP_WORDS: set[str] = {
 def _chat_env(*, db: Session | None = None, user: User | None = None) -> dict[str, Any]:
     close_db = False
     if db is None:
+        SessionLocal = _get_session_local()
         db = SessionLocal()
         close_db = True
 

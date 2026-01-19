@@ -12,9 +12,11 @@ import signal
 from typing import TYPE_CHECKING, Any
 
 from infrastructure_atlas.bots.adapters.telegram import TelegramAdapter, TelegramWebhookHandler
-from infrastructure_atlas.bots.linking import UserLinkingService
-from infrastructure_atlas.bots.orchestrator import BotOrchestrator
-from infrastructure_atlas.db import get_sessionmaker
+from infrastructure_atlas.bots.service_factory import (
+    create_bot_orchestrator,
+    create_user_linking_service,
+    get_bot_session,
+)
 from infrastructure_atlas.infrastructure.logging import get_logger
 from infrastructure_atlas.skills import get_skills_registry
 
@@ -146,12 +148,12 @@ class TelegramPollingBot:
         """
         try:
             # Create fresh database session for each update
-            SessionLocal = get_sessionmaker()
-            with SessionLocal() as db:
+            # Uses MongoDB or SQLite based on ATLAS_STORAGE_BACKEND
+            with get_bot_session() as db:
                 adapter = TelegramAdapter(bot_token=self.bot_token)
                 skills = get_skills_registry()
-                orchestrator = BotOrchestrator(db, skills)
-                linking = UserLinkingService(db)
+                orchestrator = create_bot_orchestrator(db, skills)
+                linking = create_user_linking_service(db)
                 handler = TelegramWebhookHandler(adapter, orchestrator, linking)
 
                 await handler.handle_update(update)

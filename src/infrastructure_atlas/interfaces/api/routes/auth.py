@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -19,7 +19,18 @@ from infrastructure_atlas.infrastructure.db import mappers
 from infrastructure_atlas.interfaces.api.dependencies import CurrentUserDep, OptionalUserDep, get_user_service
 
 router = APIRouter()
-SessionLocal = get_sessionmaker()
+
+
+def _get_storage_backend() -> str:
+    """Get the configured storage backend."""
+    from infrastructure_atlas.infrastructure.repository_factory import get_storage_backend
+    return get_storage_backend()
+
+
+def _get_session_local():
+    """Get SQLAlchemy SessionLocal (lazy init for SQLite backend)."""
+    return get_sessionmaker()
+
 
 UserServiceDep = Annotated[DefaultUserService, Depends(get_user_service)]
 
@@ -30,8 +41,8 @@ SESSION_USER_KEY = "user_id"
 # Helper functions
 
 
-def get_user_by_username(db: Session, username: str) -> User | None:
-    """Get user by username (case-insensitive)."""
+def get_user_by_username_sqlite(db: Session, username: str) -> User | None:
+    """Get user by username (case-insensitive) - SQLite backend."""
     uname = (username or "").strip().lower()
     if not uname:
         return None
@@ -39,9 +50,50 @@ def get_user_by_username(db: Session, username: str) -> User | None:
     return db.execute(stmt).scalar_one_or_none()
 
 
-def authenticate_user(db: Session, username: str, password: str) -> User | None:
-    """Authenticate user with username and password."""
-    user = get_user_by_username(db, username)
+def get_user_by_username_mongodb(username: str) -> Any | None:
+    """Get user by username (case-insensitive) - MongoDB backend."""
+    from infrastructure_atlas.infrastructure.mongodb import get_mongodb_client
+    from infrastructure_atlas.infrastructure.mongodb.repositories import MongoDBUserRepository
+
+    uname = (username or "").strip().lower()
+    if not uname:
+        return None
+
+    client = get_mongodb_client()
+    repo = MongoDBUserRepository(client.atlas)
+    return repo.get_by_username(uname)
+
+
+def authenticate_user_mongodb(username: str, password: str) -> Any | None:
+    """Authenticate user with username and password - MongoDB backend."""
+    from infrastructure_atlas.infrastructure.mongodb import get_mongodb_client
+    from infrastructure_atlas.infrastructure.mongodb.repositories import MongoDBUserRepository
+
+    uname = (username or "").strip().lower()
+    if not uname:
+        return None
+
+    client = get_mongodb_client()
+    repo = MongoDBUserRepository(client.atlas)
+    user = repo.get_by_username(uname)
+
+    if not user or not user.is_active:
+        return None
+
+    # Get password hash from MongoDB document directly
+    doc = client.atlas.users.find_one({"username": uname})
+    if not doc:
+        return None
+
+    password_hash = doc.get("password_hash", "")
+    if verify_password(password, password_hash):
+        return user
+    return None
+
+
+def authenticate_user_sqlite(db: Session, username: str, password: str) -> User | None:
+    """Authenticate user with username and password - SQLite backend."""
+    user = get_user_by_username_sqlite(db, username)
     if not user or not user.is_active:
         return None
     if verify_password(password, user.password_hash):
@@ -516,15 +568,23 @@ async def auth_login(request: Request):
     if not next_url.startswith("/"):
         next_url = "/app/"
 
-    with SessionLocal() as db:
-        user = authenticate_user(db, username, password)
-        if user:
-            request.session.clear()
-            request.session[SESSION_USER_KEY] = user.id
-            request.session["username"] = user.username
-            if is_json:
-                return {"status": "ok", "next": next_url}
-            return RedirectResponse(url=next_url, status_code=303)
+    backend = _get_storage_backend()
+    user = None
+
+    if backend == "mongodb":
+        user = authenticate_user_mongodb(username, password)
+    else:
+        SessionLocal = _get_session_local()
+        with SessionLocal() as db:
+            user = authenticate_user_sqlite(db, username, password)
+
+    if user:
+        request.session.clear()
+        request.session[SESSION_USER_KEY] = user.id
+        request.session["username"] = user.username
+        if is_json:
+            return {"status": "ok", "next": next_url}
+        return RedirectResponse(url=next_url, status_code=303)
 
     if is_json:
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -557,38 +617,59 @@ def auth_mcp_authorize(
     # Generate token
     import secrets
     token = secrets.token_urlsafe(32)
-    
+
     # Store in DB
-    from infrastructure_atlas.db.models import UserAPIKey
-    
-    with SessionLocal() as db:
-        # Check if key exists for this provider (mcp)
-        provider = "mcp"
-        
-        stmt = select(UserAPIKey).where(
-            UserAPIKey.user_id == current_user.id,
-            UserAPIKey.provider == provider
-        )
-        existing_key = db.execute(stmt).scalar_one_or_none()
-        
+    backend = _get_storage_backend()
+    provider = "mcp"
+
+    if backend == "mongodb":
+        from infrastructure_atlas.infrastructure.mongodb import get_mongodb_client
+        from infrastructure_atlas.infrastructure.mongodb.repositories import MongoDBUserAPIKeyRepository
+
+        client = get_mongodb_client()
+        repo = MongoDBUserAPIKeyRepository(client.atlas)
+
+        # Check if key exists for this provider
+        existing_keys = repo.get_by_user_id(current_user.id)
+        existing_key = next((k for k in existing_keys if k.provider == provider), None)
+
         if existing_key:
-            existing_key.secret = token
-            # Update updated_at explicitly if needed, but SQLAlchemy handles it usually
-            # We just need to commit
-            db.add(existing_key)
+            repo.update_secret(existing_key.id, token)
         else:
-            new_key = UserAPIKey(
+            repo.create(
                 user_id=current_user.id,
                 provider=provider,
                 label="MCP Server",
-                secret=token
+                secret=token,
             )
-            db.add(new_key)
-        db.commit()
+    else:
+        from infrastructure_atlas.db.models import UserAPIKey
+
+        SessionLocal = _get_session_local()
+        with SessionLocal() as db:
+            # Check if key exists for this provider (mcp)
+            stmt = select(UserAPIKey).where(
+                UserAPIKey.user_id == current_user.id,
+                UserAPIKey.provider == provider
+            )
+            existing_key = db.execute(stmt).scalar_one_or_none()
+
+            if existing_key:
+                existing_key.secret = token
+                db.add(existing_key)
+            else:
+                new_key = UserAPIKey(
+                    user_id=current_user.id,
+                    provider=provider,
+                    label="MCP Server",
+                    secret=token
+                )
+                db.add(new_key)
+            db.commit()
 
     # Redirect to callback
     from urllib.parse import urlparse, urlencode, parse_qs, urlunparse
-    
+
     # helper to append query param
     url_parts = list(urlparse(callback))
     query = dict(parse_qs(url_parts[4]))
@@ -596,7 +677,7 @@ def auth_mcp_authorize(
     query['username'] = current_user.username
     url_parts[4] = urlencode(query, doseq=True)
     redirect_url = urlunparse(url_parts)
-    
+
     return RedirectResponse(url=redirect_url)
 
 

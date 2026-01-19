@@ -1,7 +1,10 @@
 """User-facing service implementations backed by repositories."""
 from __future__ import annotations
 
-from sqlalchemy.orm import Session
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 from infrastructure_atlas.domain.repositories import (
     GlobalAPIKeyRepository,
@@ -61,40 +64,92 @@ class DefaultUserService:
 
 
 def create_user_service(
-    session: Session,
-    user_repo_factory = None,
-    user_key_repo_factory = None,
-    global_key_repo_factory = None,
-    role_permission_repo_factory = None,
+    session: Session | None = None,
+    user_repo_factory=None,
+    user_key_repo_factory=None,
+    global_key_repo_factory=None,
+    role_permission_repo_factory=None,
 ) -> DefaultUserService:
-    """Helper to create a user service from a SQLAlchemy session.
+    """Helper to create a user service.
 
-    The optional factory arguments allow tests to supply instrumented repository
-    implementations while production usage defaults to the SQLAlchemy-backed
-    repositories defined in the infrastructure layer.
+    Uses the configured storage backend (MongoDB or SQLite) unless explicit
+    repository factories are provided. When using MongoDB, the session parameter
+    is ignored.
+
+    Args:
+        session: SQLAlchemy session (only used for SQLite backend).
+        user_repo_factory: Optional factory for user repository.
+        user_key_repo_factory: Optional factory for user API key repository.
+        global_key_repo_factory: Optional factory for global API key repository.
+        role_permission_repo_factory: Optional factory for role permission repository.
+
+    Returns:
+        Configured user service instance.
     """
-    if user_repo_factory is None:
-        from infrastructure_atlas.infrastructure.db.repositories import SqlAlchemyUserRepository
+    from infrastructure_atlas.infrastructure.repository_factory import (
+        get_global_api_key_repository,
+        get_role_permission_repository,
+        get_storage_backend,
+        get_user_api_key_repository,
+        get_user_repository,
+    )
 
-        user_repo_factory = SqlAlchemyUserRepository
-    if user_key_repo_factory is None:
-        from infrastructure_atlas.infrastructure.db.repositories import SqlAlchemyUserAPIKeyRepository
+    backend = get_storage_backend()
 
-        user_key_repo_factory = SqlAlchemyUserAPIKeyRepository
-    if global_key_repo_factory is None:
-        from infrastructure_atlas.infrastructure.db.repositories import SqlAlchemyGlobalAPIKeyRepository
+    # If custom factories provided, use them (for testing)
+    if any([user_repo_factory, user_key_repo_factory, global_key_repo_factory, role_permission_repo_factory]):
+        if user_repo_factory is None:
+            from infrastructure_atlas.infrastructure.db.repositories import SqlAlchemyUserRepository
 
-        global_key_repo_factory = SqlAlchemyGlobalAPIKeyRepository
-    if role_permission_repo_factory is None:
-        from infrastructure_atlas.infrastructure.db.repositories import SqlAlchemyRolePermissionRepository
+            user_repo_factory = SqlAlchemyUserRepository
+        if user_key_repo_factory is None:
+            from infrastructure_atlas.infrastructure.db.repositories import SqlAlchemyUserAPIKeyRepository
 
-        role_permission_repo_factory = SqlAlchemyRolePermissionRepository
+            user_key_repo_factory = SqlAlchemyUserAPIKeyRepository
+        if global_key_repo_factory is None:
+            from infrastructure_atlas.infrastructure.db.repositories import SqlAlchemyGlobalAPIKeyRepository
+
+            global_key_repo_factory = SqlAlchemyGlobalAPIKeyRepository
+        if role_permission_repo_factory is None:
+            from infrastructure_atlas.infrastructure.db.repositories import SqlAlchemyRolePermissionRepository
+
+            role_permission_repo_factory = SqlAlchemyRolePermissionRepository
+
+        return DefaultUserService(
+            user_repo=user_repo_factory(session),
+            user_key_repo=user_key_repo_factory(session),
+            global_key_repo=global_key_repo_factory(session),
+            role_permission_repo=role_permission_repo_factory(session),
+        )
+
+    # Use backend-aware repository factory
+    if backend == "mongodb":
+        return DefaultUserService(
+            user_repo=get_user_repository(),
+            user_key_repo=get_user_api_key_repository(),
+            global_key_repo=get_global_api_key_repository(),
+            role_permission_repo=get_role_permission_repository(),
+        )
+
+    # SQLite backend - requires session
+    if session is None:
+        from infrastructure_atlas.db import get_sessionmaker
+
+        Sessionmaker = get_sessionmaker()
+        session = Sessionmaker()
+
+    from infrastructure_atlas.infrastructure.db.repositories import (
+        SqlAlchemyGlobalAPIKeyRepository,
+        SqlAlchemyRolePermissionRepository,
+        SqlAlchemyUserAPIKeyRepository,
+        SqlAlchemyUserRepository,
+    )
 
     return DefaultUserService(
-        user_repo=user_repo_factory(session),
-        user_key_repo=user_key_repo_factory(session),
-        global_key_repo=global_key_repo_factory(session),
-        role_permission_repo=role_permission_repo_factory(session),
+        user_repo=SqlAlchemyUserRepository(session),
+        user_key_repo=SqlAlchemyUserAPIKeyRepository(session),
+        global_key_repo=SqlAlchemyGlobalAPIKeyRepository(session),
+        role_permission_repo=SqlAlchemyRolePermissionRepository(session),
     )
 
 

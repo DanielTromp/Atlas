@@ -10409,7 +10409,7 @@
       if ($ragSyncStatusText) {
         if (stats.last_sync) {
           const syncType = stats.last_sync_type ? ` (${stats.last_sync_type})` : '';
-          $ragSyncStatusText.textContent = `Last sync: ${formatRelativeTime(stats.last_sync)}${syncType}`;
+          $ragSyncStatusText.textContent = `Last sync: ${formatRelativeTimeIso(stats.last_sync)}${syncType}`;
         } else {
           $ragSyncStatusText.textContent = 'Last sync: Never';
         }
@@ -10431,7 +10431,7 @@
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   }
 
-  function formatRelativeTime(isoStr) {
+  function formatRelativeTimeIso(isoStr) {
     if (!isoStr) return 'Never';
     const date = new Date(isoStr);
     const now = new Date();
@@ -10465,7 +10465,7 @@
           <td>${escapeHtml(space.name || space.space_key)}</td>
           <td>${(space.page_count || 0).toLocaleString()}</td>
           <td>${(space.chunk_count || 0).toLocaleString()}</td>
-          <td>${formatRelativeTime(space.last_sync)}</td>
+          <td>${formatRelativeTimeIso(space.last_sync)}</td>
           <td>
             <button class="btn ghost small" data-action="sync-space" data-space="${escapeHtml(space.space_key)}">Sync</button>
             <button class="btn ghost small danger" data-action="remove-space" data-space="${escapeHtml(space.space_key)}">Remove</button>
@@ -10529,7 +10529,7 @@
     ragState.queries.slice(0, 20).forEach(q => {
       const tr = document.createElement('tr');
       tr.innerHTML = `
-        <td>${formatRelativeTime(q.timestamp)}</td>
+        <td>${formatRelativeTimeIso(q.timestamp)}</td>
         <td title="${escapeHtml(q.query)}">${escapeHtml(truncate(q.query, 50))}</td>
         <td>${q.result_count || 0}</td>
         <td>${q.top_score ? q.top_score.toFixed(2) : '—'}</td>
@@ -10551,7 +10551,7 @@
       tr.innerHTML = `
         <td title="${escapeHtml(q.query)}">${escapeHtml(truncate(q.query, 60))}</td>
         <td>${q.count || 1}</td>
-        <td>${formatRelativeTime(q.last_occurred)}</td>
+        <td>${formatRelativeTimeIso(q.last_occurred)}</td>
       `;
       $ragFailedBody.appendChild(tr);
     });

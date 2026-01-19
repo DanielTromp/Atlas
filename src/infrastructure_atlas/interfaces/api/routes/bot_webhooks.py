@@ -9,8 +9,11 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, 
 from sqlalchemy.orm import Session
 
 from infrastructure_atlas.bots.adapters.telegram import TelegramAdapter, TelegramWebhookHandler
-from infrastructure_atlas.bots.linking import UserLinkingService
-from infrastructure_atlas.bots.orchestrator import BotOrchestrator
+from infrastructure_atlas.bots.service_factory import (
+    create_bot_orchestrator,
+    create_user_linking_service,
+    get_bot_session,
+)
 from infrastructure_atlas.db.models import BotWebhookConfig
 from infrastructure_atlas.infrastructure.logging import get_logger
 from infrastructure_atlas.infrastructure.modules.registry import get_module_registry
@@ -123,31 +126,32 @@ async def _process_telegram_update(
 
     Args:
         update: Telegram Update object
-        db_session_factory: Factory for creating database sessions
+        db_session_factory: Factory for creating database sessions (unused, kept for compatibility)
     """
     try:
-        # Create a new session for background processing
-        from infrastructure_atlas.db import get_sessionmaker
-
-        SessionLocal = get_sessionmaker()
-        with SessionLocal() as db:
-            # Get bot token
-            token = os.getenv("TELEGRAM_BOT_TOKEN")
-            if not token:
+        # Get bot token from environment
+        token = os.getenv("TELEGRAM_BOT_TOKEN")
+        if not token:
+            # Try to get from database config
+            from infrastructure_atlas.db import get_sessionmaker
+            SessionLocal = get_sessionmaker()
+            with SessionLocal() as db:
                 config = db.query(BotWebhookConfig).filter_by(platform="telegram").first()
                 if config:
                     # TODO: Decrypt token from SecretStore
                     token = config.bot_token_secret
 
-            if not token:
-                logger.error("No Telegram bot token configured")
-                return
+        if not token:
+            logger.error("No Telegram bot token configured")
+            return
 
-            # Create adapter and handler
+        # Create adapter and handler using service factory
+        # This uses MongoDB or SQLite based on ATLAS_STORAGE_BACKEND
+        with get_bot_session() as session:
             adapter = TelegramAdapter(bot_token=token)
             skills = get_skills_registry_for_bots()
-            orchestrator = BotOrchestrator(db, skills)
-            linking = UserLinkingService(db)
+            orchestrator = create_bot_orchestrator(session, skills)
+            linking = create_user_linking_service(session)
             handler = TelegramWebhookHandler(adapter, orchestrator, linking)
 
             # Process update

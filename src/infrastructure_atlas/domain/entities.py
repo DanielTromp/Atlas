@@ -73,6 +73,11 @@ class ChatSessionEntity:
     title: str
     created_at: datetime
     updated_at: datetime
+    # AI Chat fields
+    context_variables: dict | None = None
+    agent_config_id: str | None = None
+    provider_type: str | None = None
+    model: str | None = None
 
 
 @dataclass(slots=True)
@@ -84,6 +89,11 @@ class ChatMessageEntity:
     role: str
     content: str
     created_at: datetime
+    # AI Chat fields for tool calls
+    message_type: str | None = None
+    tool_call_id: str | None = None
+    tool_name: str | None = None
+    metadata_json: dict | None = None
 
 
 @dataclass(slots=True)
@@ -125,5 +135,72 @@ class PuppetConfigEntity:
     branch: str
     ssh_key_secret: str | None
     local_path: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Bot Platform Entities
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class BotPlatformAccountEntity:
+    """Links external platform users (Telegram, Slack, Teams) to Atlas users."""
+
+    id: int
+    user_id: str
+    platform: str  # "telegram", "slack", "teams"
+    platform_user_id: str
+    platform_username: str | None
+    verified: bool
+    verification_code: str | None
+    verification_expires: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(slots=True)
+class BotConversationEntity:
+    """Tracks bot conversations for context and history."""
+
+    id: int
+    platform: str
+    platform_conversation_id: str
+    platform_account_id: int
+    agent_id: str | None
+    session_id: str | None
+    created_at: datetime
+    last_message_at: datetime
+
+
+@dataclass(slots=True)
+class BotMessageEntity:
+    """Logs all bot messages for web GUI visibility and debugging."""
+
+    id: int
+    conversation_id: int
+    direction: str  # "inbound" or "outbound"
+    content: str
+    platform_message_id: str | None
+    agent_id: str | None
+    tool_calls: list[dict] | None
+    input_tokens: int
+    output_tokens: int
+    cost_usd: float | None
+    duration_ms: int | None
+    created_at: datetime
+
+
+@dataclass(slots=True)
+class BotWebhookConfigEntity:
+    """Platform webhook configurations (admin-managed)."""
+
+    id: int
+    platform: str
+    enabled: bool
+    webhook_secret: str | None
+    bot_token_secret: str
+    extra_config: dict | None
     created_at: datetime
     updated_at: datetime

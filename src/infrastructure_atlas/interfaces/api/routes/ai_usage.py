@@ -19,8 +19,9 @@ router = APIRouter(prefix="/ai/usage", tags=["ai-usage"])
 
 # Lazy imports to avoid circular dependencies
 def get_db_session():
-    from infrastructure_atlas.api.app import SessionLocal
+    from infrastructure_atlas.db import get_sessionmaker
 
+    SessionLocal = get_sessionmaker()
     return SessionLocal()
 
 
@@ -67,13 +68,8 @@ class ModelConfigUpdate(BaseModel):
 async def get_usage_dashboard(request: Request) -> dict[str, Any]:
     """Get comprehensive usage dashboard statistics."""
     require_admin_permission(request)
-
-    db = get_db_session()
-    try:
-        service = create_usage_service(db)
-        return service.get_dashboard_stats()
-    finally:
-        db.close()
+    service = create_usage_service()
+    return service.get_dashboard_stats()
 
 
 @router.get("/stats")
@@ -101,18 +97,14 @@ async def get_usage_stats(
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid end_date format")
 
-    db = get_db_session()
-    try:
-        service = create_usage_service(db)
-        stats = service.get_usage_stats(
-            provider=provider,
-            model=model,
-            start_date=start_dt,
-            end_date=end_dt,
-        )
-        return stats.to_dict()
-    finally:
-        db.close()
+    service = create_usage_service()
+    stats = service.get_usage_stats(
+        provider=provider,
+        model=model,
+        start_date=start_dt,
+        end_date=end_dt,
+    )
+    return stats.to_dict()
 
 
 @router.get("/by-model")
@@ -139,17 +131,13 @@ async def get_usage_by_model(
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid end_date format")
 
-    db = get_db_session()
-    try:
-        service = create_usage_service(db)
-        stats = service.get_usage_by_model(
-            start_date=start_dt,
-            end_date=end_dt,
-            limit=limit,
-        )
-        return [s.to_dict() for s in stats]
-    finally:
-        db.close()
+    service = create_usage_service()
+    stats = service.get_usage_by_model(
+        start_date=start_dt,
+        end_date=end_dt,
+        limit=limit,
+    )
+    return [s.to_dict() for s in stats]
 
 
 @router.get("/trend")
@@ -177,16 +165,12 @@ async def get_usage_trend(
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid end_date format")
 
-    db = get_db_session()
-    try:
-        service = create_usage_service(db)
-        return service.get_usage_over_time(
-            start_date=start_dt,
-            end_date=end_dt,
-            granularity=granularity,
-        )
-    finally:
-        db.close()
+    service = create_usage_service()
+    return service.get_usage_over_time(
+        start_date=start_dt,
+        end_date=end_dt,
+        granularity=granularity,
+    )
 
 
 # Activity Log Endpoints
@@ -218,26 +202,22 @@ async def get_activity_logs(
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid end_date format")
 
-    db = get_db_session()
-    try:
-        service = create_usage_service(db)
-        logs, total = service.get_activity_logs(
-            limit=limit,
-            offset=offset,
-            provider=provider,
-            model=model,
-            session_id=session_id,
-            start_date=start_dt,
-            end_date=end_dt,
-        )
-        return {
-            "items": logs,
-            "total": total,
-            "limit": limit,
-            "offset": offset,
-        }
-    finally:
-        db.close()
+    service = create_usage_service()
+    logs, total = service.get_activity_logs(
+        limit=limit,
+        offset=offset,
+        provider=provider,
+        model=model,
+        session_id=session_id,
+        start_date=start_dt,
+        end_date=end_dt,
+    )
+    return {
+        "items": logs,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    }
 
 
 @router.get("/activity/export")
@@ -265,25 +245,21 @@ async def export_activity_csv(
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid end_date format")
 
-    db = get_db_session()
-    try:
-        service = create_usage_service(db)
-        csv_content = service.export_activity_csv(
-            provider=provider,
-            model=model,
-            start_date=start_dt,
-            end_date=end_dt,
-        )
+    service = create_usage_service()
+    csv_content = service.export_activity_csv(
+        provider=provider,
+        model=model,
+        start_date=start_dt,
+        end_date=end_dt,
+    )
 
-        filename = f"ai_activity_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.csv"
+    filename = f"ai_activity_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.csv"
 
-        return Response(
-            content=csv_content,
-            media_type="text/csv",
-            headers={"Content-Disposition": f"attachment; filename={filename}"},
-        )
-    finally:
-        db.close()
+    return Response(
+        content=csv_content,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 # Pricing Endpoints
@@ -326,13 +302,8 @@ async def list_model_configs(
 ) -> list[dict[str, Any]]:
     """List all custom model configurations."""
     require_admin_permission(request)
-
-    db = get_db_session()
-    try:
-        service = create_usage_service(db)
-        return service.list_model_configs(provider=provider, active_only=active_only)
-    finally:
-        db.close()
+    service = create_usage_service()
+    return service.list_model_configs(provider=provider, active_only=active_only)
 
 
 @router.post("/models")
@@ -343,16 +314,15 @@ async def create_model_config(
     """Create a new custom model configuration."""
     require_admin_permission(request)
 
-    db = get_db_session()
+    service = create_usage_service()
+
+    # Auto-fill pricing if not provided
+    if config.price_input_per_million == 0.0 and config.price_output_per_million == 0.0:
+        pricing = get_model_pricing(config.model_id)
+        config.price_input_per_million = pricing.get("price_input_per_million", 0.0)
+        config.price_output_per_million = pricing.get("price_output_per_million", 0.0)
+
     try:
-        service = create_usage_service(db)
-
-        # Auto-fill pricing if not provided
-        if config.price_input_per_million == 0.0 and config.price_output_per_million == 0.0:
-            pricing = get_model_pricing(config.model_id)
-            config.price_input_per_million = pricing.get("price_input_per_million", 0.0)
-            config.price_output_per_million = pricing.get("price_output_per_million", 0.0)
-
         return service.create_model_config(
             provider=config.provider,
             model_id=config.model_id,
@@ -368,8 +338,6 @@ async def create_model_config(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    finally:
-        db.close()
 
 
 @router.get("/models/{config_id}")
@@ -379,17 +347,12 @@ async def get_model_config(
 ) -> dict[str, Any]:
     """Get a specific model configuration."""
     require_admin_permission(request)
-
-    db = get_db_session()
-    try:
-        service = create_usage_service(db)
-        configs = service.list_model_configs(active_only=False)
-        for config in configs:
-            if config["id"] == config_id:
-                return config
-        raise HTTPException(status_code=404, detail="Model config not found")
-    finally:
-        db.close()
+    service = create_usage_service()
+    configs = service.list_model_configs(active_only=False)
+    for config in configs:
+        if config["id"] == config_id:
+            return config
+    raise HTTPException(status_code=404, detail="Model config not found")
 
 
 @router.patch("/models/{config_id}")
@@ -400,20 +363,15 @@ async def update_model_config(
 ) -> dict[str, Any]:
     """Update a model configuration."""
     require_admin_permission(request)
+    service = create_usage_service()
 
-    db = get_db_session()
-    try:
-        service = create_usage_service(db)
+    # Only include non-None values
+    update_data = {k: v for k, v in config.model_dump().items() if v is not None}
 
-        # Only include non-None values
-        update_data = {k: v for k, v in config.model_dump().items() if v is not None}
-
-        result = service.update_model_config(config_id, **update_data)
-        if not result:
-            raise HTTPException(status_code=404, detail="Model config not found")
-        return result
-    finally:
-        db.close()
+    result = service.update_model_config(config_id, **update_data)
+    if not result:
+        raise HTTPException(status_code=404, detail="Model config not found")
+    return result
 
 
 @router.delete("/models/{config_id}")
@@ -423,15 +381,10 @@ async def delete_model_config(
 ) -> dict[str, str]:
     """Delete a model configuration."""
     require_admin_permission(request)
-
-    db = get_db_session()
-    try:
-        service = create_usage_service(db)
-        if not service.delete_model_config(config_id):
-            raise HTTPException(status_code=404, detail="Model config not found")
-        return {"status": "deleted", "id": config_id}
-    finally:
-        db.close()
+    service = create_usage_service()
+    if not service.delete_model_config(config_id):
+        raise HTTPException(status_code=404, detail="Model config not found")
+    return {"status": "deleted", "id": config_id}
 
 
 @router.post("/models/lookup")

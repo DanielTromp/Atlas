@@ -1,6 +1,22 @@
 name: atlas
 
 services:
+  mongodb:
+    image: mongo:7.0
+    container_name: atlas-mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    environment:
+      - MONGO_INITDB_DATABASE=atlas
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
   qdrant:
     image: qdrant/qdrant:latest
     container_name: atlas-qdrant
@@ -19,5 +35,7 @@ services:
       retries: 3
 
 volumes:
+  mongodb_data:
+    driver: local
   qdrant_storage:
     driver: local

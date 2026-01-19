@@ -544,6 +544,366 @@ class ForemanService:
                 raise
 
 
-def create_foreman_service(session: Session) -> ForemanService:
-    """Factory function to create a ForemanService instance."""
-    return ForemanService(session=session)
+class MongoDBForemanService:
+    """MongoDB-based Foreman configuration and inventory management service."""
+
+    def __init__(self, repo: Any) -> None:
+        self._repo = repo
+        self._cache_dir = _resolve_cache_dir()
+
+    def _cache_dir_path(self) -> Path:
+        """Get cache directory path."""
+        if self._cache_dir is None:
+            self._cache_dir = _resolve_cache_dir()
+        return self._cache_dir
+
+    # ------------------------------------------------------------------
+    # Configuration management
+    # ------------------------------------------------------------------
+    def list_configs(self) -> list[ForemanConfigEntity]:
+        """List all Foreman configurations."""
+        return self._repo.list_all()
+
+    def get_config(self, config_id: str) -> ForemanConfigEntity | None:
+        """Get a specific Foreman configuration by ID."""
+        identifier = (config_id or "").strip()
+        if not identifier:
+            return None
+        return self._repo.get(identifier)
+
+    def create_config(
+        self,
+        *,
+        name: str,
+        base_url: str,
+        username: str,
+        token: str,
+        verify_ssl: bool,
+    ) -> ForemanConfigEntity:
+        """Create a new Foreman configuration."""
+        import uuid as uuid_module
+
+        normalised_name = _normalise_name(name)
+        normalised_url = _normalise_base_url(base_url)
+        normalised_username = (username or "").strip()
+        if not normalised_username:
+            raise ValueError("Username cannot be empty")
+        cleaned_token = _clean_token(token)
+        store = require_secret_store()
+
+        config_id = str(uuid_module.uuid4())
+        secret_name = f"foreman:{config_id}:token"
+
+        try:
+            entity = self._repo.create(
+                config_id=config_id,
+                name=normalised_name,
+                base_url=normalised_url,
+                username=normalised_username,
+                token_secret=secret_name,
+                verify_ssl=bool(verify_ssl),
+            )
+        except ValueError:
+            raise
+
+        try:
+            store.set(secret_name, cleaned_token)
+        except Exception:
+            logger.exception("Failed to persist encrypted token for Foreman '%s'", normalised_name)
+            try:
+                self._repo.delete(entity.id)
+            except Exception:  # pragma: no cover - defensive cleanup
+                pass
+            raise
+
+        return entity
+
+    def update_config(  # noqa: PLR0913
+        self,
+        config_id: str,
+        *,
+        name: str | None = None,
+        base_url: str | None = None,
+        username: str | None = None,
+        token: str | None = None,
+        verify_ssl: bool | None = None,
+    ) -> ForemanConfigEntity:
+        """Update an existing Foreman configuration."""
+        config = self._repo.get(config_id)
+        if config is None:
+            raise ValueError("Foreman configuration not found")
+
+        update_data: dict[str, Any] = {}
+        if name is not None:
+            update_data["name"] = _normalise_name(name)
+        if base_url is not None:
+            update_data["base_url"] = _normalise_base_url(base_url)
+        if username is not None:
+            normalised_username = (username or "").strip()
+            if not normalised_username:
+                raise ValueError("Username cannot be empty")
+            update_data["username"] = normalised_username
+        if verify_ssl is not None:
+            update_data["verify_ssl"] = bool(verify_ssl)
+
+        entity = self._repo.update(config_id, **update_data)
+        if entity is None:
+            raise ValueError("Foreman configuration not found")
+
+        if token is not None:
+            cleaned = _clean_token(token)
+            store = require_secret_store()
+            store.set(entity.token_secret, cleaned)
+
+        return entity
+
+    def delete_config(self, config_id: str) -> bool:
+        """Delete a Foreman configuration."""
+        config = self._repo.get(config_id)
+        if config is None:
+            return False
+        store = require_secret_store()
+        removed = self._repo.delete(config_id)
+        if removed:
+            store.delete(config.token_secret)
+        return removed
+
+    def test_connection(self, config_id: str) -> dict[str, Any]:
+        """Test connectivity to a Foreman instance."""
+        config = self.get_config(config_id)
+        if config is None:
+            raise ValueError("Foreman configuration not found")
+
+        store = require_secret_store()
+        token = store.get(config.token_secret)
+        if not token:
+            raise ValueError("Token not found in secret store")
+
+        client_config = ForemanClientConfig(
+            base_url=config.base_url,
+            username=config.username,
+            token=token,
+            verify_ssl=config.verify_ssl,
+        )
+
+        try:
+            client = ForemanClient(client_config)
+            with client:
+                client.test_connection()
+            return {
+                "status": "success",
+                "message": "Successfully connected to Foreman",
+                "base_url": config.base_url,
+            }
+        except ForemanAuthError as exc:
+            return {
+                "status": "error",
+                "message": f"Authentication failed: {exc}",
+                "base_url": config.base_url,
+            }
+        except ForemanClientError as exc:
+            return {
+                "status": "error",
+                "message": f"Connection failed: {exc}",
+                "base_url": config.base_url,
+            }
+        except Exception as exc:  # pragma: no cover - unexpected errors
+            logger.exception("Unexpected error testing Foreman connection")
+            return {
+                "status": "error",
+                "message": f"Unexpected error: {exc}",
+                "base_url": config.base_url,
+            }
+
+    def get_client(self, config_id: str) -> ForemanClient:
+        """Get a ForemanClient instance for a configuration."""
+        config = self.get_config(config_id)
+        if config is None:
+            raise ValueError("Foreman configuration not found")
+
+        store = require_secret_store()
+        token = store.get(config.token_secret)
+        if not token:
+            raise ValueError("Token not found in secret store")
+
+        return ForemanClient(
+            ForemanClientConfig(
+                base_url=config.base_url,
+                username=config.username,
+                token=token,
+                verify_ssl=config.verify_ssl,
+            )
+        )
+
+    # ------------------------------------------------------------------
+    # Inventory management with caching
+    # ------------------------------------------------------------------
+    def list_configs_with_status(self) -> list[tuple[ForemanConfigEntity, dict[str, Any]]]:
+        """List all configurations with cache status metadata."""
+        results: list[tuple[ForemanConfigEntity, dict[str, Any]]] = []
+        for config in self._repo.list_all():
+            cache = self._load_cache_entry(config.id)
+            meta = cache["meta"] if cache else {}
+            results.append((config, meta))
+        return results
+
+    def refresh_inventory(
+        self,
+        config_id: str,
+    ) -> tuple[ForemanConfigEntity, list[dict[str, Any]], dict[str, Any]]:
+        """Refresh Foreman hosts inventory and update cache."""
+        config = self._repo.get(config_id)
+        if config is None:
+            raise ValueError("Foreman configuration not found")
+
+        store = require_secret_store()
+        token = store.get(config.token_secret)
+        if not token:
+            raise ValueError("Token not found in secret store")
+
+        client_config = ForemanClientConfig(
+            base_url=config.base_url,
+            username=config.username,
+            token=token,
+            verify_ssl=config.verify_ssl,
+        )
+
+        try:
+            client = ForemanClient(client_config)
+            with client:
+                hosts = client.list_hosts(force_refresh=True)
+
+            generated_at = _now_utc()
+            meta = {
+                "generated_at": generated_at,
+                "host_count": len(hosts),
+                "source": "live",
+            }
+
+            self._write_cache(config, hosts, meta)
+            return config, hosts, meta
+        except ForemanAuthError as exc:
+            logger.error("Foreman authentication failed for %s: %s", config_id, exc)
+            raise
+        except ForemanClientError as exc:
+            logger.error("Foreman API error for %s: %s", config_id, exc)
+            raise
+
+    def get_inventory(
+        self,
+        config_id: str,
+        *,
+        refresh: bool = False,
+    ) -> tuple[ForemanConfigEntity, list[dict[str, Any]], dict[str, Any]]:
+        """Get Foreman hosts inventory, using cache if available."""
+        if refresh:
+            return self.refresh_inventory(config_id)
+
+        config = self._repo.get(config_id)
+        if config is None:
+            raise ValueError("Foreman configuration not found")
+
+        cache = self._load_cache_entry(config_id)
+        if cache:
+            meta = dict(cache["meta"])
+            meta["source"] = "cache"
+            return config, cache["hosts"], meta
+        return self.refresh_inventory(config_id)
+
+    # ------------------------------------------------------------------
+    # Internal cache helpers
+    # ------------------------------------------------------------------
+    def _cache_path(self, config_id: str) -> Path:
+        """Get cache file path for a configuration."""
+        return self._cache_dir_path() / f"{config_id}.json"
+
+    def _load_cache_entry(self, config_id: str) -> dict[str, Any] | None:
+        """Load cache entry from disk."""
+        path = self._cache_path(config_id)
+        if not path.exists():
+            return None
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            logger.warning("Failed to read Foreman cache for %s", config_id, exc_info=True)
+            return None
+
+        generated_at = _parse_iso_datetime(payload.get("generated_at"))
+        hosts_payload = payload.get("hosts")
+        if not isinstance(hosts_payload, list):
+            return None
+
+        hosts: list[dict[str, Any]] = []
+        for item in hosts_payload:
+            if isinstance(item, dict):
+                hosts.append(item)
+
+        host_count = len(hosts)
+        if "host_count" in payload:
+            try:
+                host_count = int(payload["host_count"])
+            except (ValueError, TypeError):
+                pass
+
+        meta = {
+            "generated_at": generated_at,
+            "host_count": host_count,
+        }
+        return {"meta": meta, "hosts": hosts}
+
+    def _write_cache(
+        self,
+        config: ForemanConfigEntity,
+        hosts: Iterable[dict[str, Any]],
+        meta: Mapping[str, Any],
+    ) -> None:
+        """Write cache entry to disk."""
+        path = self._cache_path(config.id)
+        lock = _cache_lock_for(config.id)
+        host_list = list(hosts)
+
+        payload: dict[str, Any] = {
+            "config_id": config.id,
+            "config_name": config.name,
+            "generated_at": _isoformat(meta.get("generated_at")),
+            "host_count": len(host_list),
+            "hosts": host_list,
+        }
+
+        with lock:
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+                logger.debug("Wrote Foreman cache for %s (%d hosts)", config.id, len(host_list))
+            except Exception:
+                logger.exception("Failed to write Foreman cache for %s", config.id)
+                raise
+
+
+# Type alias for service protocol
+ForemanServiceProtocol = ForemanService | MongoDBForemanService
+
+
+def create_foreman_service(session: Any = None) -> ForemanServiceProtocol:
+    """Factory function to create a ForemanService instance.
+
+    Uses the configured storage backend to return the appropriate implementation.
+    """
+    from infrastructure_atlas.infrastructure.repository_factory import get_storage_backend
+
+    backend = get_storage_backend()
+
+    if backend == "mongodb":
+        from infrastructure_atlas.infrastructure.mongodb import get_mongodb_client
+        from infrastructure_atlas.infrastructure.mongodb.repositories import MongoDBForemanConfigRepository
+
+        client = get_mongodb_client()
+        repo = MongoDBForemanConfigRepository(client.atlas)
+        return MongoDBForemanService(repo)
+    else:
+        if session is None:
+            from infrastructure_atlas.db import get_sessionmaker
+
+            SessionLocal = get_sessionmaker()
+            session = SessionLocal()
+        return ForemanService(session=session)

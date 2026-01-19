@@ -326,13 +326,113 @@ def _dataset_file_record(base: Path, path: Path) -> DatasetFileRecord:
     )
 
 
+def _get_storage_backend() -> str:
+    """Get the configured storage backend."""
+    from infrastructure_atlas.infrastructure.repository_factory import get_storage_backend
+    return get_storage_backend()
+
+
+def _build_vcenter_metadata_mongodb(defn: DatasetDefinition) -> DatasetMetadata:
+    """Build vCenter metadata from MongoDB cache."""
+    config_id = defn.context.get("config_id")
+    if not config_id:
+        return DatasetMetadata(definition=defn, files=[], last_updated=None)
+
+    try:
+        from infrastructure_atlas.infrastructure.mongodb import get_mongodb_client
+        from infrastructure_atlas.infrastructure.mongodb.cache_repositories import MongoDBVCenterCacheRepository
+
+        client = get_mongodb_client()
+        cache_repo = MongoDBVCenterCacheRepository(client.atlas_cache)
+        meta = cache_repo.get_cache_metadata(config_id)
+
+        if meta:
+            vm_count = meta.get("vm_count", 0)
+            last_updated = meta.get("generated_at")
+            # Create a virtual file record representing the MongoDB cache
+            files = [
+                DatasetFileRecord(
+                    relative_path=f"mongodb://atlas_cache/vcenter_vms?config_id={config_id}",
+                    absolute_path=Path(f"/mongodb/vcenter_vms/{config_id}"),
+                    exists=vm_count > 0,
+                    size_bytes=vm_count,  # Use VM count as "size"
+                    modified=last_updated,
+                )
+            ]
+            return DatasetMetadata(
+                definition=defn,
+                files=files,
+                last_updated=last_updated,
+                extras={"vm_count": vm_count, "source": "mongodb"},
+            )
+    except Exception:
+        pass
+
+    return DatasetMetadata(definition=defn, files=[], last_updated=None)
+
+
+def _build_netbox_metadata_mongodb(defn: DatasetDefinition) -> DatasetMetadata:
+    """Build NetBox metadata from MongoDB cache."""
+    try:
+        from infrastructure_atlas.infrastructure.mongodb import get_mongodb_client
+        from infrastructure_atlas.infrastructure.mongodb.cache_repositories import MongoDBNetBoxCacheRepository
+
+        client = get_mongodb_client()
+        cache_repo = MongoDBNetBoxCacheRepository(client.atlas_cache)
+
+        # Get cache metadata (includes generated_at timestamp)
+        meta = cache_repo.get_cache_metadata()
+        stats = cache_repo.get_cache_stats()
+
+        device_count = stats.get("devices", {}).get("count", 0)
+        vm_count = stats.get("vms", {}).get("count", 0)
+
+        # Use generated_at from metadata
+        last_updated = meta.get("generated_at") if meta else None
+
+        files = [
+            DatasetFileRecord(
+                relative_path="mongodb://atlas_cache/netbox_devices",
+                absolute_path=Path("/mongodb/netbox_devices"),
+                exists=device_count > 0,
+                size_bytes=device_count,
+                modified=last_updated,
+            ),
+            DatasetFileRecord(
+                relative_path="mongodb://atlas_cache/netbox_vms",
+                absolute_path=Path("/mongodb/netbox_vms"),
+                exists=vm_count > 0,
+                size_bytes=vm_count,
+                modified=last_updated,
+            ),
+        ]
+        return DatasetMetadata(
+            definition=defn,
+            files=files,
+            last_updated=last_updated,
+            extras={"device_count": device_count, "vm_count": vm_count, "source": "mongodb"},
+        )
+    except Exception:
+        pass
+
+    return DatasetMetadata(definition=defn, files=[], last_updated=None)
+
+
 def _build_dataset_metadata(defn: DatasetDefinition) -> DatasetMetadata:
     """Build metadata for a dataset definition."""
     # Use custom metadata builder if provided
     if defn.metadata_builder is not None:
         return defn.metadata_builder(defn)
 
-    # Default metadata building logic
+    # Check if using MongoDB backend for vCenter/NetBox datasets
+    backend = _get_storage_backend()
+    if backend == "mongodb":
+        if defn.id.startswith("vcenter-"):
+            return _build_vcenter_metadata_mongodb(defn)
+        if defn.id == "netbox-cache":
+            return _build_netbox_metadata_mongodb(defn)
+
+    # Default metadata building logic (JSON files)
     base = _data_dir()
     files: list[DatasetFileRecord] = []
     for pattern in defn.path_globs:
@@ -372,15 +472,22 @@ def _serialize_dataset(defn: DatasetDefinition, meta: DatasetMetadata, command: 
         }
         for record in meta.files
     ]
+    # Count files and present files
+    file_count = len(files_payload)
+    present_files = sum(1 for f in files_payload if f.get("exists"))
+
     payload: dict[str, Any] = {
         "id": defn.id,
         "label": defn.label,
         "description": defn.description,
         "files": files_payload,
+        "file_count": file_count,
+        "present_files": present_files,
         "last_updated": meta.last_updated.isoformat() if meta.last_updated else None,
         "last_updated_epoch": int(meta.last_updated.timestamp()) if meta.last_updated else None,
         "command": command_display,
         "can_refresh": command is not None,
         "context": defn.context,
+        "extras": meta.extras if meta.extras else {},
     }
     return payload

@@ -497,7 +497,17 @@ class TelegramWebhookHandler:
         account = self.linking.get_linked_account("telegram", user_id)
 
         if account:
-            username = account.user.username if account.user else "Unknown"
+            # Get username - handle both SQLAlchemy models (with .user) and domain entities
+            username = "Unknown"
+            if hasattr(account, "user") and account.user:
+                # SQLAlchemy model with relationship
+                username = account.user.username
+            elif hasattr(account, "user_id") and account.user_id:
+                # Domain entity - need to fetch user separately
+                user = self.linking.get_user_by_platform("telegram", user_id)
+                if user:
+                    username = user.username if hasattr(user, "username") else str(user)
+
             date_str = account.created_at.strftime("%Y-%m-%d")
             status = (
                 "✅ <b>Account Status:</b> Linked\n"

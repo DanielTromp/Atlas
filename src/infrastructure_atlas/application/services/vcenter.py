@@ -10,16 +10,16 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 from infrastructure_atlas.domain.entities import VCenterConfigEntity
 from infrastructure_atlas.domain.integrations.vcenter import VCenterVM
+from infrastructure_atlas.domain.repositories import VCenterConfigRepository
 from infrastructure_atlas.env import project_root
-from infrastructure_atlas.infrastructure.db.repositories import SqlAlchemyVCenterConfigRepository
 from infrastructure_atlas.infrastructure.external import (
     ESXiClient,
     VCenterAuthError,
@@ -824,24 +824,38 @@ def _deserialize_vm(data: Mapping[str, Any]) -> VCenterVM:
     )
 
 
-@dataclass(slots=True)
 class VCenterService:
-    """Application service exposing vCenter configuration operations."""
+    """Application service exposing vCenter configuration operations.
 
-    session: Session
-    _repo: SqlAlchemyVCenterConfigRepository | None = field(init=False, repr=False, default=None)
-    _cache_dir: Path | None = field(init=False, repr=False, default=None)
+    Supports both MongoDB and SQLite backends based on ATLAS_STORAGE_BACKEND.
+    For MongoDB backend, uses MongoDB cache repository instead of JSON files.
+    """
 
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "_repo", SqlAlchemyVCenterConfigRepository(self.session))
-        object.__setattr__(self, "_cache_dir", _resolve_cache_dir())
+    def __init__(
+        self,
+        repo: VCenterConfigRepository,
+        session: Session | None = None,
+        backend: str = "mongodb",
+        cache_repo: Any = None,
+    ) -> None:
+        self._repo = repo
+        self._session = session
+        self._backend = backend
+        self._cache_repo = cache_repo
+        self._cache_dir = _resolve_cache_dir()
 
-    def _repo_instance(self) -> SqlAlchemyVCenterConfigRepository:
-        repo = self._repo
-        if repo is None:
-            repo = SqlAlchemyVCenterConfigRepository(self.session)
-            object.__setattr__(self, "_repo", repo)
-        return repo
+    def _repo_instance(self) -> VCenterConfigRepository:
+        return self._repo
+
+    def _commit(self) -> None:
+        """Commit transaction for SQLite backend."""
+        if self._backend == "sqlite" and self._session is not None:
+            self._session.commit()
+
+    def _rollback(self) -> None:
+        """Rollback transaction for SQLite backend."""
+        if self._backend == "sqlite" and self._session is not None:
+            self._session.rollback()
 
     def _cache_dir_path(self) -> Path:
         cache_dir = self._cache_dir
@@ -849,6 +863,18 @@ class VCenterService:
             cache_dir = _resolve_cache_dir()
             object.__setattr__(self, "_cache_dir", cache_dir)
         return cache_dir
+
+    def _get_cache_repo(self):
+        """Get the MongoDB cache repository (lazy loading)."""
+        if self._cache_repo is not None:
+            return self._cache_repo
+        if self._backend != "mongodb":
+            return None
+        from infrastructure_atlas.infrastructure.mongodb import get_mongodb_client
+        from infrastructure_atlas.infrastructure.mongodb.cache_repositories import MongoDBVCenterCacheRepository
+        client = get_mongodb_client()
+        self._cache_repo = MongoDBVCenterCacheRepository(client.atlas_cache)
+        return self._cache_repo
 
     # ------------------------------------------------------------------
     # Configuration management
@@ -885,7 +911,7 @@ class VCenterService:
         normalised_url = _normalise_base_url(base_url)
         normalised_username = _normalise_username(username)
         cleaned_password = _clean_password(password)
-        store = require_secret_store(self.session)
+        store = require_secret_store()
 
         config_id = str(uuid.uuid4())
         secret_name = f"vcenter:{config_id}:password"
@@ -900,21 +926,23 @@ class VCenterService:
                 verify_ssl=bool(verify_ssl),
                 is_esxi=bool(is_esxi),
             )
-        except IntegrityError as exc:
-            self.session.rollback()
-            raise ValueError("A vCenter with that name already exists") from exc
+        except Exception as exc:
+            self._rollback()
+            if "already exists" in str(exc).lower() or "duplicate" in str(exc).lower():
+                raise ValueError("A vCenter with that name already exists") from exc
+            raise
 
         try:
             store.set(secret_name, cleaned_password)
-            self.session.commit()
+            self._commit()
         except Exception:
             logger.exception("Failed to persist encrypted password for vCenter '%s'", normalised_name)
-            self.session.rollback()
+            self._rollback()
             try:
                 self._repo_instance().delete(entity.id)
-                self.session.commit()
+                self._commit()
             except Exception:  # pragma: no cover - defensive cleanup
-                self.session.rollback()
+                self._rollback()
             raise
 
         return entity
@@ -949,19 +977,21 @@ class VCenterService:
 
         try:
             entity = repo.update(config_id, **update_data)
-        except IntegrityError as exc:
-            self.session.rollback()
-            raise ValueError("A vCenter with that name already exists") from exc
+        except Exception as exc:
+            self._rollback()
+            if "already exists" in str(exc).lower() or "duplicate" in str(exc).lower():
+                raise ValueError("A vCenter with that name already exists") from exc
+            raise
 
         if entity is None:
             raise ValueError("vCenter configuration not found")
 
         if password is not None:
             cleaned = _clean_password(password)
-            store = require_secret_store(self.session)
+            store = require_secret_store()
             store.set(entity.password_secret, cleaned)
 
-        self.session.commit()
+        self._commit()
         return entity
 
     def delete_config(self, config_id: str) -> bool:
@@ -969,19 +999,27 @@ class VCenterService:
         config = repo.get(config_id)
         if config is None:
             return False
-        store = require_secret_store(self.session)
+        store = require_secret_store()
         removed = repo.delete(config_id)
         if removed:
             store.delete(config.password_secret)
-            self.session.commit()
+            self._commit()
+            # Delete from MongoDB cache if using mongodb backend
+            cache_repo = self._get_cache_repo()
+            if cache_repo is not None:
+                try:
+                    cache_repo.delete_vms_for_config(config_id)
+                except Exception:
+                    logger.warning("Failed to remove vCenter cache from MongoDB for %s", config_id, exc_info=True)
+            # Also remove JSON cache file if it exists (for cleanup during migration)
             cache_path = self._cache_path(config_id)
             if cache_path.exists():
                 try:
                     cache_path.unlink()
                 except Exception:
-                    logger.warning("Failed to remove vCenter cache for %s", config_id, exc_info=True)
+                    logger.warning("Failed to remove vCenter JSON cache for %s", config_id, exc_info=True)
             return True
-        self.session.rollback()
+        self._rollback()
         return False
 
     # ------------------------------------------------------------------
@@ -995,7 +1033,7 @@ class VCenterService:
         config = self._repo_instance().get(config_id)
         if config is None:
             raise ValueError("vCenter configuration not found")
-        store = require_secret_store(self.session)
+        store = require_secret_store()
         password = store.get(config.password_secret)
         if not password:
             raise ValueError("Credentials are not configured for this vCenter")
@@ -1039,6 +1077,32 @@ class VCenterService:
         return self._cache_dir_path() / f"{config_id}.json"
 
     def _load_cache_entry(self, config_id: str) -> dict[str, Any] | None:
+        # Use MongoDB cache for mongodb backend
+        cache_repo = self._get_cache_repo()
+        if cache_repo is not None:
+            return self._load_cache_entry_mongodb(config_id, cache_repo)
+        return self._load_cache_entry_json(config_id)
+
+    def _load_cache_entry_mongodb(self, config_id: str, cache_repo) -> dict[str, Any] | None:
+        """Load cache from MongoDB."""
+        try:
+            vms = cache_repo.list_vms(config_id)
+            if not vms:
+                return None
+            meta = cache_repo.get_cache_metadata(config_id) or {}
+            return {
+                "meta": {
+                    "generated_at": meta.get("generated_at"),
+                    "vm_count": meta.get("vm_count", len(vms)),
+                },
+                "vms": vms,
+            }
+        except Exception:
+            logger.warning("Failed to load vCenter cache from MongoDB for %s", config_id, exc_info=True)
+            return None
+
+    def _load_cache_entry_json(self, config_id: str) -> dict[str, Any] | None:
+        """Load cache from JSON file (legacy)."""
         path = self._cache_path(config_id)
         if not path.exists():
             return None
@@ -1080,6 +1144,43 @@ class VCenterService:
         *,
         partial_update: bool = False,
     ) -> None:
+        # Use MongoDB cache for mongodb backend
+        cache_repo = self._get_cache_repo()
+        if cache_repo is not None:
+            self._write_cache_mongodb(config, vms, partial_update, cache_repo)
+        else:
+            self._write_cache_json(config, vms, meta, partial_update)
+
+    def _write_cache_mongodb(
+        self,
+        config: VCenterConfigEntity,
+        vms: Iterable[VCenterVM],
+        partial_update: bool,
+        cache_repo,
+    ) -> None:
+        """Write cache to MongoDB."""
+        vm_list = list(vms)
+        try:
+            if partial_update:
+                # Upsert only the specified VMs (document-level updates)
+                cache_repo.upsert_vms(config.id, vm_list)
+                logger.debug("Partial update: upserted %d VMs for config %s", len(vm_list), config.id)
+            else:
+                # Full refresh: replace all VMs for this config
+                result = cache_repo.replace_all_vms(config.id, vm_list)
+                logger.debug("Full refresh: deleted %d, inserted %d VMs for config %s",
+                           result["deleted"], result["inserted"], config.id)
+        except Exception:
+            logger.warning("Failed to write vCenter cache to MongoDB for %s", config.id, exc_info=True)
+
+    def _write_cache_json(
+        self,
+        config: VCenterConfigEntity,
+        vms: Iterable[VCenterVM],
+        meta: Mapping[str, Any],
+        partial_update: bool,
+    ) -> None:
+        """Write cache to JSON file (legacy)."""
         path = self._cache_path(config.id)
         vm_list = list(vms)
 
@@ -1087,7 +1188,7 @@ class VCenterService:
         existing_generated_at = None
         if partial_update and path.exists():
             try:
-                existing_cache = self._load_cache_entry(config.id)
+                existing_cache = self._load_cache_entry_json(config.id)
                 if existing_cache:
                     existing_vms = existing_cache.get("vms", [])
                     existing_meta = existing_cache.get("meta", {})
@@ -1435,8 +1536,43 @@ class VCenterService:
         return vms, metadata
 
 
-def create_vcenter_service(session: Session) -> VCenterService:
-    return VCenterService(session=session)
+def create_vcenter_service(session: Session | None = None) -> VCenterService:
+    """Create a VCenterService using the configured storage backend.
+
+    Args:
+        session: SQLAlchemy session (only required for SQLite backend).
+
+    Returns:
+        Configured VCenterService instance.
+    """
+    from infrastructure_atlas.infrastructure.repository_factory import (
+        get_storage_backend,
+        get_vcenter_config_repository,
+    )
+
+    backend = get_storage_backend()
+
+    if backend == "mongodb":
+        return VCenterService(
+            repo=get_vcenter_config_repository(),
+            session=None,
+            backend="mongodb",
+        )
+
+    # SQLite backend
+    if session is None:
+        from infrastructure_atlas.db import get_sessionmaker
+
+        Sessionmaker = get_sessionmaker()
+        session = Sessionmaker()
+
+    from infrastructure_atlas.infrastructure.db.repositories import SqlAlchemyVCenterConfigRepository
+
+    return VCenterService(
+        repo=SqlAlchemyVCenterConfigRepository(session),
+        session=session,
+        backend="sqlite",
+    )
 
 
 __all__ = ["VCenterService", "create_vcenter_service"]

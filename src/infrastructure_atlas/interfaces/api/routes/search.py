@@ -9,7 +9,6 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from infrastructure_atlas.application.services import create_vcenter_service
-from infrastructure_atlas.db import get_sessionmaker
 from infrastructure_atlas.infrastructure.external import ZabbixClient
 
 from .confluence import confluence_search
@@ -17,8 +16,6 @@ from .jira import jira_search
 from .netbox import netbox_search
 
 router = APIRouter(prefix="/search", tags=["search"])
-
-SessionLocal = get_sessionmaker()
 
 
 # Helper functions
@@ -179,57 +176,57 @@ def search_aggregate(
     if can_view_vcenter and vlimit != 0:
         tokens = [token for token in q.lower().split() if token.strip()]
         try:
-            with SessionLocal() as db:
-                service = create_vcenter_service(db)
-                configs_with_meta = service.list_configs_with_status()
-                match_count = 0
-                for config, _meta in configs_with_meta:
-                    friendly_name = config.name or config.base_url or config.id
-                    try:
-                        _, vms, meta_payload = service.get_inventory(config.id, refresh=False)
-                    except Exception as exc:  # pragma: no cover - integration path
-                        vcenter_payload["errors"].append(f"{friendly_name}: {exc}")
+            # create_vcenter_service handles backend detection internally
+            service = create_vcenter_service()
+            configs_with_meta = service.list_configs_with_status()
+            match_count = 0
+            for config, _meta in configs_with_meta:
+                friendly_name = config.name or config.base_url or config.id
+                try:
+                    _, vms, meta_payload = service.get_inventory(config.id, refresh=False)
+                except Exception as exc:  # pragma: no cover - integration path
+                    vcenter_payload["errors"].append(f"{friendly_name}: {exc}")
+                    continue
+
+                generated_at = None
+                if isinstance(meta_payload, Mapping):
+                    generated_at = _iso_datetime(meta_payload.get("generated_at"))
+
+                for vm in vms:
+                    if tokens and not _vcenter_vm_matches(vm, tokens):
                         continue
-
-                    generated_at = None
-                    if isinstance(meta_payload, Mapping):
-                        generated_at = _iso_datetime(meta_payload.get("generated_at"))
-
-                    for vm in vms:
-                        if tokens and not _vcenter_vm_matches(vm, tokens):
-                            continue
-                        match_count += 1
-                        if vlimit > 0 and len(vcenter_payload["items"]) >= vlimit:
-                            vcenter_payload["has_more"] = True
-                            break
-
-                        vcenter_payload["items"].append(
-                            {
-                                "id": vm.vm_id,
-                                "name": vm.name,
-                                "config_id": config.id,
-                                "config_name": friendly_name,
-                                "power_state": vm.power_state,
-                                "guest_os": vm.guest_os,
-                                "tools_status": vm.tools_status,
-                                "guest_host_name": vm.guest_host_name,
-                                "guest_ip_address": vm.guest_ip_address,
-                                "ip_addresses": list(vm.ip_addresses),
-                                "mac_addresses": list(vm.mac_addresses),
-                                "tags": list(vm.tags),
-                                "network_names": list(vm.network_names),
-                                "instance_uuid": vm.instance_uuid,
-                                "bios_uuid": vm.bios_uuid,
-                                "vcenter_url": vm.vcenter_url,
-                                "detail_url": f"/app/vcenter/view.html?config={config.id}&vm={vm.vm_id}",
-                                "generated_at": generated_at,
-                            }
-                        )
-
-                    if vcenter_payload["has_more"]:
+                    match_count += 1
+                    if vlimit > 0 and len(vcenter_payload["items"]) >= vlimit:
+                        vcenter_payload["has_more"] = True
                         break
 
-                vcenter_payload["total"] = match_count
+                    vcenter_payload["items"].append(
+                        {
+                            "id": vm.vm_id,
+                            "name": vm.name,
+                            "config_id": config.id,
+                            "config_name": friendly_name,
+                            "power_state": vm.power_state,
+                            "guest_os": vm.guest_os,
+                            "tools_status": vm.tools_status,
+                            "guest_host_name": vm.guest_host_name,
+                            "guest_ip_address": vm.guest_ip_address,
+                            "ip_addresses": list(vm.ip_addresses),
+                            "mac_addresses": list(vm.mac_addresses),
+                            "tags": list(vm.tags),
+                            "network_names": list(vm.network_names),
+                            "instance_uuid": vm.instance_uuid,
+                            "bios_uuid": vm.bios_uuid,
+                            "vcenter_url": vm.vcenter_url,
+                            "detail_url": f"/app/vcenter/view.html?config={config.id}&vm={vm.vm_id}",
+                            "generated_at": generated_at,
+                        }
+                    )
+
+                if vcenter_payload["has_more"]:
+                    break
+
+            vcenter_payload["total"] = match_count
         except Exception as exc:  # pragma: no cover - defensive fallback
             vcenter_payload["errors"].append(str(exc))
 

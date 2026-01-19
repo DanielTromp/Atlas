@@ -154,6 +154,53 @@ else:
 SessionLocal = get_sessionmaker()
 
 
+# -----------------------------------------------------------------------------
+# Backend-aware auth helpers
+# -----------------------------------------------------------------------------
+def _get_auth_backend():
+    """Get the configured storage backend for auth."""
+    from infrastructure_atlas.infrastructure.repository_factory import get_storage_backend
+
+    return get_storage_backend()
+
+
+def _lookup_user_by_id_mongodb(user_id: str):
+    """Look up a user by ID using MongoDB."""
+    from infrastructure_atlas.infrastructure.repository_factory import (
+        get_role_permission_repository,
+        get_user_repository,
+    )
+
+    user_repo = get_user_repository()
+    user = user_repo.get_by_id(user_id)
+    if user is None or not user.is_active:
+        return None, frozenset()
+
+    role_repo = get_role_permission_repository()
+    perms_record = role_repo.get(user.role)
+    perms = perms_record.permissions if perms_record else frozenset()
+
+    # Set permissions on the user entity
+    user.permissions = perms
+    return user, perms
+
+
+def _lookup_user_by_api_key_mongodb(token: str):
+    """Look up a user by API key using MongoDB."""
+    from infrastructure_atlas.infrastructure.mongodb import get_mongodb_client
+
+    client = get_mongodb_client()
+    db = client.atlas
+
+    # Look up the API key
+    key_doc = db["user_api_keys"].find_one({"secret": token})
+    if not key_doc:
+        return None, frozenset()
+
+    # Look up the user
+    return _lookup_user_by_id_mongodb(key_doc["user_id"])
+
+
 class _TaskLogger:
     """Mutable container passed into task_logging for success metadata."""
 
@@ -258,51 +305,92 @@ METRICS_MEDIA_TYPE = "text/plain; version=0.0.4; charset=utf-8"
 
 
 def ensure_default_role_permissions() -> None:
-    with SessionLocal() as db:
-        existing = {record.role: record for record in db.execute(select(RolePermission)).scalars()}
-        changed = False
+    from infrastructure_atlas.infrastructure.repository_factory import get_storage_backend
+
+    backend = get_storage_backend()
+
+    if backend == "mongodb":
+        # Use MongoDB repository
+        from infrastructure_atlas.infrastructure.mongodb import get_mongodb_client
+        from infrastructure_atlas.infrastructure.mongodb.repositories import MongoDBRolePermissionRepository
+
+        client = get_mongodb_client()
+        repo = MongoDBRolePermissionRepository(client.atlas)
+        existing = {record.role: record for record in repo.list_all()}
+
         for role, spec in DEFAULT_ROLE_DEFINITIONS.items():
             label = (spec.get("label") or role).strip() or role
             description = spec.get("description") or None
             default_perms = sorted({str(p).strip() for p in spec.get("permissions", []) if str(p).strip()})
             record = existing.get(role)
             if record is None:
-                record = RolePermission(
-                    role=role,
-                    label=label,
-                    description=description,
-                    permissions=default_perms,
-                )
-                db.add(record)
-                changed = True
+                repo.upsert(role, label, description, default_perms)
             else:
-                updated = False
-                if not record.label:
-                    record.label = label
-                    updated = True
-                if description and not record.description:
-                    record.description = description
-                    updated = True
-                current = set(record.permissions or [])
+                current = set(record.permissions or frozenset())
                 desired = current.union(default_perms)
-                if desired != current:
-                    record.permissions = sorted(desired)
-                    updated = True
-                if updated:
+                if desired != current or not record.label:
+                    repo.upsert(
+                        role,
+                        label if not record.label else record.label,
+                        description if not record.description else record.description,
+                        desired,
+                    )
+    else:
+        # Use SQLite via SQLAlchemy
+        with SessionLocal() as db:
+            existing = {record.role: record for record in db.execute(select(RolePermission)).scalars()}
+            changed = False
+            for role, spec in DEFAULT_ROLE_DEFINITIONS.items():
+                label = (spec.get("label") or role).strip() or role
+                description = spec.get("description") or None
+                default_perms = sorted({str(p).strip() for p in spec.get("permissions", []) if str(p).strip()})
+                record = existing.get(role)
+                if record is None:
+                    record = RolePermission(
+                        role=role,
+                        label=label,
+                        description=description,
+                        permissions=default_perms,
+                    )
                     db.add(record)
                     changed = True
-        if changed:
-            db.commit()
+                else:
+                    updated = False
+                    if not record.label:
+                        record.label = label
+                        updated = True
+                    if description and not record.description:
+                        record.description = description
+                        updated = True
+                    current = set(record.permissions or [])
+                    desired = current.union(default_perms)
+                    if desired != current:
+                        record.permissions = sorted(desired)
+                        updated = True
+                    if updated:
+                        db.add(record)
+                        changed = True
+            if changed:
+                db.commit()
 
 
 def ensure_default_admin() -> None:
-    with SessionLocal() as db:
-        existing = db.execute(select(User.id).limit(1)).scalar_one_or_none()
-        if existing:
-            return
+    from infrastructure_atlas.infrastructure.repository_factory import get_storage_backend
 
-        username = os.getenv("ATLAS_DEFAULT_ADMIN_USERNAME", "admin").strip().lower() or "admin"
-        seed_password = os.getenv("ATLAS_DEFAULT_ADMIN_PASSWORD", "").strip() or UI_PASSWORD
+    backend = get_storage_backend()
+    username = os.getenv("ATLAS_DEFAULT_ADMIN_USERNAME", "admin").strip().lower() or "admin"
+    seed_password = os.getenv("ATLAS_DEFAULT_ADMIN_PASSWORD", "").strip() or UI_PASSWORD
+
+    if backend == "mongodb":
+        # Use MongoDB repository
+        from infrastructure_atlas.infrastructure.mongodb import get_mongodb_client
+        from infrastructure_atlas.infrastructure.mongodb.repositories import MongoDBUserRepository
+
+        client = get_mongodb_client()
+        repo = MongoDBUserRepository(client.atlas)
+        existing_users = repo.list_all()
+        if existing_users:
+            return
 
         if not seed_password:
             logger.warning(
@@ -311,19 +399,44 @@ def ensure_default_admin() -> None:
             )
             return
 
-        user = User(
+        repo.create(
             username=username,
             display_name="Administrator",
             role="admin",
             password_hash=hash_password(seed_password),
             is_active=True,
         )
-        db.add(user)
-        db.commit()
         logger.info(
             "Created default admin user",
             extra={"username": username},
         )
+    else:
+        # Use SQLite via SQLAlchemy
+        with SessionLocal() as db:
+            existing = db.execute(select(User.id).limit(1)).scalar_one_or_none()
+            if existing:
+                return
+
+            if not seed_password:
+                logger.warning(
+                    "No users exist and ATLAS_DEFAULT_ADMIN_PASSWORD is not set; set it (or ATLAS_UI_PASSWORD) to bootstrap the first login.",
+                    extra={"username": username},
+                )
+                return
+
+            user = User(
+                username=username,
+                display_name="Administrator",
+                role="admin",
+                password_hash=hash_password(seed_password),
+                is_active=True,
+            )
+            db.add(user)
+            db.commit()
+            logger.info(
+                "Created default admin user",
+                extra={"username": username},
+            )
 
 
 ensure_default_role_permissions()
@@ -383,44 +496,62 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request.state.user = None
         request.state.permissions = frozenset()
         user_id = request.session.get(SESSION_USER_KEY) if hasattr(request, "session") else None
+
+        # Determine backend once per request
+        backend = _get_auth_backend()
+
         if user_id:
-            with SessionLocal() as db:
-                user = db.get(User, user_id)
-                if user and user.is_active:
-                    perms_record = db.get(RolePermission, user.role)
-                    perms = frozenset((perms_record.permissions or []) if perms_record else [])
+            if backend == "mongodb":
+                user, perms = _lookup_user_by_id_mongodb(user_id)
+                if user:
                     request.state.user = user
                     request.state.permissions = perms
-                    try:
-                        user.permissions = perms
-                    except Exception:
-                        pass
                 else:
                     request.session.pop(SESSION_USER_KEY, None)
-                    request.state.user = None
-                    request.state.permissions = frozenset()
-
-
+            else:
+                # SQLite backend
+                with SessionLocal() as db:
+                    user = db.get(User, user_id)
+                    if user and user.is_active:
+                        perms_record = db.get(RolePermission, user.role)
+                        perms = frozenset((perms_record.permissions or []) if perms_record else [])
+                        request.state.user = user
+                        request.state.permissions = perms
+                        try:
+                            user.permissions = perms
+                        except Exception:
+                            pass
+                    else:
+                        request.session.pop(SESSION_USER_KEY, None)
+                        request.state.user = None
+                        request.state.permissions = frozenset()
 
         # Check for Bearer token and try to resolve to a UserAPIKey
         if request.state.user is None:
             token = _get_bearer_token(request)
             if token:
-                with SessionLocal() as db:
-                    # Look up key by strict match
-                    stmt = select(UserAPIKey).where(UserAPIKey.secret == token)
-                    key_record = db.execute(stmt).scalar_one_or_none()
-                    if key_record:
-                        user = db.get(User, key_record.user_id)
-                        if user and user.is_active:
-                            perms_record = db.get(RolePermission, user.role)
-                            perms = frozenset((perms_record.permissions or []) if perms_record else [])
-                            request.state.user = user
-                            request.state.permissions = perms
-                            try:
-                                user.permissions = perms
-                            except Exception:
-                                pass
+                if backend == "mongodb":
+                    user, perms = _lookup_user_by_api_key_mongodb(token)
+                    if user:
+                        request.state.user = user
+                        request.state.permissions = perms
+                else:
+                    # SQLite backend
+                    with SessionLocal() as db:
+                        # Look up key by strict match
+                        stmt = select(UserAPIKey).where(UserAPIKey.secret == token)
+                        key_record = db.execute(stmt).scalar_one_or_none()
+                        if key_record:
+                            user = db.get(User, key_record.user_id)
+                            if user and user.is_active:
+                                perms_record = db.get(RolePermission, user.role)
+                                perms = frozenset((perms_record.permissions or []) if perms_record else [])
+                                request.state.user = user
+                                request.state.permissions = perms
+                                try:
+                                    user.permissions = perms
+                                except Exception:
+                                    pass
 
         # Public endpoints
         if path in ("/favicon.ico", "/favicon.png", "/health"):
@@ -606,9 +737,9 @@ def _discover_vcenter_task_definitions() -> list[DatasetDefinition]:
     definitions: list[DatasetDefinition] = []
     known_configs: dict[str, str | None] = {}
     try:
-        with SessionLocal() as session:
-            service = create_vcenter_service(session)
-            entries = service.list_configs_with_status()
+        # create_vcenter_service handles backend detection internally
+        service = create_vcenter_service()
+        entries = service.list_configs_with_status()
     except Exception:
         entries = []
     for config, _meta in entries:

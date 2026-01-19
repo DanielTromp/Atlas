@@ -9,20 +9,21 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
-from infrastructure_atlas.application.services import PuppetService, create_puppet_service
+from infrastructure_atlas.application.services import create_puppet_service
+from infrastructure_atlas.application.services.puppet import PuppetServiceProtocol
 from infrastructure_atlas.infrastructure.external import GitClientError
 from infrastructure_atlas.infrastructure.security.secret_store import SecretStoreUnavailable
-from infrastructure_atlas.interfaces.api.dependencies import AdminUserDep, CurrentUserDep, DbSessionDep
+from infrastructure_atlas.interfaces.api.dependencies import AdminUserDep, CurrentUserDep
 
 router = APIRouter(prefix="/puppet", tags=["puppet"])
 
 
-def get_puppet_service(session: DbSessionDep) -> PuppetService:
-    """Return the Puppet service bound to the active session."""
-    return create_puppet_service(session)
+def get_puppet_service() -> PuppetServiceProtocol:
+    """Return the Puppet service using the configured backend."""
+    return create_puppet_service()
 
 
-PuppetServiceDep = Annotated[PuppetService, Depends(get_puppet_service)]
+PuppetServiceDep = Annotated[PuppetServiceProtocol, Depends(get_puppet_service)]
 
 
 class PuppetConfigCreate:

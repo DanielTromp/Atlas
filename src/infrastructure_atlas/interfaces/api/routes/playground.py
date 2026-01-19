@@ -25,7 +25,7 @@ from infrastructure_atlas.agents.playground import (
     ChatEventType,
     PlaygroundRuntime,
 )
-from infrastructure_atlas.agents.usage import UsageService
+from infrastructure_atlas.agents.usage import create_usage_service
 from infrastructure_atlas.db.models import PlaygroundPreset, User
 from infrastructure_atlas.db.models import PlaygroundSession as DBSession
 from infrastructure_atlas.infrastructure.logging import get_logger
@@ -38,8 +38,9 @@ router = APIRouter(prefix="/playground", tags=["playground"])
 
 # Lazy imports to avoid circular dependencies
 def get_db_session() -> Session:
-    from infrastructure_atlas.api.app import SessionLocal
+    from infrastructure_atlas.db import get_sessionmaker
 
+    SessionLocal = get_sessionmaker()
     return SessionLocal()
 
 
@@ -641,25 +642,19 @@ def get_user_usage_stats(
     require_playground_permission(request)
 
     user = get_current_user(request)
-    db = get_db_session()
+    usage_service = create_usage_service()
+    user_id = user.id if user else None
 
-    try:
-        usage_service = UsageService(db)
-        user_id = user.id if user else None
+    # Get overall stats
+    stats = usage_service.get_user_stats(user_id=user_id, days=days)
 
-        # Get overall stats
-        stats = usage_service.get_user_stats(user_id=user_id, days=days)
+    # Get per-agent breakdown
+    by_agent = usage_service.get_user_stats_by_agent(user_id=user_id, days=days)
 
-        # Get per-agent breakdown
-        by_agent = usage_service.get_user_stats_by_agent(user_id=user_id, days=days)
-
-        return {
-            **stats,
-            "by_agent": by_agent,
-        }
-
-    finally:
-        db.close()
+    return {
+        **stats,
+        "by_agent": by_agent,
+    }
 
 
 @router.get("/usage/recent")
@@ -671,13 +666,7 @@ def get_recent_usage(
     require_playground_permission(request)
 
     user = get_current_user(request)
-    db = get_db_session()
+    usage_service = create_usage_service()
+    user_id = user.id if user else None
 
-    try:
-        usage_service = UsageService(db)
-        user_id = user.id if user else None
-
-        return usage_service.get_recent_usage(user_id=user_id, limit=limit)
-
-    finally:
-        db.close()
+    return usage_service.get_recent_usage(user_id=user_id, limit=limit)

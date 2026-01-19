@@ -2,30 +2,28 @@
 
 from __future__ import annotations
 
-from typing import Annotated
-
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
-from sqlalchemy.orm import Session
 
 from infrastructure_atlas.application.dto.foreman import foreman_config_to_dto, foreman_configs_to_dto
-from infrastructure_atlas.application.services import ForemanService, create_foreman_service
+from infrastructure_atlas.application.services import create_foreman_service
+from infrastructure_atlas.application.services.foreman import ForemanServiceProtocol
 from infrastructure_atlas.infrastructure.external import ForemanAuthError, ForemanClientError
 from infrastructure_atlas.infrastructure.security.secret_store import SecretStoreUnavailable
-from infrastructure_atlas.interfaces.api.dependencies import AdminUserDep, CurrentUserDep, DbSessionDep
+from infrastructure_atlas.interfaces.api.dependencies import AdminUserDep, CurrentUserDep
 from infrastructure_atlas.interfaces.api.schemas import ForemanConfigCreate, ForemanConfigUpdate
 
 router = APIRouter(prefix="/foreman", tags=["foreman"])
 
 
-def get_foreman_service(session: DbSessionDep) -> ForemanService:
-    """Return the Foreman service bound to the active session."""
-    return create_foreman_service(session)
+def get_foreman_service() -> ForemanServiceProtocol:
+    """Return the Foreman service using the configured backend."""
+    return create_foreman_service()
 
 
-ForemanServiceDep = Annotated[ForemanService, Depends(get_foreman_service)]
+ForemanServiceDep = Annotated[ForemanServiceProtocol, Depends(get_foreman_service)]
 CreateBody = Annotated[ForemanConfigCreate, Body(...)]
 UpdateBody = Annotated[ForemanConfigUpdate, Body(...)]
 

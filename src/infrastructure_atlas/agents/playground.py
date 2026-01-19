@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from infrastructure_atlas.agents.usage import UsageRecord, UsageService, calculate_cost
+from infrastructure_atlas.agents.usage import UsageRecord, calculate_cost, create_usage_service
 from infrastructure_atlas.infrastructure.logging import get_logger
 
 if TYPE_CHECKING:
@@ -796,11 +796,8 @@ class PlaygroundRuntime:
             duration_ms: Duration in milliseconds
             error: Error message if any
         """
-        if not self.db_session:
-            return
-
         try:
-            usage_service = UsageService(self.db_session)
+            usage_service = create_usage_service(session=self.db_session)
             record = UsageRecord(
                 session_id=session.session_id,
                 agent_id=session.agent_id,

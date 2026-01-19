@@ -96,11 +96,29 @@ class NetboxExportService:
         self._client = client
         self._paths = paths
         self._logger = get_logger(__name__)
+        self._mongo_cache_repo: Any = None  # Lazy-loaded MongoDB cache repository
         use_legacy = os.getenv("ATLAS_LEGACY_EXPORTER", "").strip().lower() in {"1", "true", "yes", "on"}
         if use_legacy:
             self._exporter = LegacyScriptNetboxExporter(paths)
         else:
             self._exporter = NativeNetboxExporter(client, paths, logger=self._logger)
+
+    def _get_storage_backend(self) -> str:
+        """Get the configured storage backend."""
+        from infrastructure_atlas.infrastructure.repository_factory import get_storage_backend
+        return get_storage_backend()
+
+    def _get_cache_repo(self):
+        """Get the MongoDB cache repository (lazy loading)."""
+        if self._mongo_cache_repo is not None:
+            return self._mongo_cache_repo
+        if self._get_storage_backend() != "mongodb":
+            return None
+        from infrastructure_atlas.infrastructure.mongodb import get_mongodb_client
+        from infrastructure_atlas.infrastructure.mongodb.cache_repositories import MongoDBNetBoxCacheRepository
+        client = get_mongodb_client()
+        self._mongo_cache_repo = MongoDBNetBoxCacheRepository(client.atlas_cache)
+        return self._mongo_cache_repo
 
     @classmethod
     def from_env(cls) -> NetboxExportService:
@@ -390,6 +408,14 @@ class NetboxExportService:
         return payload
 
     def _load_cache_snapshot(self) -> dict[str, Any] | None:
+        # Try MongoDB first if configured
+        cache_repo = self._get_cache_repo()
+        if cache_repo is not None:
+            return self._load_cache_snapshot_mongodb(cache_repo)
+        return self._load_cache_snapshot_json()
+
+    def _load_cache_snapshot_json(self) -> dict[str, Any] | None:
+        """Load cache snapshot from JSON file."""
         path = self._paths.cache_json
         if not path.exists():
             return None
@@ -403,7 +429,47 @@ class NetboxExportService:
             )
             return None
 
+    def _load_cache_snapshot_mongodb(self, cache_repo) -> dict[str, Any] | None:
+        """Load cache snapshot from MongoDB."""
+        try:
+            meta = cache_repo.get_cache_metadata()
+            if meta is None:
+                return None
+
+            # Build snapshot structure compatible with JSON format
+            devices = cache_repo.list_devices()
+            vms = cache_repo.list_vms()
+
+            device_index = {}
+            for device in devices:
+                device_index[str(device.id)] = self._device_to_cache_item(device)
+
+            vm_index = {}
+            for vm in vms:
+                vm_index[str(vm.id)] = self._vm_to_cache_item(vm)
+
+            return {
+                "generated_at": meta["generated_at"].isoformat() if meta.get("generated_at") else None,
+                "devices": device_index,
+                "vms": vm_index,
+            }
+        except Exception as exc:
+            self._logger.warning(
+                "Failed to load existing NetBox cache from MongoDB; starting fresh",
+                extra={"error": str(exc)},
+            )
+            return None
+
     def _write_cache_snapshot(self, snapshot: Mapping[str, Any]) -> None:
+        # Use MongoDB if configured
+        cache_repo = self._get_cache_repo()
+        if cache_repo is not None:
+            self._write_cache_snapshot_mongodb(snapshot, cache_repo)
+        else:
+            self._write_cache_snapshot_json(snapshot)
+
+    def _write_cache_snapshot_json(self, snapshot: Mapping[str, Any]) -> None:
+        """Write cache snapshot to JSON file."""
         path = self._paths.cache_json
         path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = path.with_suffix(".tmp")
@@ -411,6 +477,36 @@ class NetboxExportService:
             json.dump(snapshot, fh, indent=2, sort_keys=True, ensure_ascii=False)
             fh.write("\n")
         temp_path.replace(path)
+
+    def _write_cache_snapshot_mongodb(self, snapshot: Mapping[str, Any], cache_repo) -> None:
+        """Write cache snapshot to MongoDB."""
+        try:
+            # Extract devices and VMs from snapshot
+            device_index = snapshot.get("devices", {})
+            vm_index = snapshot.get("vms", {})
+
+            # Convert cache items back to records
+            device_records = [self._device_from_cache_item(item) for item in device_index.values()]
+            vm_records = [self._vm_from_cache_item(item) for item in vm_index.values()]
+
+            # Replace all data in MongoDB
+            cache_repo.replace_all_devices(device_records)
+            cache_repo.replace_all_vms(vm_records)
+
+            # Update metadata
+            generated_at = self._parse_iso(snapshot.get("generated_at")) or datetime.now(UTC)
+            cache_repo.set_cache_metadata(
+                generated_at=generated_at,
+                device_count=len(device_records),
+                vm_count=len(vm_records),
+            )
+
+            self._logger.debug(
+                "Wrote NetBox cache to MongoDB",
+                extra={"device_count": len(device_records), "vm_count": len(vm_records)},
+            )
+        except Exception:
+            self._logger.warning("Failed to write NetBox cache to MongoDB", exc_info=True)
 
     def _safe_fetch_metadata(self, resource: str) -> Mapping[str, str] | None:
         attr_name = f"list_{resource}_metadata"

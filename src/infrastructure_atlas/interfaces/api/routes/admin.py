@@ -380,15 +380,10 @@ def get_overall_usage_stats(
     days: int = 30,
 ):
     """Get overall playground usage statistics for all users."""
-    from infrastructure_atlas.agents.usage import UsageService
-    from infrastructure_atlas.api.app import SessionLocal
+    from infrastructure_atlas.agents.usage import create_usage_service
 
-    db = SessionLocal()
-    try:
-        usage_service = UsageService(db)
-        return usage_service.get_overall_stats(days=days)
-    finally:
-        db.close()
+    usage_service = create_usage_service()
+    return usage_service.get_overall_stats(days=days)
 
 
 @router.get("/playground/usage/users")
@@ -397,15 +392,10 @@ def get_all_users_usage(
     days: int = 30,
 ):
     """Get usage statistics broken down by user."""
-    from infrastructure_atlas.agents.usage import UsageService
-    from infrastructure_atlas.api.app import SessionLocal
+    from infrastructure_atlas.agents.usage import create_usage_service
 
-    db = SessionLocal()
-    try:
-        usage_service = UsageService(db)
-        return usage_service.get_all_users_stats(days=days)
-    finally:
-        db.close()
+    usage_service = create_usage_service()
+    return usage_service.get_all_users_stats(days=days)
 
 
 @router.get("/playground/usage/recent")
@@ -414,12 +404,7 @@ def get_all_recent_usage(
     limit: int = 50,
 ):
     """Get recent usage records for all users."""
-    from infrastructure_atlas.agents.usage import UsageService
-    from infrastructure_atlas.api.app import SessionLocal
+    from infrastructure_atlas.agents.usage import create_usage_service
 
-    db = SessionLocal()
-    try:
-        usage_service = UsageService(db)
-        return usage_service.get_recent_usage(user_id=None, limit=limit)
-    finally:
-        db.close()
+    usage_service = create_usage_service()
+    return usage_service.get_recent_usage(user_id=None, limit=limit)

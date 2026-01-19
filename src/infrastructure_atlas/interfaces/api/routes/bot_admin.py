@@ -12,7 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from infrastructure_atlas.bots.adapters.telegram import TelegramAdapter
-from infrastructure_atlas.bots.linking import UserLinkingService
+from infrastructure_atlas.bots.service_factory import create_user_linking_service, get_bot_session
 from infrastructure_atlas.db.models import (
     BotConversation,
     BotMessage,
@@ -390,9 +390,10 @@ def unlink_account(
     _: BotsEnabledDep,
 ) -> dict[str, str]:
     """Unlink a platform account."""
-    linking = UserLinkingService(db)
-    if linking.unlink_account(account_id):
-        return {"status": "unlinked"}
+    with get_bot_session() as session:
+        linking = create_user_linking_service(session)
+        if linking.unlink_account(account_id):
+            return {"status": "unlinked"}
     raise HTTPException(status_code=404, detail="Account not found")
 
 
@@ -606,8 +607,9 @@ def generate_verification_code(
     if platform not in ["telegram", "slack", "teams"]:
         raise HTTPException(status_code=400, detail="Invalid platform")
 
-    linking = UserLinkingService(db)
-    code = linking.generate_verification_code(user.id, platform)
+    with get_bot_session() as session:
+        linking = create_user_linking_service(session)
+        code = linking.generate_verification_code(user.id, platform)
 
     # Code expires in 10 minutes
     expires_at = datetime.now(UTC) + timedelta(minutes=10)
@@ -626,22 +628,23 @@ def get_my_linked_accounts(
     _: BotsEnabledDep,
 ) -> list[LinkedAccountResponse]:
     """Get the current user's linked platform accounts."""
-    linking = UserLinkingService(db)
-    accounts = linking.get_user_accounts(user.id)
+    with get_bot_session() as session:
+        linking = create_user_linking_service(session)
+        accounts = linking.get_user_accounts(user.id)
 
-    return [
-        LinkedAccountResponse(
-            id=account.id,
-            user_id=account.user_id,
-            username=user.username,
-            platform=account.platform,
-            platform_user_id=account.platform_user_id,
-            platform_username=account.platform_username,
-            verified=account.verified,
-            created_at=account.created_at,
-        )
-        for account in accounts
-    ]
+        return [
+            LinkedAccountResponse(
+                id=account.id,
+                user_id=account.user_id,
+                username=user.username,
+                platform=account.platform,
+                platform_user_id=account.platform_user_id,
+                platform_username=account.platform_username,
+                verified=account.verified,
+                created_at=account.created_at,
+            )
+            for account in accounts
+        ]
 
 
 @router.delete("/link/my-accounts/{platform}")
@@ -655,7 +658,8 @@ def unlink_my_account(
     if platform not in ["telegram", "slack", "teams"]:
         raise HTTPException(status_code=400, detail="Invalid platform")
 
-    linking = UserLinkingService(db)
-    if linking.unlink_user_platform(user.id, platform):
-        return {"status": "unlinked", "platform": platform}
+    with get_bot_session() as session:
+        linking = create_user_linking_service(session)
+        if linking.unlink_user_platform(user.id, platform):
+            return {"status": "unlinked", "platform": platform}
     raise HTTPException(status_code=404, detail="No linked account found for this platform")
