@@ -59,6 +59,76 @@ def _jira_session() -> tuple[requests.Session, str]:
     return sess, base
 
 
+def _resolve_assignee(sess: requests.Session, base: str, assignee: str, project: str) -> str | None:
+    """Resolve a username/display name/email to a Jira account ID.
+
+    Uses the project-specific assignable user search to only return users
+    who can actually be assigned issues in that project.
+
+    Args:
+        sess: Authenticated Jira session
+        base: Jira base URL
+        assignee: Username, display name, email, or account ID
+        project: Project key (for assignable user filtering)
+
+    Returns:
+        Account ID if found, None otherwise
+    """
+    # If it already looks like an account ID (contains colon), use it directly
+    if ":" in assignee:
+        return assignee
+
+    # Search for assignable users in the project
+    url = f"{base}/rest/api/3/user/assignable/search"
+    params = {"query": assignee, "project": project, "maxResults": 10}
+
+    try:
+        r = sess.get(url, params=params, timeout=15)
+        r.raise_for_status()
+        users = r.json()
+
+        if not users:
+            return None
+
+        # Try exact match first (case-insensitive)
+        assignee_lower = assignee.lower()
+        for user in users:
+            display_name = (user.get("displayName") or "").lower()
+            email = (user.get("emailAddress") or "").lower()
+            if display_name == assignee_lower or email == assignee_lower:
+                return user.get("accountId")
+            # Check if query matches username portion of email
+            if email and assignee_lower in email.split("@")[0]:
+                return user.get("accountId")
+
+        # Return first result if no exact match
+        return users[0].get("accountId")
+    except Exception:
+        return None
+
+
+def _get_project_issue_types(sess: requests.Session, base: str, project: str) -> list[str]:
+    """Get valid issue type names for a project.
+
+    Args:
+        sess: Authenticated Jira session
+        base: Jira base URL
+        project: Project key
+
+    Returns:
+        List of valid issue type names
+    """
+    url = f"{base}/rest/api/3/issue/createmeta/{project}/issuetypes"
+
+    try:
+        r = sess.get(url, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+        return [it.get("name", "") for it in data.get("issueTypes", []) if it.get("name")]
+    except Exception:
+        return []
+
+
 def _jira_build_jql(
     q: str | None = None,
     project: str | None = None,
@@ -353,6 +423,32 @@ def create_issue(req: CreateIssueRequest):
     require_jira_enabled()
     sess, base = _jira_session()
 
+    # Validate issue type exists in project
+    valid_types = _get_project_issue_types(sess, base, req.project_key)
+    if valid_types and req.issue_type not in valid_types:
+        # Try case-insensitive match
+        issue_type_lower = req.issue_type.lower()
+        matched = next((t for t in valid_types if t.lower() == issue_type_lower), None)
+        if matched:
+            req.issue_type = matched
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid issue type '{req.issue_type}' for project {req.project_key}. "
+                       f"Valid types: {', '.join(valid_types)}"
+            )
+
+    # Resolve assignee to account ID if provided
+    resolved_assignee = None
+    if req.assignee:
+        resolved_assignee = _resolve_assignee(sess, base, req.assignee, req.project_key)
+        if not resolved_assignee:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Could not find assignable user '{req.assignee}' in project {req.project_key}. "
+                       f"Ensure the user has permission to be assigned issues in this project."
+            )
+
     # Build the issue fields
     fields: dict[str, Any] = {
         "project": {"key": req.project_key},
@@ -376,8 +472,8 @@ def create_issue(req: CreateIssueRequest):
     if req.priority:
         fields["priority"] = {"name": req.priority}
 
-    if req.assignee:
-        fields["assignee"] = {"accountId": req.assignee}
+    if resolved_assignee:
+        fields["assignee"] = {"accountId": resolved_assignee}
 
     if req.labels:
         fields["labels"] = req.labels
