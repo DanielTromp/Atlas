@@ -46,6 +46,7 @@ class BotResponseType(str, Enum):
     ERROR = "error"
     DONE = "done"
     UNAUTHORIZED = "unauthorized"
+    FILE = "file"  # For file uploads (xlsx, csv, etc.)
 
 
 @dataclass
@@ -174,6 +175,11 @@ class BotOrchestrator:
             account=account,
         )
 
+        logger.info(
+            f"Bot conversation: platform_conversation_id={platform_conversation_id}, "
+            f"session_id={conversation.session_id}"
+        )
+
         # Log inbound message
         await self._log_message(
             conversation=conversation,
@@ -203,15 +209,30 @@ class BotOrchestrator:
         try:
             # Get user info for tracking
             user = account.user
+            user_id = None
+            username = None
 
+            if user:
+                # SQLAlchemy eager-loaded relationship
+                user_id = str(user.id) if user.id else None
+                username = user.username
+            elif hasattr(account, "user_id") and account.user_id:
+                # MongoDB - look up user separately
+                atlas_user = self.linking.get_user_by_platform(platform, platform_user_id)
+                if atlas_user:
+                    user_id = str(atlas_user.id) if hasattr(atlas_user, "id") else None
+                    username = getattr(atlas_user, "username", None)
+
+            print(f"[ORCHESTRATOR] Starting chat with agent={agent_id or self.DEFAULT_AGENT}", flush=True)
             async for event in self.runtime.chat(
                 agent_id=agent_id or self.DEFAULT_AGENT,
                 message=cleaned_message,
                 session_id=conversation.session_id,
-                user_id=user.id if user else None,
-                username=user.username if user else None,
+                user_id=user_id,
+                username=username,
                 client=platform,  # Track which platform the request came from
             ):
+                print(f"[ORCHESTRATOR] Event type: {event.type}", flush=True)
                 if event.type == ChatEventType.TOOL_START:
                     tool_name = event.data.get("tool", "unknown")
                     yield BotResponse(
@@ -242,6 +263,15 @@ class BotOrchestrator:
                         formatted=formatter.format_error(error_msg),
                     )
                     break
+
+                elif event.type == ChatEventType.FILE:
+                    # File export event - yield directly for platform handlers
+                    print(f"[ORCHESTRATOR] FILE event received: {event.data}", flush=True)
+                    yield BotResponse(
+                        type=BotResponseType.FILE,
+                        content=event.data,
+                        agent_id=agent_id,
+                    )
 
             # Format final response
             if response_text:
@@ -348,7 +378,17 @@ class BotOrchestrator:
         Returns:
             BotConversation record
         """
-        # Try to find existing conversation
+        import os
+        import uuid
+
+        backend = os.getenv("ATLAS_STORAGE_BACKEND", "sqlite").lower()
+
+        if backend == "mongodb":
+            return await self._get_or_create_conversation_mongodb(
+                platform, platform_conversation_id, account
+            )
+
+        # SQLAlchemy/SQLite path
         conversation = self.db.execute(
             select(BotConversation).where(
                 BotConversation.platform == platform,
@@ -360,8 +400,6 @@ class BotOrchestrator:
             return conversation
 
         # Create new conversation with session ID
-        import uuid
-
         conversation = BotConversation(
             platform=platform,
             platform_conversation_id=platform_conversation_id,
@@ -382,6 +420,75 @@ class BotOrchestrator:
 
         return conversation
 
+    async def _get_or_create_conversation_mongodb(
+        self,
+        platform: str,
+        platform_conversation_id: str,
+        account: BotPlatformAccount,
+    ) -> BotConversation:
+        """Get or create a conversation record in MongoDB."""
+        import uuid
+        from datetime import UTC, datetime
+
+        from infrastructure_atlas.infrastructure.mongodb.client import get_mongodb_client
+
+        db = get_mongodb_client().atlas
+        collection = db["bot_conversations"]
+
+        # Try to find existing conversation
+        doc = collection.find_one({
+            "platform": platform,
+            "platform_conversation_id": platform_conversation_id,
+        })
+
+        if doc:
+            # Return as a BotConversation-like object
+            conv = BotConversation(
+                platform=doc["platform"],
+                platform_conversation_id=doc["platform_conversation_id"],
+                platform_account_id=doc.get("platform_account_id"),
+                session_id=doc["session_id"],
+                agent_id=doc.get("agent_id"),
+            )
+            conv.id = doc["_id"]
+            conv.last_message_at = doc.get("last_message_at")
+            conv.created_at = doc.get("created_at")
+            logger.debug(f"Found existing conversation: session_id={conv.session_id}")
+            return conv
+
+        # Create new conversation
+        session_id = str(uuid.uuid4())
+        now = datetime.now(UTC)
+
+        new_doc = {
+            "_id": str(uuid.uuid4()),
+            "platform": platform,
+            "platform_conversation_id": platform_conversation_id,
+            "platform_account_id": str(account.id) if account.id else None,
+            "session_id": session_id,
+            "agent_id": None,
+            "last_message_at": now,
+            "created_at": now,
+        }
+        collection.insert_one(new_doc)
+
+        conv = BotConversation(
+            platform=platform,
+            platform_conversation_id=platform_conversation_id,
+            platform_account_id=new_doc["platform_account_id"],
+            session_id=session_id,
+        )
+        conv.id = new_doc["_id"]
+        conv.last_message_at = now
+        conv.created_at = now
+
+        logger.info(
+            f"Created bot conversation in MongoDB: session_id={session_id}, "
+            f"platform_conversation_id={platform_conversation_id}"
+        )
+
+        return conv
+
     async def _log_message(
         self,
         conversation: BotConversation,
@@ -395,7 +502,7 @@ class BotOrchestrator:
         cost_usd: float = 0.0,
         duration_ms: int | None = None,
         error: str | None = None,
-    ) -> BotMessage:
+    ) -> BotMessage | None:
         """Log a message to the database.
 
         Args:
@@ -414,6 +521,18 @@ class BotOrchestrator:
         Returns:
             Created BotMessage record
         """
+        import os
+
+        backend = os.getenv("ATLAS_STORAGE_BACKEND", "sqlite").lower()
+
+        if backend == "mongodb":
+            return await self._log_message_mongodb(
+                conversation, direction, content, platform_message_id,
+                agent_id, tool_calls, input_tokens, output_tokens,
+                cost_usd, duration_ms, error
+            )
+
+        # SQLAlchemy path
         try:
             message = BotMessage(
                 conversation_id=conversation.id,
@@ -434,6 +553,68 @@ class BotOrchestrator:
         except Exception as e:
             logger.error(f"Failed to log bot message: {e!s}")
             self.db.rollback()
+            return None
+
+    async def _log_message_mongodb(
+        self,
+        conversation: BotConversation,
+        direction: str,
+        content: str,
+        platform_message_id: str | None = None,
+        agent_id: str | None = None,
+        tool_calls: list[dict[str, Any]] | None = None,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        cost_usd: float = 0.0,
+        duration_ms: int | None = None,
+        error: str | None = None,
+    ) -> BotMessage | None:
+        """Log a message to MongoDB."""
+        import uuid
+        from datetime import UTC, datetime
+
+        from infrastructure_atlas.infrastructure.mongodb.client import get_mongodb_client
+
+        try:
+            db = get_mongodb_client().atlas
+            collection = db["bot_messages"]
+
+            doc = {
+                "_id": str(uuid.uuid4()),
+                "conversation_id": str(conversation.id),
+                "direction": direction,
+                "content": content,
+                "platform_message_id": platform_message_id,
+                "agent_id": agent_id,
+                "tool_calls": tool_calls,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cost_usd": cost_usd,
+                "duration_ms": duration_ms,
+                "error": error,
+                "created_at": datetime.now(UTC),
+            }
+            collection.insert_one(doc)
+
+            # Return a BotMessage-like object
+            message = BotMessage(
+                conversation_id=conversation.id,
+                direction=direction,
+                content=content,
+                platform_message_id=platform_message_id,
+                agent_id=agent_id,
+                tool_calls=tool_calls,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cost_usd=cost_usd,
+                duration_ms=duration_ms,
+                error=error,
+            )
+            message.id = doc["_id"]
+            return message
+
+        except Exception as e:
+            logger.error(f"Failed to log bot message to MongoDB: {e!s}")
             return None
 
     def get_available_agents(self) -> list[dict[str, Any]]:

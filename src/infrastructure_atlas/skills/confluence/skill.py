@@ -9,12 +9,31 @@ Provides documentation and knowledge base actions:
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 from typing import Any
 
 from infrastructure_atlas.infrastructure.logging import get_logger
 from infrastructure_atlas.skills.base import BaseSkill
 
 logger = get_logger(__name__)
+
+
+def _run_async(coro):
+    """Run an async coroutine, handling both sync and async contexts.
+
+    When called from a sync context, uses asyncio.run().
+    When called from an async context (like Slack bot), runs in a thread pool.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No running loop - use asyncio.run()
+        return asyncio.run(coro)
+    else:
+        # Already in async context - run in thread to avoid blocking
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(asyncio.run, coro)
+            return future.result(timeout=60)
 
 
 class ConfluenceSkill(BaseSkill):
@@ -115,7 +134,7 @@ class ConfluenceSkill(BaseSkill):
             )
 
             # Run async search in sync context
-            response = asyncio.run(search_engine.search(query, config))
+            response = _run_async(search_engine.search(query, config))
 
             return {
                 "success": True,
@@ -228,12 +247,12 @@ class ConfluenceSkill(BaseSkill):
             )
 
             # Try with labels first
-            response = asyncio.run(search_engine.search(f"runbook {topic}", config))
+            response = _run_async(search_engine.search(f"runbook {topic}", config))
 
             # If no results, try without label filter
             if response.total_results == 0:
                 config.labels = None
-                response = asyncio.run(
+                response = _run_async(
                     search_engine.search(f"runbook procedure how to {topic}", config)
                 )
 
@@ -286,7 +305,7 @@ class ConfluenceSkill(BaseSkill):
                 space_keys=[space_key.upper()],
             )
 
-            response = asyncio.run(search_engine.search(query, config))
+            response = _run_async(search_engine.search(query, config))
 
             return {
                 "success": True,
@@ -346,7 +365,7 @@ class ConfluenceSkill(BaseSkill):
                 include_citations=False,
             )
 
-            response = asyncio.run(search_engine.search(query_text, config))
+            response = _run_async(search_engine.search(query_text, config))
 
             # Filter out the source page
             related = [r for r in response.results if r.page.page_id != page_id][:top_k]

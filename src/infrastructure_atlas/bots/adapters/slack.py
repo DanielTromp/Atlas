@@ -8,10 +8,12 @@ Required Slack App permissions (OAuth Scopes):
 - Bot Token Scopes:
   - app_mentions:read - Receive @mentions
   - chat:write - Send messages
+  - files:write - Upload files (for Excel exports)
   - im:history - Read DMs
   - im:read - View basic DM info
   - im:write - Start DMs
   - users:read - Get user info
+  - users:read.email - Get user email (for ticket assignment lookup)
 
 - Event Subscriptions (Socket Mode):
   - message.im - DMs to the bot
@@ -131,6 +133,46 @@ class SlackAdapter(BotAdapter):
         # Slack doesn't support typing indicators for bots
         pass
 
+    async def upload_file(
+        self,
+        chat_id: str,
+        file_path: str,
+        filename: str | None = None,
+        title: str | None = None,
+        initial_comment: str | None = None,
+        thread_ts: str | None = None,
+    ) -> dict[str, Any]:
+        """Upload a file to a Slack channel/DM.
+
+        Args:
+            chat_id: Channel ID or user ID
+            file_path: Path to the file to upload
+            filename: Optional filename override
+            title: Optional file title
+            initial_comment: Optional message with the file
+            thread_ts: Optional thread timestamp to reply to
+
+        Returns:
+            Dictionary with file info from Slack
+        """
+        client = self._get_client()
+
+        try:
+            # Use files_upload_v2 for better performance
+            response = client.files_upload_v2(
+                channel=chat_id,
+                file=file_path,
+                filename=filename,
+                title=title,
+                initial_comment=initial_comment,
+                thread_ts=thread_ts,
+            )
+            logger.info(f"Uploaded file to Slack: {filename or file_path}")
+            return response.data
+        except Exception as e:
+            logger.error(f"Failed to upload file to Slack: {e}")
+            raise
+
     def verify_webhook_signature(
         self,
         payload: bytes,
@@ -209,11 +251,10 @@ class SlackAdapter(BotAdapter):
             logger.error(f"Failed to get bot info: {e}")
             raise
 
-    def get_bot_user_id(self) -> str:
+    async def get_bot_user_id(self) -> str:
         """Get the bot's user ID (cached after first call)."""
         if not self._bot_user_id:
-            import asyncio
-            asyncio.get_event_loop().run_until_complete(self.get_bot_info())
+            await self.get_bot_info()
         return self._bot_user_id or ""
 
 
@@ -255,21 +296,42 @@ class SlackWebhookHandler:
 
         user_id = event.get("user", "")
         channel_id = event.get("channel", "")
+        channel_type = event.get("channel_type", "")
         text = event.get("text", "").strip()
-        thread_ts = event.get("thread_ts") or event.get("ts")
+        # thread_ts is only set for threaded replies, ts is the message's own timestamp
+        actual_thread_ts = event.get("thread_ts")  # Only set if this is a reply in a thread
+        reply_ts = actual_thread_ts or event.get("ts")  # For sending replies back
+
+        # For DMs (channel_type == 'im'), ALWAYS use just channel_id for session
+        # This ensures all messages in a DM share the same session, even across threads
+        # For channels, use thread_ts to separate thread conversations
+        is_dm = channel_type == "im"
+        # Use thread_ts for session if available - each thread gets its own memory
+        # For messages not in a thread, use ts to identify the message as potential thread parent
+        session_thread_ts = actual_thread_ts or event.get("ts")
 
         if not text or not user_id:
             return
 
-        logger.info(f"Slack message from {user_id} in {channel_id}: {text[:50]}...")
+        logger.info(f"Slack message from {user_id} in {channel_id}: {text[:50]}... (is_dm={is_dm}, thread_ts={actual_thread_ts})")
 
-        # Check for commands
-        if text.startswith("/"):
-            await self._handle_command(text, user_id, channel_id, say, thread_ts)
+        # Check for commands (use ! prefix since Slack intercepts / as native commands)
+        # Also handle without prefix for common commands like "link" and "help"
+        text_lower = text.lower()
+        if text.startswith("!"):
+            await self._handle_command(text, user_id, channel_id, say, reply_ts)
+            return
+        elif text_lower.startswith("link ") or text_lower == "link":
+            # Handle "link <code>" without the ! prefix
+            await self._handle_command("!" + text, user_id, channel_id, say, reply_ts)
+            return
+        elif text_lower in ("help", "status", "agents"):
+            await self._handle_command("!" + text, user_id, channel_id, say, reply_ts)
             return
 
         # Process regular message through orchestrator
-        await self._process_message(text, user_id, channel_id, say, thread_ts)
+        # session_thread_ts is None for DMs (all messages share one session)
+        await self._process_message(text, user_id, channel_id, say, reply_ts, session_thread_ts)
 
     async def handle_app_mention(self, event: dict[str, Any], say: Any) -> None:
         """Handle an @mention of the bot.
@@ -281,19 +343,35 @@ class SlackWebhookHandler:
         user_id = event.get("user", "")
         channel_id = event.get("channel", "")
         text = event.get("text", "").strip()
-        thread_ts = event.get("thread_ts") or event.get("ts")
+        # thread_ts is only set for threaded replies
+        actual_thread_ts = event.get("thread_ts")  # Only set if this is a reply in a thread
+        reply_ts = actual_thread_ts or event.get("ts")  # For sending replies back
 
         # Remove the bot mention from the text
-        bot_user_id = self.adapter.get_bot_user_id()
+        bot_user_id = await self.adapter.get_bot_user_id()
         if bot_user_id:
             text = text.replace(f"<@{bot_user_id}>", "").strip()
 
         if not text or not user_id:
             return
 
-        logger.info(f"Slack mention from {user_id} in {channel_id}: {text[:50]}...")
+        logger.info(f"Slack mention from {user_id} in {channel_id}: {text[:50]}... (thread_ts={actual_thread_ts})")
 
-        await self._process_message(text, user_id, channel_id, say, thread_ts)
+        # Check for commands in mentions too
+        text_lower = text.lower()
+        if text.startswith("!"):
+            await self._handle_command(text, user_id, channel_id, say, reply_ts)
+            return
+        elif text_lower.startswith("link ") or text_lower == "link":
+            await self._handle_command("!" + text, user_id, channel_id, say, reply_ts)
+            return
+        elif text_lower in ("help", "status", "agents"):
+            await self._handle_command("!" + text, user_id, channel_id, say, reply_ts)
+            return
+
+        # Use thread_ts for session if available - each thread/message gets its own memory
+        session_thread_ts = actual_thread_ts or event.get("ts")
+        await self._process_message(text, user_id, channel_id, say, reply_ts, session_thread_ts)
 
     async def _handle_command(
         self,
@@ -303,21 +381,21 @@ class SlackWebhookHandler:
         say: Any,
         thread_ts: str | None,
     ) -> None:
-        """Handle slash-like commands (starting with /).
+        """Handle bot commands (starting with !).
 
-        Note: These aren't actual Slack slash commands, just message patterns.
+        Note: Slack intercepts / as native slash commands, so we use ! prefix.
         """
         parts = text.split(maxsplit=1)
         command = parts[0].lower()
         args = parts[1] if len(parts) > 1 else ""
 
-        if command == "/help":
+        if command == "!help":
             help_text = (
                 "*Atlas Bot Commands*\n\n"
-                "• `/help` - Show this help message\n"
-                "• `/link <code>` - Link your Slack account to Atlas\n"
-                "• `/status` - Check your account linking status\n"
-                "• `/agents` - List available AI agents\n\n"
+                "• `!help` - Show this help message\n"
+                "• `!link <code>` - Link your Slack account to Atlas\n"
+                "• `!status` - Check your account linking status\n"
+                "• `!agents` - List available AI agents\n\n"
                 "*Talking to Agents*\n"
                 "• Just send a message to chat with the default agent\n"
                 "• Use `@agent_name message` to talk to a specific agent\n"
@@ -325,19 +403,34 @@ class SlackWebhookHandler:
             )
             await say(text=help_text, thread_ts=thread_ts)
 
-        elif command == "/link":
+        elif command == "!link":
             if not args:
                 await say(
-                    text="Please provide a verification code: `/link <code>`\n"
+                    text="Please provide a verification code: `!link <code>`\n"
                          "Get a code from your Atlas admin or the web UI.",
                     thread_ts=thread_ts,
                 )
                 return
 
-            # Try to verify the code
-            result = self.linking.verify_code(args.strip(), user_id, "slack")
-            if result.get("success"):
-                username = result.get("username", "user")
+            # Get user info for platform username
+            try:
+                user_info = await self.adapter.get_user_info(user_id)
+                platform_username = user_info.get("real_name") or user_info.get("name")
+            except Exception:
+                platform_username = None
+
+            # Try to verify the code - signature: (platform, platform_user_id, code, platform_username)
+            account = self.linking.verify_code("slack", user_id, args.strip(), platform_username)
+            if account:
+                # Get username from account's user relationship or look it up
+                username = "user"
+                if hasattr(account, "user") and account.user:
+                    username = getattr(account.user, "username", None) or "user"
+                elif hasattr(account, "user_id") and account.user_id:
+                    # Look up the user to get username (for MongoDB where user isn't eager-loaded)
+                    atlas_user = self.linking.get_user_by_platform("slack", user_id)
+                    if atlas_user:
+                        username = getattr(atlas_user, "username", None) or "user"
                 await say(
                     text=f":white_check_mark: *Account linked successfully!*\n"
                          f"Your Slack account is now linked to Atlas user `{username}`.\n"
@@ -345,17 +438,23 @@ class SlackWebhookHandler:
                     thread_ts=thread_ts,
                 )
             else:
-                error = result.get("error", "Invalid or expired code")
                 await say(
-                    text=f":x: *Linking failed:* {error}\n"
-                         f"Please check your code and try again.",
+                    text=":x: *Linking failed:* Invalid or expired code\n"
+                         "Please check your code and try again.",
                     thread_ts=thread_ts,
                 )
 
-        elif command == "/status":
-            account = self.linking.get_platform_account(user_id, "slack")
+        elif command == "!status":
+            account = self.linking.get_linked_account("slack", user_id)
             if account and account.verified:
-                username = account.user.username if account.user else "Unknown"
+                username = "Unknown"
+                if hasattr(account, "user") and account.user:
+                    username = getattr(account.user, "username", None) or "Unknown"
+                elif hasattr(account, "user_id") and account.user_id:
+                    # MongoDB doesn't eager-load user - look it up
+                    atlas_user = self.linking.get_user_by_platform("slack", user_id)
+                    if atlas_user:
+                        username = getattr(atlas_user, "username", None) or "Unknown"
                 await say(
                     text=f":white_check_mark: *Account linked*\n"
                          f"Slack → Atlas user: `{username}`",
@@ -364,15 +463,15 @@ class SlackWebhookHandler:
             else:
                 await say(
                     text=":x: *Account not linked*\n"
-                         "Use `/link <code>` to link your account.",
+                         "Use `!link <code>` to link your account.",
                     thread_ts=thread_ts,
                 )
 
-        elif command == "/agents":
+        elif command == "!agents":
             from infrastructure_atlas.agents.playground import AVAILABLE_AGENTS
 
             agent_lines = []
-            for agent in AVAILABLE_AGENTS:
+            for agent in AVAILABLE_AGENTS.values():
                 agent_lines.append(f"• *{agent.id}* - {agent.description}")
 
             await say(
@@ -381,9 +480,34 @@ class SlackWebhookHandler:
                 thread_ts=thread_ts,
             )
 
+        elif command == "!test":
+            # Test command to verify mrkdwn formatting in blocks
+            test_blocks = [
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": "*This should be bold*\n_This should be italic_\n`This should be code`"
+                    }
+                },
+                {"type": "divider"},
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": "*1. ESD-40403 - Test ticket*\n• Status: Pending\n• Priority: Medium"
+                    }
+                }
+            ]
+            await say(
+                blocks=test_blocks,
+                text="Test message",
+                thread_ts=thread_ts,
+            )
+
         else:
             await say(
-                text=f"Unknown command: `{command}`\nUse `/help` for available commands.",
+                text=f"Unknown command: `{command}`\nUse `!help` for available commands.",
                 thread_ts=thread_ts,
             )
 
@@ -393,7 +517,8 @@ class SlackWebhookHandler:
         user_id: str,
         channel_id: str,
         say: Any,
-        thread_ts: str | None,
+        reply_ts: str | None,
+        session_thread_ts: str | None = None,
     ) -> None:
         """Process a message through the AI orchestrator.
 
@@ -402,53 +527,111 @@ class SlackWebhookHandler:
             user_id: Slack user ID
             channel_id: Channel ID
             say: Function to send responses
-            thread_ts: Thread timestamp for replies
+            reply_ts: Thread timestamp for sending replies back
+            session_thread_ts: Thread timestamp for session ID (None for DMs = shared session)
         """
         from infrastructure_atlas.bots.orchestrator import BotResponse, BotResponseType
 
         try:
+            # Use thread_ts in conversation ID only for actual threaded conversations
+            # For DMs (no thread_ts), all messages share the same session via channel_id
+            # For channel threads, each thread is a separate session
+            if session_thread_ts:
+                conversation_id = f"{channel_id}:{session_thread_ts}"
+            else:
+                conversation_id = channel_id
+
+            logger.info(f"Processing message with conversation_id={conversation_id}")
+
+            # Get Slack user info (email, display name) for agent context
+            platform_user_info = await self.adapter.get_user_info(user_id)
+            logger.info(f"Slack user info: {platform_user_info.get('display_name')} <{platform_user_info.get('email')}>")
+
             async for response in self.orchestrator.process_message(
                 platform="slack",
                 platform_user_id=user_id,
-                platform_conversation_id=channel_id,
+                platform_conversation_id=conversation_id,
                 message=text,
+                platform_user_info=platform_user_info,
             ):
                 if response.type == BotResponseType.TYPING:
                     # Slack doesn't support typing indicators for bots
                     pass
 
                 elif response.type == BotResponseType.TEXT:
-                    # Format and send the response
+                    # Always use Slack formatter for proper mrkdwn formatting
+                    raw_content = response.content or ""
+
                     formatted = self.formatter.format_agent_response(
-                        agent_id=response.data.get("agent_id", "assistant"),
-                        response=response.data.get("content", ""),
-                        tool_calls=response.data.get("tool_calls"),
+                        agent_id=response.agent_id or "assistant",
+                        response=raw_content,
+                        tool_calls=None,
                     )
+                    # Get content as string for fallback text
+                    content_text = raw_content if isinstance(raw_content, str) else str(raw_content)
+                    blocks = formatted.content.get("blocks", []) if isinstance(formatted.content, dict) else []
                     await say(
-                        blocks=formatted.content.get("blocks", []),
-                        text=response.data.get("content", "")[:150],  # Fallback text
-                        thread_ts=thread_ts,
+                        blocks=blocks,
+                        text=content_text[:150],  # Fallback text
+                        thread_ts=reply_ts,
                     )
 
                 elif response.type == BotResponseType.ERROR:
-                    formatted = self.formatter.format_error(response.data.get("error", "An error occurred"))
+                    error_msg = response.content if isinstance(response.content, str) else str(response.content or "An error occurred")
+                    formatted = self.formatter.format_error(error_msg)
                     await say(
-                        blocks=formatted.content.get("blocks", []),
-                        text=f"Error: {response.data.get('error', 'Unknown error')}",
-                        thread_ts=thread_ts,
+                        blocks=formatted.content.get("blocks", []) if isinstance(formatted.content, dict) else [],
+                        text=f"Error: {error_msg[:200]}",
+                        thread_ts=reply_ts,
                     )
 
                 elif response.type == BotResponseType.UNAUTHORIZED:
                     await say(
                         text=":lock: *Account not linked*\n"
-                             "Please link your Slack account first using `/link <code>`.\n"
+                             "Please link your Slack account first using `!link <code>`.\n"
                              "Contact your Atlas admin to get a verification code.",
-                        thread_ts=thread_ts,
+                        thread_ts=reply_ts,
                     )
+
+                elif response.type == BotResponseType.FILE:
+                    # File export - upload to Slack
+                    file_data = response.content if isinstance(response.content, dict) else {}
+                    file_path = file_data.get("file_path")
+                    filename = file_data.get("filename")
+                    file_type = file_data.get("file_type", "file")
+                    row_count = file_data.get("row_count")
+                    message = file_data.get("message")
+
+                    if file_path:
+                        try:
+                            # Build initial comment
+                            comment_parts = []
+                            if message:
+                                comment_parts.append(message)
+                            if row_count:
+                                comment_parts.append(f"📊 {row_count} rows exported")
+                            initial_comment = "\n".join(comment_parts) if comment_parts else None
+
+                            # Upload file to Slack
+                            await self.adapter.upload_file(
+                                chat_id=channel_id,
+                                file_path=file_path,
+                                filename=filename,
+                                title=filename or f"Export.{file_type}",
+                                initial_comment=initial_comment,
+                                thread_ts=reply_ts,
+                            )
+                            logger.info(f"Uploaded file to Slack: {filename}")
+                        except Exception as e:
+                            logger.error(f"Failed to upload file to Slack: {e}")
+                            await say(
+                                text=f":warning: *Failed to upload file*\n`{str(e)[:200]}`",
+                                thread_ts=reply_ts,
+                            )
 
         except Exception as e:
             logger.error(f"Error processing Slack message: {e}", exc_info=True)
             await say(
                 text=f":warning: *Error processing message*\n`{str(e)[:200]}`",
-                thread_ts=thread_ts,
+                thread_ts=reply_ts,
             )

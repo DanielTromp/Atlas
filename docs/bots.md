@@ -182,22 +182,85 @@ uv run atlas bots webhook-info
 
 ## Slack Bot
 
-> **Status**: Planned for Phase 3
+Full-featured Slack integration using Socket Mode (no public endpoints required).
 
-### Configuration
+### Setup
+
+1. **Create Slack App**
+   - Go to [api.slack.com/apps](https://api.slack.com/apps)
+   - Create a new app from scratch
+   - Enable Socket Mode in Settings > Socket Mode
+   - Generate an App-Level Token with `connections:write` scope
+
+2. **Configure Bot Scopes**
+   Navigate to OAuth & Permissions and add these Bot Token Scopes:
+   - `app_mentions:read` - Receive @mentions
+   - `chat:write` - Send messages
+   - `files:write` - Upload files (for Excel exports)
+   - `im:history` - Read DMs
+   - `im:read` - View basic DM info
+   - `im:write` - Start DMs
+   - `users:read` - Get user info
+   - `users:read.email` - Get user email
+
+3. **Enable Events**
+   In Event Subscriptions, subscribe to:
+   - `message.im` - Direct messages
+   - `app_mention` - @mentions in channels
+
+4. **Configure Environment**
+   ```bash
+   # Add to .env
+   SLACK_BOT_TOKEN=xoxb-your-bot-token
+   SLACK_APP_TOKEN=xapp-your-app-level-token
+   ```
+
+5. **Install App**
+   Install the app to your workspace from OAuth & Permissions
+
+### Running
 
 ```bash
-# Add to .env
-SLACK_BOT_TOKEN=xoxb-your-bot-token
-SLACK_SIGNING_SECRET=your-signing-secret
+# Start the Slack bot
+uv run atlas bots run slack
 ```
 
-### Features (Planned)
+The bot uses Socket Mode, which creates an outbound WebSocket connection to Slack. No public URLs or webhooks required.
 
-- Rich Block Kit formatting
-- Thread support
-- App home tab
-- Interactive buttons and modals
+### Features
+
+- **Rich Block Kit Formatting**: Messages use sections, dividers, and context blocks
+- **Thread Support**: Each thread maintains separate conversation memory
+- **File Exports**: Excel/CSV exports uploaded directly to Slack
+- **Platform-Aware Markdown**: Converts standard markdown to Slack mrkdwn format
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `!help` | Show available commands and agents |
+| `!link <code>` | Link Slack account with verification code |
+| `!status` | Check account linking status |
+| `!agents` | List available AI agents |
+| `!test` | Test message formatting |
+
+### Message Formatting
+
+Slack uses "mrkdwn" format which differs from standard Markdown:
+- `*bold*` for bold (not `**bold**`)
+- `_italic_` for italic
+- `` `code` `` for inline code
+- No native table support (converted to list format)
+
+### Testing
+
+```bash
+# Check bot status
+uv run atlas bots status
+
+# View linked accounts
+uv run atlas bots list-accounts --platform slack
+```
 
 ## Microsoft Teams Bot
 

@@ -872,6 +872,50 @@ Note: This is context/history only - for current state, use atlas_host_info firs
         },
         category="inventory",
     ),
+    # Export tools
+    ToolDefinition(
+        name="export_to_xlsx",
+        description="""Export data to a formatted Excel (.xlsx) file that will be uploaded to the chat.
+
+Use this when the user asks to:
+- Export tickets/issues to Excel
+- Create a spreadsheet from search results
+- Download data as Excel
+- Generate a report in xlsx format
+
+The tool accepts structured data and creates a professionally formatted Excel file with:
+- Auto-sized columns
+- Header formatting (bold, colored background)
+- Data type formatting (dates, numbers)
+- Frozen header row
+
+The file will be automatically uploaded to the chat for the user to download.""",
+        parameters={
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "Array of objects to export. Each object becomes a row, keys become column headers.",
+                },
+                "filename": {
+                    "type": "string",
+                    "description": "Filename without extension (e.g., 'tickets_export', 'server_inventory')",
+                },
+                "sheet_name": {
+                    "type": "string",
+                    "description": "Name of the Excel sheet (default: 'Data')",
+                    "default": "Data",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Optional title row at the top of the sheet",
+                },
+            },
+            "required": ["data", "filename"],
+        },
+        category="export",
+    ),
     # Confluence RAG advanced tools
     ToolDefinition(
         name="get_confluence_page",
@@ -931,6 +975,42 @@ Returns full page content (not just snippets) from the most relevant documentati
         },
         category="documentation",
     ),
+    # Export tools
+    ToolDefinition(
+        name="export_to_xlsx",
+        description="""Export data to an Excel (.xlsx) file and upload it for download.
+Use this tool when the user wants to:
+- Export tickets, search results, or any data to a spreadsheet
+- Download data as Excel for further analysis
+- Create a formatted spreadsheet from query results
+
+The file will be automatically uploaded to the chat for the user to download.""",
+        parameters={
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "List of objects to export (each object becomes a row)",
+                },
+                "filename": {
+                    "type": "string",
+                    "description": "Base filename for the export (without extension)",
+                },
+                "sheet_name": {
+                    "type": "string",
+                    "description": "Name for the worksheet",
+                    "default": "Data",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Optional title row at the top of the spreadsheet",
+                },
+            },
+            "required": ["data", "filename"],
+        },
+        category="export",
+    ),
 ]
 
 
@@ -939,13 +1019,14 @@ AGENT_ROLES: dict[str, dict[str, Any]] = {
     "triage": {
         "name": "Triage Agent",
         "description": "Fast host lookups with minimal tools. Best for quick questions about servers.",
-        "tools": ["atlas_host_info", "atlas_host_context"],
+        "tools": ["atlas_host_info", "atlas_host_context", "jira_search", "export_to_xlsx"],
         "system_prompt_addon": """You are a Triage Agent. Be FAST and CONCISE.
 - Use ONLY atlas_host_info for host questions (1 call max)
 - Use atlas_host_context only if explicitly asked about tickets/history
 - Give brief summaries, not exhaustive reports
 - Flag critical gaps (no backup, no monitoring) immediately
-- Always include Identity fields: Platform, Role, Tenant, Description, Asset Tag (if present), Serial""",
+- Always include Identity fields: Platform, Role, Tenant, Description, Asset Tag (if present), Serial
+- When asked to export data to Excel, use export_to_xlsx tool""",
     },
     "engineer": {
         "name": "Engineer Agent",
@@ -963,6 +1044,7 @@ AGENT_ROLES: dict[str, dict[str, Any]] = {
             "atlas_host_info", "atlas_host_context",
             "netbox_search", "jira_search", "search_confluence_docs",
             "zabbix_alerts", "commvault_backup_status",
+            "export_to_xlsx",
         ],
         "system_prompt_addon": """You are Atlas, an Infrastructure AI Assistant.
 - Prefer unified tools (atlas_host_info) over multiple individual calls

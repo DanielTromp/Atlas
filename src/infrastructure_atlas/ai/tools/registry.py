@@ -40,6 +40,16 @@ class ToolRegistry:
 
     def _register_default_handlers(self) -> None:
         """Register default API-based tool handlers."""
+        # Register local handlers (not API-based)
+        from infrastructure_atlas.ai.tools.export_handlers import generate_xlsx
+
+        self._handlers["export_to_xlsx"] = lambda **kwargs: generate_xlsx(
+            data=kwargs.get("data", []),
+            filename=kwargs.get("filename", "export"),
+            sheet_name=kwargs.get("sheet_name", "Data"),
+            title=kwargs.get("title"),
+        )
+
         # Map tool names to API endpoints
         self._api_mappings: dict[str, dict[str, Any]] = {
             "netbox_search": {

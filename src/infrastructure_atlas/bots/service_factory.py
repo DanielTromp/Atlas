@@ -409,6 +409,7 @@ class MongoDBBotOrchestrator:
         message: str,
         platform_message_id: str | None = None,
         platform_username: str | None = None,
+        platform_user_info: dict[str, Any] | None = None,
     ) -> AsyncIterator[Any]:
         """Process an incoming bot message.
 
@@ -426,6 +427,7 @@ class MongoDBBotOrchestrator:
             message: User message text
             platform_message_id: Optional platform message ID
             platform_username: Optional display name
+            platform_user_info: Optional dict with platform user details (email, display_name, etc.)
 
         Yields:
             BotResponse chunks for real-time updates
@@ -494,6 +496,7 @@ class MongoDBBotOrchestrator:
                 user_id=user.id if user else None,
                 username=user.username if user else None,
                 client=platform,
+                platform_user_info=platform_user_info,
             ):
                 if event.type == ChatEventType.TOOL_START:
                     tool_name = event.data.get("tool", "unknown")
@@ -525,6 +528,14 @@ class MongoDBBotOrchestrator:
                         formatted=formatter.format_error(error_msg),
                     )
                     break
+
+                elif event.type == ChatEventType.FILE:
+                    # File export event - yield directly for platform handlers
+                    yield BotResponse(
+                        type=BotResponseType.FILE,
+                        content=event.data,
+                        agent_id=agent_id,
+                    )
 
             # Format final response
             if response_text:

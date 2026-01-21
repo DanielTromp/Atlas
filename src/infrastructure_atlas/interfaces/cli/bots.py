@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import typer
 from rich import print
@@ -97,6 +98,64 @@ def _save_webhook_config(
             session.commit()
 
 
+def _get_user_by_username(username: str) -> Any | None:
+    """Get a user by username (MongoDB or SQLite)."""
+    backend = _get_storage_backend()
+
+    if backend == "mongodb":
+        from infrastructure_atlas.infrastructure.mongodb.client import get_mongodb_client
+
+        db = get_mongodb_client().atlas
+        collection = db["users"]
+        doc = collection.find_one({"username": username.lower()})
+        if doc:
+            # Return a simple object with id and username
+            class UserObj:
+                def __init__(self, d: dict):
+                    self.id = d.get("_id")
+                    self.username = d.get("username")
+            return UserObj(doc)
+        return None
+    else:
+        ctx = _service_context()
+        with ctx.session_scope() as session:
+            return session.query(User).filter_by(username=username.lower()).first()
+
+
+def _generate_link_code(user_id: str, platform: str) -> str:
+    """Generate a verification code for linking (MongoDB or SQLite)."""
+    backend = _get_storage_backend()
+
+    if backend == "mongodb":
+        from infrastructure_atlas.bots.service_factory import MongoDBBotSession, MongoDBUserLinkingService
+
+        session = MongoDBBotSession()
+        linking = MongoDBUserLinkingService(session)
+        return linking.generate_verification_code(user_id, platform)
+    else:
+        ctx = _service_context()
+        with ctx.session_scope() as session:
+            linking = UserLinkingService(session)
+            return linking.generate_verification_code(user_id, platform)
+
+
+def _unlink_user_platform(user_id: str, platform: str) -> bool:
+    """Unlink a user from a platform (MongoDB or SQLite)."""
+    backend = _get_storage_backend()
+
+    if backend == "mongodb":
+        from infrastructure_atlas.bots.service_factory import MongoDBBotSession, MongoDBUserLinkingService
+
+        session = MongoDBBotSession()
+        linking = MongoDBUserLinkingService(session)
+        return linking.unlink_user_platform(user_id, platform)
+    else:
+        ctx = _service_context()
+        with ctx.session_scope() as session:
+            linking = UserLinkingService(session)
+            return linking.unlink_user_platform(user_id, platform)
+
+
 @app.callback()
 def callback():
     """Bot platform management commands.
@@ -106,62 +165,47 @@ def callback():
     pass
 
 
-@app.command("status")
-def status():
-    """Show status of all bot platforms."""
-    _require_bots_enabled()
+def _get_platform_stats(platform: str) -> tuple[int, int]:
+    """Get statistics for a platform (MongoDB or SQLite).
 
-    table = Table(title="Bot Platform Status")
-    table.add_column("Platform", style="cyan")
-    table.add_column("Configured", style="green")
-    table.add_column("Bot Name", style="magenta")
-    table.add_column("Linked Users", style="yellow")
-    table.add_column("Messages (24h)", style="blue")
+    Returns:
+        Tuple of (linked_count, message_count_24h)
+    """
+    backend = _get_storage_backend()
+    now = datetime.now(UTC)
+    day_ago = now - timedelta(days=1)
 
-    ctx = _service_context()
-    with ctx.session_scope() as session:
-        for platform in ["telegram", "slack", "teams"]:
-            configured = False
-            bot_name = "-"
+    if backend == "mongodb":
+        from infrastructure_atlas.infrastructure.mongodb.client import get_mongodb_client
 
-            # Check configuration
-            if platform == "telegram":
-                token = os.getenv("TELEGRAM_BOT_TOKEN")
-                if token:
-                    configured = True
-                    try:
-                        adapter = TelegramAdapter(bot_token=token)
-                        info = asyncio.run(adapter.get_bot_info())
-                        bot_name = f"@{info.get('username', 'unknown')}"
-                    except Exception as e:
-                        bot_name = f"[red]Error: {e}[/red]"
-            elif platform == "slack":
-                slack_bot_token = os.getenv("SLACK_BOT_TOKEN")
-                slack_app_token = os.getenv("SLACK_APP_TOKEN")
-                if slack_bot_token and slack_app_token:
-                    configured = True
-                    try:
-                        from infrastructure_atlas.bots.adapters.slack import SlackAdapter
+        db = get_mongodb_client().atlas
 
-                        adapter = SlackAdapter(bot_token=slack_bot_token)
-                        info = asyncio.run(adapter.get_bot_info())
-                        bot_name = f"@{info.get('username', 'unknown')} ({info.get('team', '')})"
-                    except ImportError:
-                        bot_name = "[yellow]slack-bolt not installed[/yellow]"
-                    except Exception as e:
-                        bot_name = f"[red]Error: {e}[/red]"
-                elif slack_bot_token:
-                    configured = False
-                    bot_name = "[yellow]Missing SLACK_APP_TOKEN[/yellow]"
-            elif platform == "teams":
-                configured = bool(os.getenv("TEAMS_APP_ID") and os.getenv("TEAMS_APP_PASSWORD"))
-                if configured:
-                    bot_name = "[dim]Configured[/dim]"
+        # Count linked (verified) accounts
+        linked_count = db["bot_platform_accounts"].count_documents({
+            "platform": platform,
+            "verified": True,
+        })
 
-            # Get statistics
-            now = datetime.now(UTC)
-            day_ago = now - timedelta(days=1)
+        # Count messages in last 24h - need to join through conversations
+        # First get conversation IDs for this platform
+        conv_ids = [
+            c["_id"] for c in db["bot_conversations"].find(
+                {"platform": platform},
+                {"_id": 1}
+            )
+        ]
 
+        message_count = 0
+        if conv_ids:
+            message_count = db["bot_messages"].count_documents({
+                "conversation_id": {"$in": conv_ids},
+                "created_at": {"$gte": day_ago},
+            })
+
+        return linked_count, message_count
+    else:
+        ctx = _service_context()
+        with ctx.session_scope() as session:
             linked_count = session.execute(
                 select(func.count(BotPlatformAccount.id)).where(
                     BotPlatformAccount.platform == platform,
@@ -178,13 +222,69 @@ def status():
                 )
             ).scalar() or 0
 
-            table.add_row(
-                platform.capitalize(),
-                "[green]Yes[/green]" if configured else "[red]No[/red]",
-                bot_name,
-                str(linked_count),
-                str(message_count),
-            )
+            return linked_count, message_count
+
+
+@app.command("status")
+def status():
+    """Show status of all bot platforms."""
+    _require_bots_enabled()
+
+    table = Table(title="Bot Platform Status")
+    table.add_column("Platform", style="cyan")
+    table.add_column("Configured", style="green")
+    table.add_column("Bot Name", style="magenta")
+    table.add_column("Linked Users", style="yellow")
+    table.add_column("Messages (24h)", style="blue")
+
+    for platform in ["telegram", "slack", "teams"]:
+        configured = False
+        bot_name = "-"
+
+        # Check configuration
+        if platform == "telegram":
+            token = os.getenv("TELEGRAM_BOT_TOKEN")
+            if token:
+                configured = True
+                try:
+                    adapter = TelegramAdapter(bot_token=token)
+                    info = asyncio.run(adapter.get_bot_info())
+                    bot_name = f"@{info.get('username', 'unknown')}"
+                except Exception as e:
+                    bot_name = f"[red]Error: {e}[/red]"
+        elif platform == "slack":
+            slack_bot_token = os.getenv("SLACK_BOT_TOKEN")
+            slack_app_token = os.getenv("SLACK_APP_TOKEN")
+            if slack_bot_token and slack_app_token:
+                configured = True
+                try:
+                    from infrastructure_atlas.bots.adapters.slack import SlackAdapter
+
+                    adapter = SlackAdapter(bot_token=slack_bot_token)
+                    info = asyncio.run(adapter.get_bot_info())
+                    bot_name = f"@{info.get('username', 'unknown')} ({info.get('team', '')})"
+                except ImportError:
+                    bot_name = "[yellow]slack-bolt not installed[/yellow]"
+                except Exception as e:
+                    bot_name = f"[red]Error: {e}[/red]"
+            elif slack_bot_token:
+                configured = False
+                bot_name = "[yellow]Missing SLACK_APP_TOKEN[/yellow]"
+        elif platform == "teams":
+            configured = bool(os.getenv("TEAMS_APP_ID") and os.getenv("TEAMS_APP_PASSWORD"))
+            if configured:
+                bot_name = "[dim]Configured[/dim]"
+
+        # Get statistics (MongoDB or SQLite)
+        linked_count, message_count = _get_platform_stats(platform)
+
+        table.add_row(
+            platform.capitalize(),
+            "[green]Yes[/green]" if configured else "[red]No[/red]",
+            bot_name,
+            str(linked_count),
+            str(message_count),
+        )
 
     console.print(table)
 
@@ -261,25 +361,24 @@ def link_user(
         print("[dim]Valid platforms: telegram, slack, teams[/dim]")
         raise typer.Exit(code=1)
 
-    ctx = _service_context()
-    with ctx.session_scope() as session:
-        # Find user
-        user = session.query(User).filter_by(username=username.lower()).first()
-        if not user:
-            print(f"[red]User not found: {username}[/red]")
-            raise typer.Exit(code=1)
+    # Find user (MongoDB or SQLite)
+    user = _get_user_by_username(username)
+    if not user:
+        print(f"[red]User not found: {username}[/red]")
+        raise typer.Exit(code=1)
 
-        # Generate code
-        linking = UserLinkingService(session)
-        code = linking.generate_verification_code(user.id, platform)
+    # Generate code (MongoDB or SQLite)
+    code = _generate_link_code(str(user.id), platform)
 
     print(f"[green]Verification code generated for {username}[/green]")
     print()
     print(f"[bold]Code:[/bold] {code}")
     print("[dim]Valid for 10 minutes[/dim]")
     print()
+    # Slack uses ! prefix since / is reserved for native slash commands
+    cmd_prefix = "!" if platform == "slack" else "/"
     print(f"Tell the user to send this command in their {platform.capitalize()} chat:")
-    print(f"  /link {code}")
+    print(f"  {cmd_prefix}link {code}")
 
 
 @app.command("unlink-user")
@@ -294,20 +393,17 @@ def unlink_user(
         print(f"[red]Invalid platform: {platform}[/red]")
         raise typer.Exit(code=1)
 
-    ctx = _service_context()
-    with ctx.session_scope() as session:
-        # Find user
-        user = session.query(User).filter_by(username=username.lower()).first()
-        if not user:
-            print(f"[red]User not found: {username}[/red]")
-            raise typer.Exit(code=1)
+    # Find user (MongoDB or SQLite)
+    user = _get_user_by_username(username)
+    if not user:
+        print(f"[red]User not found: {username}[/red]")
+        raise typer.Exit(code=1)
 
-        # Unlink
-        linking = UserLinkingService(session)
-        if linking.unlink_user_platform(user.id, platform):
-            print(f"[green]Unlinked {username} from {platform.capitalize()}[/green]")
-        else:
-            print(f"[yellow]No {platform.capitalize()} account linked for {username}[/yellow]")
+    # Unlink (MongoDB or SQLite)
+    if _unlink_user_platform(str(user.id), platform):
+        print(f"[green]Unlinked {username} from {platform.capitalize()}[/green]")
+    else:
+        print(f"[yellow]No {platform.capitalize()} account linked for {username}[/yellow]")
 
 
 @app.command("list-accounts")
@@ -324,27 +420,63 @@ def list_accounts(
     table.add_column("Verified", style="yellow")
     table.add_column("Linked At")
 
-    ctx = _service_context()
-    with ctx.session_scope() as session:
-        query = select(BotPlatformAccount).order_by(BotPlatformAccount.created_at.desc())
+    backend = _get_storage_backend()
 
+    if backend == "mongodb":
+        from infrastructure_atlas.infrastructure.mongodb.client import get_mongodb_client
+
+        db = get_mongodb_client().atlas
+
+        query = {}
         if platform:
-            query = query.where(BotPlatformAccount.platform == platform)
+            query["platform"] = platform
 
-        accounts = list(session.execute(query).scalars().all())
+        accounts = list(db["bot_platform_accounts"].find(query).sort("created_at", -1))
 
         if not accounts:
             print("[yellow]No linked accounts found[/yellow]")
             return
 
+        # Get user mapping for usernames
+        user_ids = [a.get("user_id") for a in accounts if a.get("user_id")]
+        users = {str(u["_id"]): u for u in db["users"].find({"_id": {"$in": user_ids}})}
+
         for account in accounts:
+            user_id = account.get("user_id")
+            user = users.get(str(user_id)) if user_id else None
+            username = user.get("username") if user else "[red]Unknown[/red]"
+            created = account.get("created_at")
+            created_str = created.strftime("%Y-%m-%d %H:%M") if created else "-"
+
             table.add_row(
-                account.user.username if account.user else "[red]Unknown[/red]",
-                account.platform.capitalize(),
-                account.platform_username or account.platform_user_id,
-                "[green]Yes[/green]" if account.verified else "[red]No[/red]",
-                account.created_at.strftime("%Y-%m-%d %H:%M"),
+                username,
+                account.get("platform", "").capitalize(),
+                account.get("platform_username") or account.get("platform_user_id", ""),
+                "[green]Yes[/green]" if account.get("verified") else "[red]No[/red]",
+                created_str,
             )
+    else:
+        ctx = _service_context()
+        with ctx.session_scope() as session:
+            query = select(BotPlatformAccount).order_by(BotPlatformAccount.created_at.desc())
+
+            if platform:
+                query = query.where(BotPlatformAccount.platform == platform)
+
+            accounts = list(session.execute(query).scalars().all())
+
+            if not accounts:
+                print("[yellow]No linked accounts found[/yellow]")
+                return
+
+            for account in accounts:
+                table.add_row(
+                    account.user.username if account.user else "[red]Unknown[/red]",
+                    account.platform.capitalize(),
+                    account.platform_username or account.platform_user_id,
+                    "[green]Yes[/green]" if account.verified else "[red]No[/red]",
+                    account.created_at.strftime("%Y-%m-%d %H:%M"),
+                )
 
     console.print(table)
 
@@ -357,64 +489,121 @@ def usage(
     """Show bot usage statistics."""
     _require_bots_enabled()
 
-    ctx = _service_context()
-    with ctx.session_scope() as session:
-        now = datetime.now(UTC)
-        start_date = now - timedelta(days=days)
+    now = datetime.now(UTC)
+    start_date = now - timedelta(days=days)
+    backend = _get_storage_backend()
 
-        # Build filters
-        message_filter = [BotMessage.created_at >= start_date]
+    if backend == "mongodb":
+        from infrastructure_atlas.infrastructure.mongodb.client import get_mongodb_client
+
+        db = get_mongodb_client().atlas
+
+        # Get conversation IDs for platform filter
+        conv_filter = {}
         if platform:
-            message_filter.append(BotConversation.platform == platform)
+            conv_filter["platform"] = platform
+        conv_ids = [c["_id"] for c in db["bot_conversations"].find(conv_filter, {"_id": 1})]
 
-        # Total messages
-        total_messages = session.execute(
-            select(func.count(BotMessage.id))
-            .join(BotConversation)
-            .where(*message_filter)
-        ).scalar() or 0
+        # Build message filter
+        msg_filter: dict[str, Any] = {"created_at": {"$gte": start_date}}
+        if conv_ids:
+            msg_filter["conversation_id"] = {"$in": conv_ids}
+        elif platform:
+            # No conversations for this platform
+            conv_ids = []
 
-        # Total conversations
-        total_conversations = session.execute(
-            select(func.count(func.distinct(BotConversation.id)))
-            .join(BotMessage)
-            .where(*message_filter)
-        ).scalar() or 0
+        # Stats
+        total_messages = db["bot_messages"].count_documents(msg_filter) if conv_ids or not platform else 0
+        total_conversations = len(set(
+            m["conversation_id"] for m in db["bot_messages"].find(msg_filter, {"conversation_id": 1})
+        )) if conv_ids or not platform else 0
 
-        # Token usage
-        total_input = session.execute(
-            select(func.sum(BotMessage.input_tokens))
-            .join(BotConversation)
-            .where(*message_filter)
-        ).scalar() or 0
+        # Aggregation for tokens and cost
+        pipeline = [
+            {"$match": msg_filter},
+            {"$group": {
+                "_id": None,
+                "total_input": {"$sum": {"$ifNull": ["$input_tokens", 0]}},
+                "total_output": {"$sum": {"$ifNull": ["$output_tokens", 0]}},
+                "total_cost": {"$sum": {"$ifNull": ["$cost_usd", 0]}},
+            }}
+        ]
+        agg_result = list(db["bot_messages"].aggregate(pipeline))
+        total_input = agg_result[0]["total_input"] if agg_result else 0
+        total_output = agg_result[0]["total_output"] if agg_result else 0
+        total_cost = agg_result[0]["total_cost"] if agg_result else 0.0
 
-        total_output = session.execute(
-            select(func.sum(BotMessage.output_tokens))
-            .join(BotConversation)
-            .where(*message_filter)
-        ).scalar() or 0
-
-        total_cost = session.execute(
-            select(func.sum(BotMessage.cost_usd))
-            .join(BotConversation)
-            .where(*message_filter)
-        ).scalar() or 0.0
-
-        # Messages by platform
-        platform_counts = session.execute(
-            select(BotConversation.platform, func.count(BotMessage.id))
-            .join(BotConversation)
-            .where(BotMessage.created_at >= start_date)
-            .group_by(BotConversation.platform)
-        ).all()
+        # Messages by platform (get all conversations, then count)
+        all_convs = {c["_id"]: c["platform"] for c in db["bot_conversations"].find({}, {"_id": 1, "platform": 1})}
+        platform_msg_filter = {"created_at": {"$gte": start_date}}
+        platform_counts_dict: dict[str, int] = {}
+        for msg in db["bot_messages"].find(platform_msg_filter, {"conversation_id": 1}):
+            p = all_convs.get(msg.get("conversation_id"), "unknown")
+            platform_counts_dict[p] = platform_counts_dict.get(p, 0) + 1
+        platform_counts = list(platform_counts_dict.items())
 
         # Messages by agent
-        agent_counts = session.execute(
-            select(BotMessage.agent_id, func.count(BotMessage.id))
-            .join(BotConversation)
-            .where(BotMessage.created_at >= start_date, BotMessage.agent_id.isnot(None))
-            .group_by(BotMessage.agent_id)
-        ).all()
+        agent_pipeline = [
+            {"$match": {"created_at": {"$gte": start_date}, "agent_id": {"$ne": None}}},
+            {"$group": {"_id": "$agent_id", "count": {"$sum": 1}}}
+        ]
+        agent_counts = [(r["_id"], r["count"]) for r in db["bot_messages"].aggregate(agent_pipeline)]
+    else:
+        ctx = _service_context()
+        with ctx.session_scope() as session:
+            # Build filters
+            message_filter = [BotMessage.created_at >= start_date]
+            if platform:
+                message_filter.append(BotConversation.platform == platform)
+
+            # Total messages
+            total_messages = session.execute(
+                select(func.count(BotMessage.id))
+                .join(BotConversation)
+                .where(*message_filter)
+            ).scalar() or 0
+
+            # Total conversations
+            total_conversations = session.execute(
+                select(func.count(func.distinct(BotConversation.id)))
+                .join(BotMessage)
+                .where(*message_filter)
+            ).scalar() or 0
+
+            # Token usage
+            total_input = session.execute(
+                select(func.sum(BotMessage.input_tokens))
+                .join(BotConversation)
+                .where(*message_filter)
+            ).scalar() or 0
+
+            total_output = session.execute(
+                select(func.sum(BotMessage.output_tokens))
+                .join(BotConversation)
+                .where(*message_filter)
+            ).scalar() or 0
+
+            total_cost = session.execute(
+                select(func.sum(BotMessage.cost_usd))
+                .join(BotConversation)
+                .where(*message_filter)
+            ).scalar() or 0.0
+
+            # Messages by platform
+            platform_counts = session.execute(
+                select(BotConversation.platform, func.count(BotMessage.id))
+                .join(BotConversation)
+                .where(BotMessage.created_at >= start_date)
+                .group_by(BotConversation.platform)
+            ).all()
+
+            # Messages by agent
+            agent_counts = session.execute(
+                select(BotMessage.agent_id, func.count(BotMessage.id))
+                .join(BotConversation)
+                .where(BotMessage.created_at >= start_date, BotMessage.agent_id.isnot(None))
+                .group_by(BotMessage.agent_id)
+            ).all()
 
     # Display
     print(f"\n[bold]Bot Usage Statistics ({days} days)[/bold]\n")

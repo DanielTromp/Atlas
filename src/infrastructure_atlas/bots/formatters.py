@@ -280,8 +280,179 @@ class SlackFormatter(MessageFormatter):
     platform = "slack"
     max_length = 40000
 
+    def _convert_markdown_table(self, text: str) -> str:
+        """Convert markdown tables to readable hybrid list format for Slack.
+
+        Slack doesn't support markdown tables, so convert:
+        | # | Ticket | Summary | Status | Priority |
+        |---|--------|---------|--------|----------|
+        | 1 | ESD-123 | Title   | Open   | High     |
+
+        To (hybrid format):
+        *ESD-123* · High · Open
+        └ Title
+        """
+        lines = text.split("\n")
+        result = []
+        i = 0
+
+        while i < len(lines):
+            line = lines[i].strip()
+
+            # Detect table header row (starts and ends with |)
+            if line.startswith("|") and line.endswith("|"):
+                # Parse header
+                headers = [h.strip() for h in line.strip("|").split("|")]
+
+                # Check if next line is separator (|---|---|)
+                if i + 1 < len(lines) and re.match(r"^\|[-:\s|]+\|$", lines[i + 1].strip()):
+                    i += 2  # Skip header and separator
+
+                    # Build column index map
+                    col_map: dict[str, int] = {}
+                    for idx, h in enumerate(headers):
+                        h_lower = h.lower().strip()
+                        if h_lower in ("ticket", "key", "id"):
+                            col_map["ticket"] = idx
+                        elif h_lower in ("summary", "title", "description", "name"):
+                            col_map["summary"] = idx
+                        elif h_lower in ("status",):
+                            col_map["status"] = idx
+                        elif h_lower in ("priority", "pri"):
+                            col_map["priority"] = idx
+                        elif h_lower in ("project", "proj"):
+                            col_map["project"] = idx
+                        elif h_lower in ("category", "type"):
+                            col_map["category"] = idx
+                        elif h_lower in ("created", "date"):
+                            col_map["created"] = idx
+
+                    # Process data rows
+                    while i < len(lines):
+                        row = lines[i].strip()
+                        if row.startswith("|") and row.endswith("|"):
+                            values = [v.strip() for v in row.strip("|").split("|")]
+
+                            # Format as hybrid entry
+                            if len(values) >= 2 and len(headers) >= 2:
+                                # Get values by column type
+                                def get_val(key: str) -> str:
+                                    idx = col_map.get(key)
+                                    if idx is not None and idx < len(values):
+                                        val = values[idx].replace("**", "").strip()
+                                        return val if val and val != "-" else ""
+                                    return ""
+
+                                ticket = get_val("ticket")
+                                summary = get_val("summary")
+                                status = get_val("status")
+                                priority = get_val("priority")
+                                project = get_val("project")
+
+                                if ticket:
+                                    # Build first line: *TICKET* · Priority · Status
+                                    first_line_parts = [f"*{ticket}*"]
+                                    if priority:
+                                        first_line_parts.append(priority)
+                                    if status:
+                                        first_line_parts.append(status)
+                                    if project:
+                                        first_line_parts.append(project)
+
+                                    result.append(" · ".join(first_line_parts))
+
+                                    # Build second line: └ Summary
+                                    if summary:
+                                        # Truncate long summaries
+                                        if len(summary) > 70:
+                                            summary = summary[:67] + "..."
+                                        result.append(f"└ {summary}")
+
+                                    # Add empty line between entries for readability
+                                    result.append("")
+                                else:
+                                    # Fallback: just join values
+                                    result.append(" | ".join(values))
+
+                            i += 1
+                        else:
+                            break
+
+                    # Remove trailing empty line
+                    if result and result[-1] == "":
+                        result.pop()
+                    continue
+
+            result.append(lines[i])
+            i += 1
+
+        return "\n".join(result)
+
+    def _markdown_to_mrkdwn(self, text: str) -> str:
+        """Convert standard Markdown to Slack's mrkdwn format.
+
+        Key conversions:
+        - **bold** → *bold*
+        - ## Header → *Header*
+        - [text](url) → <url|text>
+        - Markdown tables → code blocks
+        - Preserve code blocks and inline code
+        """
+        import re
+
+        # Convert markdown tables to code blocks first
+        text = self._convert_markdown_table(text)
+
+        # Preserve code blocks first (replace with placeholders)
+        # Use a placeholder format that won't be affected by markdown conversions
+        code_blocks: list[str] = []
+        def save_code_block(match: re.Match) -> str:
+            code_blocks.append(match.group(0))
+            return f"\x00CODEBLOCK{len(code_blocks) - 1}\x00"
+
+        # Save fenced code blocks
+        text = re.sub(r'```[\s\S]*?```', save_code_block, text)
+        # Save inline code
+        text = re.sub(r'`[^`]+`', save_code_block, text)
+
+        # Convert headers (## Header → *Header*)
+        # But NOT headers that start with numbers (those are list items like "### 1. Title")
+        text = re.sub(r'^#{1,6}\s+(?!\d+\.)\s*(.+)$', r'*\1*', text, flags=re.MULTILINE)
+
+        # For numbered list items with headers (### 1. **Title**), just remove the ### prefix
+        text = re.sub(r'^#{1,6}\s+(\d+\.)', r'\1', text, flags=re.MULTILINE)
+
+        # Convert bold (**text** → *text*) - use non-greedy and allow any chars except newline
+        text = re.sub(r'\*\*(.+?)\*\*', r'*\1*', text)
+
+        # Fix Slack mrkdwn quirk: *1. text* doesn't render as bold
+        # First, ensure newline before *N. (numbered items with bold)
+        # This handles cases like "Header*1. Title*" → "Header\n*1. Title*"
+        text = re.sub(r'([^\n\s])\*(\d+\.)', r'\1\n*\2', text)
+        # Then move the number prefix outside the asterisks: *1. text* → 1. *text*
+        text = re.sub(r'(^|\n)\*(\d+\.)\s+([^*\n]+)\*', r'\1\2 *\3*', text)
+
+        # Convert __bold__ → *bold* (alternative markdown bold)
+        text = re.sub(r'__(.+?)__', r'*\1*', text)
+
+        # Convert links [text](url) → <url|text>
+        text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<\2|\1>', text)
+
+        # Convert bullet points (- item → • item)
+        text = re.sub(r'^(\s*)-\s+', r'\1• ', text, flags=re.MULTILINE)
+
+        # Clean up any double asterisks that might remain (edge cases)
+        text = re.sub(r'\*\*+', '*', text)
+
+        # Restore code blocks
+        for i, block in enumerate(code_blocks):
+            text = text.replace(f"\x00CODEBLOCK{i}\x00", block)
+
+        return text
+
     def format_text(self, text: str, compact: bool = False) -> FormattedMessage:
         """Format plain text as Slack blocks."""
+        text = self._markdown_to_mrkdwn(text)
         text, truncated = self.truncate(text)
 
         blocks = [
@@ -344,11 +515,21 @@ class SlackFormatter(MessageFormatter):
         """Format agent response with header and optional tool context."""
         blocks: list[dict[str, Any]] = []
 
-        # Header with agent name
+        # Header with agent name and emoji
+        agent_emoji = {
+            "triage": ":ticket:",
+            "search": ":mag:",
+            "netbox": ":globe_with_meridians:",
+            "jira": ":jira:",
+            "confluence": ":confluence:",
+        }.get(agent_id, ":robot_face:")
+
         blocks.append(
             {
-                "type": "header",
-                "text": {"type": "plain_text", "text": f"Agent: {agent_id}", "emoji": True},
+                "type": "context",
+                "elements": [
+                    {"type": "mrkdwn", "text": f"{agent_emoji} *{agent_id}*"},
+                ],
             }
         )
 
@@ -361,7 +542,7 @@ class SlackFormatter(MessageFormatter):
                     "elements": [
                         {
                             "type": "mrkdwn",
-                            "text": f":tools: Used: {', '.join(tool_names)}",
+                            "text": f":gear: _{', '.join(tool_names)}_",
                         }
                     ],
                 }
@@ -369,14 +550,68 @@ class SlackFormatter(MessageFormatter):
 
         blocks.append({"type": "divider"})
 
-        # Main response
+        # Convert markdown to Slack mrkdwn
+        response = self._markdown_to_mrkdwn(response)
         response, truncated = self.truncate(response)
-        blocks.append(
-            {
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": response},
-            }
-        )
+
+        # Split on horizontal rules (---) and convert to divider blocks
+        # This handles markdown horizontal rules properly
+        sections = re.split(r'\n-{3,}\n', response)
+
+        max_section_len = 2900  # Slack section blocks have ~3000 char limit
+
+        for i, section in enumerate(sections):
+            section = section.strip()
+            if not section:
+                continue
+
+            # Add divider between sections (not before first)
+            if i > 0:
+                blocks.append({"type": "divider"})
+
+            # Split long sections into multiple blocks, but keep code blocks intact
+            if len(section) <= max_section_len:
+                blocks.append(
+                    {
+                        "type": "section",
+                        "text": {"type": "mrkdwn", "text": section},
+                    }
+                )
+            else:
+                # Split on paragraph breaks but preserve code blocks
+                chunks: list[str] = []
+                current_chunk = ""
+                in_code_block = False
+
+                for line in section.split("\n"):
+                    # Track code block state
+                    if line.strip().startswith("```"):
+                        in_code_block = not in_code_block
+
+                    # Don't split inside code blocks
+                    if in_code_block:
+                        current_chunk += "\n" + line if current_chunk else line
+                    elif len(current_chunk) + len(line) + 1 > max_section_len:
+                        if current_chunk:
+                            chunks.append(current_chunk.strip())
+                        current_chunk = line
+                    else:
+                        current_chunk += "\n" + line if current_chunk else line
+
+                if current_chunk:
+                    chunks.append(current_chunk.strip())
+
+                for chunk in chunks:
+                    if chunk:
+                        # Truncate if still too long (e.g., very large code block)
+                        if len(chunk) > max_section_len:
+                            chunk = chunk[:max_section_len - 20] + "\n... [truncated]"
+                        blocks.append(
+                            {
+                                "type": "section",
+                                "text": {"type": "mrkdwn", "text": chunk},
+                            }
+                        )
 
         return FormattedMessage(
             content={"blocks": blocks},

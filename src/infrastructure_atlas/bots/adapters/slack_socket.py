@@ -61,6 +61,8 @@ class SlackSocketModeBot:
         self.bot_token = bot_token or os.getenv("SLACK_BOT_TOKEN", "")
         self.app_token = app_token or os.getenv("SLACK_APP_TOKEN", "")
         self._running = False
+        self._handler: Any = None  # Socket Mode handler reference for shutdown
+        self._shutdown_event: asyncio.Event | None = None
 
         if not self.bot_token:
             raise ValueError("SLACK_BOT_TOKEN not set")
@@ -73,6 +75,7 @@ class SlackSocketModeBot:
         from slack_bolt.async_app import AsyncApp
 
         self._running = True
+        self._shutdown_event = asyncio.Event()
 
         # Create the Bolt app
         app = AsyncApp(token=self.bot_token)
@@ -103,24 +106,30 @@ class SlackSocketModeBot:
             loop.add_signal_handler(sig, self._signal_handler)
 
         # Start Socket Mode handler
-        handler = AsyncSocketModeHandler(app, self.app_token)
+        self._handler = AsyncSocketModeHandler(app, self.app_token)
 
         try:
             logger.info("Connecting to Slack via Socket Mode...")
-            await handler.start_async()
+            # Start handler in background and wait for shutdown signal
+            await self._handler.connect_async()
+            # Wait for shutdown event instead of blocking forever
+            await self._shutdown_event.wait()
         except asyncio.CancelledError:
             logger.info("Socket Mode cancelled")
         finally:
-            await handler.close_async()
+            if self._handler:
+                await self._handler.close_async()
             logger.info("Slack Socket Mode bot stopped")
 
     def stop(self) -> None:
         """Stop the Socket Mode connection."""
         self._running = False
+        if self._shutdown_event:
+            self._shutdown_event.set()
 
     def _signal_handler(self) -> None:
         """Handle shutdown signals."""
-        logger.info("Received shutdown signal")
+        logger.info("Received shutdown signal, stopping bot...")
         self.stop()
 
     async def _process_event(

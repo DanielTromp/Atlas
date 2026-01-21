@@ -312,6 +312,36 @@ class JiraSkill(BaseSkill):
         "resolutiondate",
     ]
 
+    def _fix_jql_quoting(self, jql: str) -> str:
+        """Fix JQL quoting issues - quote values with spaces in IN clauses.
+
+        The AI agent sometimes generates JQL like:
+            assignee in (Tobias Bylund, Ilker Yayla)
+        But Jira requires:
+            assignee in ("Tobias Bylund", "Ilker Yayla")
+        """
+        import re
+
+        def quote_in_values(match: re.Match) -> str:
+            field = match.group(1)
+            values_str = match.group(2)
+            # Split on comma, quote values with spaces that aren't already quoted
+            values = []
+            for val in values_str.split(","):
+                val = val.strip()
+                # Skip if already quoted or is a function like currentUser()
+                if val.startswith('"') or val.startswith("'") or "(" in val:
+                    values.append(val)
+                elif " " in val:
+                    values.append(f'"{val}"')
+                else:
+                    values.append(val)
+            return f"{field} in ({', '.join(values)})"
+
+        # Fix IN clauses: field in (value1, value2)
+        jql = re.sub(r'(\w+)\s+in\s+\(([^)]+)\)', quote_in_values, jql, flags=re.IGNORECASE)
+        return jql
+
     def search_issues(
         self,
         jql: str,
@@ -330,6 +360,9 @@ class JiraSkill(BaseSkill):
         """
         if not self._session:
             raise RuntimeError("Jira skill not initialized")
+
+        # Fix JQL quoting issues (AI sometimes forgets to quote values with spaces)
+        jql = self._fix_jql_quoting(jql)
 
         # Use the new /search/jql endpoint (legacy /search was removed by Atlassian)
         url = f"{self._api_root}/search/jql"

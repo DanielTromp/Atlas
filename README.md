@@ -5,16 +5,16 @@
 <h1 align="center">Infrastructure Atlas</h1>
 
 <p align="center">
-  <strong>Unified infrastructure management dashboard</strong><br>
-  Aggregate, search, and manage infrastructure data from NetBox, Commvault, Zabbix, Confluence, Jira, vCenter, Foreman, and Puppet — all in one place.
+  <strong>Unified infrastructure management with AI-powered agents</strong><br>
+  Aggregate, search, and manage infrastructure data from NetBox, Commvault, Zabbix, Confluence, Jira, vCenter, Foreman, and Puppet — with AI agents accessible via Web, Slack, and Telegram.
 </p>
 
 <p align="center">
   <a href="#features">Features</a> •
-  <a href="#screenshots">Screenshots</a> •
+  <a href="#ai-agents">AI Agents</a> •
+  <a href="#bot-integrations">Bot Integrations</a> •
   <a href="#quick-start">Quick Start</a> •
-  <a href="#documentation">Documentation</a> •
-  <a href="#license">License</a>
+  <a href="#documentation">Documentation</a>
 </p>
 
 ---
@@ -41,20 +41,105 @@
 | **NetBox** | Device & VM inventory, live search, CMDB export |
 | **Commvault** | Backup job monitoring, storage pools, retention analysis |
 | **Zabbix** | Problems dashboard, host groups, bulk acknowledgment |
-| **Confluence** | CQL search, CMDB publishing, table sync |
-| **Jira** | Issue search with filters, project/status/assignee views |
+| **Confluence** | Semantic search (RAG), CMDB publishing, runbook lookup |
+| **Jira** | Issue search with JQL, ticket triage, assignment suggestions |
 | **vCenter** | VM inventory, placement coverage, cluster visibility |
 | **Foreman** | Host inventory, Puppet configuration visibility |
 | **Puppet** | User/group management, access matrix, security analysis |
 
 ### Highlights
 
+- 🤖 **AI Agents** — Specialized agents for triage, engineering, and review tasks
+- 💬 **Multi-Platform Bots** — Chat with agents via Slack, Telegram, or Web UI
 - 🔍 **Cross-system search** — Query all integrations from a single interface
-- 📊 **Virtual scrolling** — Handle thousands of records smoothly
+- 📊 **Excel Exports** — Export search results and reports directly to Slack/Telegram
 - 🔐 **Secure by default** — Bearer token API auth, session-based UI login
-- 📤 **Automated exports** — CSV, Excel, and Confluence publishing
+- 📚 **Confluence RAG** — Semantic search across documentation with citations
 - ⚡ **Fast caching** — TTL-based caches with hit/miss instrumentation
-- 🖥️ **Modern UI** — Responsive design with dark mode support
+
+## AI Agents
+
+Infrastructure Atlas includes AI-powered agents that can interact with your infrastructure systems.
+
+### Available Agents
+
+| Agent | Purpose | Skills |
+|-------|---------|--------|
+| **Triage** (`@triage`) | Ticket analysis, categorization, quick lookups | Jira, Confluence |
+| **Engineer** (`@engineer`) | Technical investigation, infrastructure queries | Jira, NetBox, Zabbix, vCenter, Commvault |
+| **Reviewer** (`@reviewer`) | Quality review, validation | Jira, Confluence |
+
+### Example Interactions
+
+```
+# Via Slack/Telegram
+@triage Show me open tickets for the Systems team
+@engineer Check backup status for server web-prod-01
+@triage Export resolved tickets from last week as Excel
+```
+
+### Capabilities
+
+- **Jira Integration**: Search issues, analyze tickets, suggest assignments
+- **NetBox Queries**: Look up devices, VMs, IP addresses
+- **Zabbix Monitoring**: Check active alerts and problems
+- **Confluence RAG**: Semantic search across runbooks and documentation
+- **Data Exports**: Generate Excel reports from queries
+
+## Bot Integrations
+
+Chat with Atlas agents through your preferred platform.
+
+### Slack Bot
+
+Full-featured Slack integration using Socket Mode (no public endpoints required).
+
+```bash
+# Configure
+SLACK_BOT_TOKEN=xoxb-your-token
+SLACK_APP_TOKEN=xapp-your-app-token
+
+# Run
+uv run atlas bots run slack
+```
+
+**Features:**
+- Direct messages and channel mentions
+- Rich Block Kit formatting with dividers
+- Thread-based conversation memory
+- File exports (Excel, CSV) uploaded directly to Slack
+- Commands: `!help`, `!status`, `!agents`, `!link <code>`
+
+### Telegram Bot
+
+Polling-based Telegram bot for internal deployments.
+
+```bash
+# Configure
+TELEGRAM_BOT_TOKEN=your-bot-token
+
+# Run
+uv run atlas bots run telegram
+```
+
+**Features:**
+- HTML formatting for clean messages
+- Compact responses within Telegram limits
+- File exports sent as documents
+- Commands: `/help`, `/status`, `/agents`, `/link <code>`
+
+### Account Linking
+
+Users must link their platform accounts to Atlas for authorization:
+
+```bash
+# Generate verification code
+uv run atlas bots link-user <username> slack
+
+# User sends to bot
+!link <code>   # Slack
+/link <code>   # Telegram
+```
 
 ## Quick Start
 
@@ -62,6 +147,8 @@
 
 - Python 3.11+
 - [uv](https://github.com/astral-sh/uv) package manager
+- MongoDB (optional, for high-concurrency deployments)
+- Docker (optional, for Qdrant vector search)
 
 ### Installation
 
@@ -74,32 +161,42 @@ cd infrastructure-atlas
 cp .env.example .env
 
 # Edit .env with your credentials
-# At minimum: NETBOX_URL, NETBOX_TOKEN
+# Required: NETBOX_URL, NETBOX_TOKEN, ANTHROPIC_API_KEY
 ```
 
 ### Basic Usage
 
 ```bash
-# Check connectivity
-uv run atlas status
-
-# Start the web UI
+# Start the web UI and API
 uv run atlas api serve --host 127.0.0.1 --port 8000
 
 # Open http://127.0.0.1:8000/app/ in your browser
 ```
 
+### Running Bots
+
+```bash
+# Slack bot (Socket Mode)
+uv run atlas bots run slack
+
+# Telegram bot (Polling)
+uv run atlas bots run telegram
+```
+
 ### Common Commands
 
 ```bash
-# Export NetBox data
+# Export NetBox data to Excel
 uv run atlas export update --force
 
-# Search across systems
+# Search across all systems
 uv run atlas search run --q "server-name" --json
 
 # View Zabbix problems
 uv run atlas zabbix dashboard --unack-only
+
+# Check bot status
+uv run atlas bots status
 ```
 
 ## Documentation
@@ -108,9 +205,10 @@ uv run atlas zabbix dashboard --unack-only
 |----------|-------------|
 | [Getting Started](docs/getting-started.md) | Installation, setup, and first steps |
 | [Configuration](docs/configuration.md) | Environment variables and settings |
-| [CLI Reference](docs/cli-reference.md) | Complete command-line interface guide |
-| [API Reference](docs/api-reference.md) | REST API endpoints and usage |
-| [Web UI Guide](docs/web-ui.md) | Frontend features and navigation |
+| [AI Chat](docs/ai-chat.md) | AI agent configuration and usage |
+| [Agent Playground](docs/playground.md) | Interactive agent testing environment |
+| [Bot System](docs/bots.md) | Slack, Telegram, and Teams bot setup |
+| [Confluence RAG](docs/confluence_rag_setup.md) | Semantic search setup with Qdrant |
 
 ### Integration Guides
 
@@ -132,36 +230,35 @@ infrastructure-atlas/
 ├── src/infrastructure_atlas/   # Main package
 │   ├── cli.py                  # Typer CLI entry point
 │   ├── api/                    # FastAPI app + static UI
-│   └── env.py                  # Environment loader
-├── netbox-export/bin/          # Export scripts
-├── data/                       # Output directory (CSV/Excel)
+│   ├── agents/                 # AI agent definitions
+│   ├── bots/                   # Platform bot adapters
+│   │   ├── orchestrator.py     # Message routing & formatting
+│   │   ├── adapters/           # Slack, Telegram, Teams
+│   │   └── formatters.py       # Platform-specific formatting
+│   ├── skills/                 # Agent skill implementations
+│   │   ├── jira/               # Jira integration
+│   │   ├── confluence/         # Confluence + RAG search
+│   │   └── netbox/             # NetBox queries
+│   └── confluence_rag/         # Vector search with Qdrant
+├── mcp-server/                 # MCP server for Claude Desktop
+├── data/                       # Cache and export directory
 ├── docs/                       # Documentation
 └── scripts/                    # Utility scripts
 ```
 
 ## MCP Server
 
-This repository includes a [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that allows Claude to inspect your infrastructure.
+This repository includes a [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that allows Claude Desktop to inspect your infrastructure.
 
 ### Installation
 
-The MCP server is located in `mcp-server/`.
+```bash
+cd mcp-server
+npm install
+npm run install:mcp  # Updates claude_desktop_config.json
+```
 
-1.  **Install dependencies:**
-    ```bash
-    cd mcp-server
-    npm install
-    ```
-
-2.  **Install to Claude Desktop:**
-    ```bash
-    npm run install:mcp
-    ```
-    This automatically updates your `claude_desktop_config.json`.
-
-3.  **Restart Claude Desktop.**
-
-For more details, see [mcp-server/README.md](mcp-server/README.md).
+Restart Claude Desktop after installation. See [mcp-server/README.md](mcp-server/README.md) for details.
 
 ## Development
 
@@ -178,6 +275,35 @@ uv run mypy src
 # Run tests
 uv run pytest
 ```
+
+### Storage Backends
+
+Atlas supports two storage backends:
+
+- **SQLite** (default): Simple file-based storage
+- **MongoDB**: Recommended for high-concurrency bot deployments
+
+```bash
+# Enable MongoDB
+ATLAS_STORAGE_BACKEND=mongodb
+MONGODB_URI=mongodb://localhost:27017
+```
+
+## Environment Variables
+
+Key configuration options:
+
+| Variable | Description |
+|----------|-------------|
+| `ANTHROPIC_API_KEY` | API key for Claude AI models |
+| `NETBOX_URL`, `NETBOX_TOKEN` | NetBox API connection |
+| `ATLASSIAN_BASE_URL`, `ATLASSIAN_API_TOKEN` | Jira/Confluence API |
+| `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` | Slack bot credentials |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token |
+| `ATLAS_STORAGE_BACKEND` | `sqlite` or `mongodb` |
+| `QDRANT_URL` | Vector database for Confluence RAG |
+
+See [.env.example](.env.example) for the full list.
 
 ## License
 

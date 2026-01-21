@@ -39,7 +39,7 @@ class TriageAgent(BaseAgent):
                 prompt_file="triage.md",
                 model="claude-sonnet-4-5-20250929",
                 temperature=0.3,
-                tools=["jira", "confluence"],
+                tools=["jira", "confluence", "export"],
             )
         super().__init__(config, skills_registry)
 
@@ -112,7 +112,7 @@ class EngineerAgent(BaseAgent):
                 prompt_file="engineer.md",
                 model="claude-sonnet-4-5-20250929",
                 temperature=0.5,
-                tools=["jira", "netbox", "zabbix", "vcenter", "commvault"],
+                tools=["jira", "netbox", "zabbix", "vcenter", "commvault", "export"],
             )
         super().__init__(config, skills_registry)
 

@@ -39,6 +39,7 @@ class ChatEventType(str, Enum):
     TOOL_END = "tool_end"
     STATE_UPDATE = "state_update"
     ERROR = "error"
+    FILE = "file"  # For file exports (xlsx, csv, etc.)
 
 
 @dataclass
@@ -133,7 +134,7 @@ AVAILABLE_AGENTS: dict[str, AgentInfo] = {
         name="Triage Agent",
         role="Ticket categorization specialist",
         description="Analyzes incoming tickets, categorizes them, assesses complexity, and suggests assignees.",
-        skills=["jira", "confluence"],
+        skills=["jira", "confluence", "export"],
         default_model=AGENT_DEFAULTS["triage"]["model"],
         default_temperature=AGENT_DEFAULTS["triage"]["temperature"],
     ),
@@ -142,7 +143,7 @@ AVAILABLE_AGENTS: dict[str, AgentInfo] = {
         name="Engineer Agent",
         role="Technical investigation specialist",
         description="Investigates technical issues using infrastructure tools, analyzes systems, and proposes solutions.",
-        skills=["jira", "netbox", "zabbix", "vcenter", "commvault"],
+        skills=["jira", "netbox", "zabbix", "vcenter", "commvault", "export"],
         default_model=AGENT_DEFAULTS["engineer"]["model"],
         default_temperature=AGENT_DEFAULTS["engineer"]["temperature"],
     ),
@@ -324,9 +325,15 @@ class PlaygroundRuntime:
             return session
 
         # Try to load from database if available
-        if session_id and self.db_session:
+        # Note: For MongoDB, we check backend env var inside _load_session_from_db
+        import os
+        backend = os.getenv("ATLAS_STORAGE_BACKEND", "sqlite").lower()
+
+        if session_id and (self.db_session or backend == "mongodb"):
+            logger.debug(f"Attempting to load session {session_id} from DB (backend={backend})")
             db_session = self._load_session_from_db(session_id)
             if db_session:
+                logger.debug(f"Loaded session {session_id} with {len(db_session.messages)} messages")
                 # Update with latest info
                 if user_id and not db_session.user_id:
                     db_session.user_id = user_id
@@ -335,8 +342,11 @@ class PlaygroundRuntime:
                 if client and db_session.client == "web":
                     db_session.client = client
                 return db_session
+            else:
+                logger.debug(f"Session {session_id} not found in DB")
 
         # Create new session
+        logger.info(f"Creating new session: {session_id}, agent={agent_id}, client={client}")
         session = PlaygroundSession(
             session_id=session_id,
             agent_id=agent_id,
@@ -346,8 +356,9 @@ class PlaygroundRuntime:
         )
         self._sessions[session.session_id] = session
 
-        # Persist to database if available
-        if self.db_session:
+        # Persist to database if available (for MongoDB, always try)
+        if self.db_session or backend == "mongodb":
+            logger.debug(f"Saving new session {session.session_id} to DB")
             self._save_session_to_db(session)
 
         logger.info(
@@ -463,6 +474,7 @@ class PlaygroundRuntime:
         user_id: str | None = None,
         username: str | None = None,
         client: str | None = None,
+        platform_user_info: dict[str, Any] | None = None,
     ) -> AsyncIterator[ChatEvent]:
         """Send a message directly to an agent.
 
@@ -476,6 +488,7 @@ class PlaygroundRuntime:
             user_id: User ID for usage tracking
             username: Username for usage tracking
             client: Client identifier (web, telegram, slack, teams)
+            platform_user_info: Optional dict with platform user info (email, display_name)
 
         Yields:
             ChatEvent objects for real-time updates
@@ -524,9 +537,22 @@ class PlaygroundRuntime:
             if tools:
                 llm = llm.bind_tools(tools)
 
+            # Build system prompt with user context
+            system_prompt = agent._system_prompt
+            if platform_user_info:
+                user_context_parts = []
+                if platform_user_info.get("display_name"):
+                    user_context_parts.append(f"Name: {platform_user_info['display_name']}")
+                if platform_user_info.get("email"):
+                    user_context_parts.append(f"Email: {platform_user_info['email']}")
+                if user_context_parts:
+                    user_context = "\n".join(user_context_parts)
+                    system_prompt = f"{system_prompt}\n\n## Current User\nYou are chatting with:\n{user_context}\n\nWhen searching for tickets assigned to \"me\" or \"my tickets\", use this user's email address."
+                    logger.info(f"Added user context to system prompt: {user_context}")
+
             # Build messages for LLM
             langchain_messages = [
-                SystemMessage(content=agent._system_prompt),
+                SystemMessage(content=system_prompt),
                 *[
                     HumanMessage(content=m["content"]) if m["role"] == "user" else AIMessage(content=m["content"])
                     for m in session.messages[:-1]  # Exclude last message, we'll add it fresh
@@ -583,6 +609,19 @@ class PlaygroundRuntime:
                             },
                         )
 
+                        # Check if tool result is a file export
+                        if isinstance(tool_result, dict) and tool_result.get("file_type") and tool_result.get("file_path"):
+                            yield ChatEvent(
+                                type=ChatEventType.FILE,
+                                data={
+                                    "file_path": tool_result["file_path"],
+                                    "filename": tool_result.get("filename"),
+                                    "file_type": tool_result.get("file_type"),
+                                    "row_count": tool_result.get("row_count"),
+                                    "message": tool_result.get("message"),
+                                },
+                            )
+
                         langchain_messages.append(
                             ToolMessage(
                                 content=str(tool_result),
@@ -602,8 +641,10 @@ class PlaygroundRuntime:
             session.add_message("assistant", response_content)
             session.add_tokens(total_tokens, cost_usd)
 
-            # Save to DB if available
-            if self.db_session:
+            # Save to DB if available (for MongoDB, always try even without db_session)
+            import os
+            backend = os.getenv("ATLAS_STORAGE_BACKEND", "sqlite").lower()
+            if self.db_session or backend == "mongodb":
                 self._save_session_to_db(session)
 
             duration_ms = int((time.perf_counter() - start_time) * 1000)
@@ -624,8 +665,8 @@ class PlaygroundRuntime:
                 },
             )
 
-            # Record usage to database
-            if self.db_session:
+            # Record usage to database (for MongoDB, always try even without db_session)
+            if self.db_session or backend == "mongodb":
                 self._record_usage(
                     session=session,
                     model=model,
@@ -654,8 +695,10 @@ class PlaygroundRuntime:
             error_msg = str(e)
             logger.error(f"Playground chat error: {error_msg}", exc_info=True)
 
-            # Record error usage if we have a session
-            if self.db_session and session:
+            # Record error usage if we have a session (for MongoDB, always try)
+            import os
+            err_backend = os.getenv("ATLAS_STORAGE_BACKEND", "sqlite").lower()
+            if (self.db_session or err_backend == "mongodb") and session:
                 self._record_usage(
                     session=session,
                     model=config_override.get("model", AGENT_DEFAULTS.get(agent_id, {}).get("model", "unknown")) if config_override else AGENT_DEFAULTS.get(agent_id, {}).get("model", "unknown"),
@@ -818,7 +861,45 @@ class PlaygroundRuntime:
             logger.error(f"Failed to record usage: {e!s}", exc_info=True)
 
     def _load_session_from_db(self, session_id: str) -> PlaygroundSession | None:
-        """Load a session from the database."""
+        """Load a session from the database (MongoDB or SQLite)."""
+        import os
+
+        backend = os.getenv("ATLAS_STORAGE_BACKEND", "sqlite").lower()
+
+        if backend == "mongodb":
+            try:
+                from infrastructure_atlas.infrastructure.mongodb.client import get_mongodb_client
+
+                db = get_mongodb_client().atlas
+                collection = db["playground_sessions"]
+
+                doc = collection.find_one({"_id": session_id})
+                if not doc:
+                    return None
+
+                session = PlaygroundSession(
+                    session_id=doc["_id"],
+                    agent_id=doc.get("agent_id"),
+                    user_id=doc.get("user_id"),
+                    client=doc.get("client"),
+                )
+                session.messages = doc.get("messages", [])
+                session.state = doc.get("state", {})
+                session.config_override = doc.get("config_override", {})
+                session.total_tokens = doc.get("total_tokens", 0)
+                session.total_cost_usd = doc.get("total_cost_usd", 0.0)
+                session.created_at = doc.get("created_at")
+                session.updated_at = doc.get("updated_at")
+
+                self._sessions[session_id] = session
+                logger.debug(f"Loaded session {session_id} from MongoDB with {len(session.messages)} messages")
+                return session
+
+            except Exception as e:
+                logger.error(f"Failed to load session from MongoDB: {e!s}")
+                return None
+
+        # SQLite/SQLAlchemy fallback
         if not self.db_session:
             return None
 
@@ -872,9 +953,14 @@ class PlaygroundRuntime:
                     "updated_at": datetime.now(UTC),
                 }
 
-                collection.replace_one({"_id": session.session_id}, doc, upsert=True)
+                result = collection.replace_one({"_id": session.session_id}, doc, upsert=True)
+                logger.info(
+                    f"Saved session {session.session_id} to MongoDB: "
+                    f"messages={len(session.messages)}, matched={result.matched_count}, "
+                    f"modified={result.modified_count}, upserted={result.upserted_id is not None}"
+                )
             except Exception as e:
-                logger.error(f"Failed to save session to MongoDB: {e!s}")
+                logger.error(f"Failed to save session to MongoDB: {e!s}", exc_info=True)
         else:
             # SQLite fallback
             if not self.db_session:
