@@ -2,7 +2,16 @@
 
 from .admin import AdminBackupStatusTool, AdminConfigSurveyTool
 from .base import AtlasTool, ToolConfigurationError, ToolExecutionError
-from .confluence import ConfluenceSearchTool
+from .confluence import (
+    ConfluenceAppendToPageTool,
+    ConfluenceConvertMarkdownTool,
+    ConfluenceCreatePageTool,
+    ConfluenceDeletePageTool,
+    ConfluenceGetPageByTitleTool,
+    ConfluenceGetPageTool,
+    ConfluenceSearchTool,
+    ConfluenceUpdatePageTool,
+)
 from .draft_tickets import (
     DraftTicketCreateTool,
     DraftTicketGetTool,
@@ -19,7 +28,14 @@ __all__ = [
     "AdminBackupStatusTool",
     "AdminConfigSurveyTool",
     "AtlasTool",
+    "ConfluenceAppendToPageTool",
+    "ConfluenceConvertMarkdownTool",
+    "ConfluenceCreatePageTool",
+    "ConfluenceDeletePageTool",
+    "ConfluenceGetPageByTitleTool",
+    "ConfluenceGetPageTool",
     "ConfluenceSearchTool",
+    "ConfluenceUpdatePageTool",
     "DraftTicketCreateTool",
     "DraftTicketGetTool",
     "DraftTicketLinkJiraTool",

@@ -135,6 +135,183 @@ _TOOL_METADATA: dict[str, dict[str, Any]] = {
             "results[].url",
         ),
     },
+    "confluence_get_page_content": {
+        "agent": "confluence",
+        "name": "Get Page Content",
+        "summary": "Retrieve full page content by ID.",
+        "description": (
+            "Get a Confluence page with its full content in storage format. "
+            "Returns title, content, version info, space, and ancestor hierarchy."
+        ),
+        "tags": ("confluence", "knowledge", "atlassian"),
+        "ai_usage": "Use when you have a page ID and need to read its full content or check its version.",
+        "examples": (
+            "Get the content of Confluence page 123456.",
+            "Retrieve the full text of page ID 789012 to review before updating.",
+        ),
+        "sample": {"page_id": "123456"},
+        "response_fields": (
+            "page_id",
+            "title",
+            "content",
+            "version",
+            "url",
+        ),
+    },
+    "confluence_get_page_by_title": {
+        "agent": "confluence",
+        "name": "Find Page by Title",
+        "summary": "Find a page by exact title in a space.",
+        "description": (
+            "Search for a Confluence page by its exact title within a specific space. "
+            "Returns page ID, content, and URL if found."
+        ),
+        "tags": ("confluence", "knowledge", "atlassian"),
+        "ai_usage": "Use when you know the page title but not the ID, or to check if a page exists.",
+        "examples": (
+            "Find the 'SIP Trunk Failover Runbook' page in the DOCS space.",
+            "Check if a page titled 'Backup Procedures' exists in IT space.",
+        ),
+        "sample": {"space_key": "DOCS", "title": "SIP Trunk Failover Runbook"},
+        "response_fields": (
+            "found",
+            "page_id",
+            "title",
+            "content",
+            "url",
+        ),
+    },
+    "confluence_update_page": {
+        "agent": "confluence",
+        "name": "Update Page",
+        "summary": "Update an existing Confluence page.",
+        "description": (
+            "Update the content or title of an existing Confluence page. "
+            "Supports storage format (HTML) or markdown. Automatically handles version incrementing. "
+            "[DESTRUCTIVE: This action modifies data]"
+        ),
+        "tags": ("confluence", "knowledge", "atlassian", "write"),
+        "ai_usage": "Use to update existing documentation with new information or corrections.",
+        "examples": (
+            "Update page 123456 with new failover procedures.",
+            "Change the content of page 789012 to include the latest configuration.",
+        ),
+        "sample": {
+            "page_id": "123456",
+            "content": "<p>Updated content here</p>",
+            "content_format": "storage",
+            "version_comment": "Updated failover procedures",
+        },
+        "response_fields": (
+            "success",
+            "page_id",
+            "title",
+            "version",
+            "url",
+        ),
+    },
+    "confluence_create_page": {
+        "agent": "confluence",
+        "name": "Create Page",
+        "summary": "Create a new Confluence page.",
+        "description": (
+            "Create a new page in a Confluence space. Supports storage format (HTML) or markdown. "
+            "Can optionally set a parent page and add labels. "
+            "[DESTRUCTIVE: This action modifies data]"
+        ),
+        "tags": ("confluence", "knowledge", "atlassian", "write"),
+        "ai_usage": "Use to create new documentation pages, runbooks, or knowledge articles.",
+        "examples": (
+            "Create a new runbook page in the DOCS space.",
+            "Add a new troubleshooting guide under the parent page 123456.",
+        ),
+        "sample": {
+            "space_key": "DOCS",
+            "title": "New Runbook",
+            "content": "# Runbook Content\n\nProcedures here.",
+            "content_format": "markdown",
+            "labels": ["runbook", "operations"],
+        },
+        "response_fields": (
+            "success",
+            "page_id",
+            "title",
+            "version",
+            "url",
+        ),
+    },
+    "confluence_append_to_page": {
+        "agent": "confluence",
+        "name": "Append to Page",
+        "summary": "Append or prepend content to a page.",
+        "description": (
+            "Add content to the beginning or end of an existing Confluence page without replacing existing content. "
+            "Useful for adding updates, logs, or new sections. "
+            "[DESTRUCTIVE: This action modifies data]"
+        ),
+        "tags": ("confluence", "knowledge", "atlassian", "write"),
+        "ai_usage": "Use to add new information to a page while preserving existing content.",
+        "examples": (
+            "Append today's incident notes to the incident log page.",
+            "Add a new section at the beginning of the changelog page.",
+        ),
+        "sample": {
+            "page_id": "123456",
+            "content": "## New Update\n\nAdditional content.",
+            "content_format": "markdown",
+            "position": "end",
+        },
+        "response_fields": (
+            "success",
+            "page_id",
+            "title",
+            "version",
+            "position",
+            "url",
+        ),
+    },
+    "confluence_convert_markdown_to_storage": {
+        "agent": "confluence",
+        "name": "Convert Markdown",
+        "summary": "Convert markdown to Confluence storage format.",
+        "description": (
+            "Convert markdown content to Confluence storage format (XHTML). "
+            "Useful for previewing how markdown will render before creating or updating pages."
+        ),
+        "tags": ("confluence", "utility"),
+        "ai_usage": "Use to preview markdown conversion before creating/updating pages.",
+        "examples": (
+            "Convert my markdown runbook to Confluence format.",
+            "Preview how this markdown will look in Confluence.",
+        ),
+        "sample": {"markdown": "# Heading\n\n- Item 1\n- Item 2\n\n**Bold text**"},
+        "response_fields": (
+            "success",
+            "storage_format",
+        ),
+    },
+    "confluence_delete_page": {
+        "agent": "confluence",
+        "name": "Delete Page",
+        "summary": "Delete a Confluence page.",
+        "description": (
+            "Permanently delete a Confluence page by its ID. This action is irreversible. "
+            "[DESTRUCTIVE: This action modifies data] [REQUIRES CONFIRMATION]"
+        ),
+        "tags": ("confluence", "atlassian", "write", "dangerous"),
+        "ai_usage": "Use with extreme caution to remove obsolete or incorrect pages.",
+        "examples": (
+            "Delete the deprecated runbook page 123456.",
+            "Remove the test page that was created by mistake.",
+        ),
+        "sample": {"page_id": "123456"},
+        "response_fields": (
+            "success",
+            "deleted_page_id",
+            "deleted_title",
+            "space_key",
+        ),
+    },
     "export_run_job": {
         "agent": "export",
         "name": "Export Runner",

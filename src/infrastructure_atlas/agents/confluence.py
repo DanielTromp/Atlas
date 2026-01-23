@@ -17,7 +17,16 @@ from .utils import select_tools
 
 __all__ = ["CONFLUENCE_TOOL_KEYS", "build_confluence_agent"]
 
-CONFLUENCE_TOOL_KEYS: tuple[str, ...] = ("confluence_search",)
+CONFLUENCE_TOOL_KEYS: tuple[str, ...] = (
+    "confluence_search",
+    "confluence_get_page_content",
+    "confluence_get_page_by_title",
+    "confluence_update_page",
+    "confluence_create_page",
+    "confluence_append_to_page",
+    "confluence_convert_markdown_to_storage",
+    "confluence_delete_page",
+)
 
 
 def build_confluence_agent(
