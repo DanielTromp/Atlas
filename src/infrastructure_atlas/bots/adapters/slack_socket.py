@@ -89,8 +89,11 @@ class SlackSocketModeBot:
         @app.event("message")
         async def handle_message(event: dict[str, Any], say: Any) -> None:
             """Handle direct messages to the bot."""
+            logger.debug(f"Received message event: channel_type={event.get('channel_type')}, user={event.get('user')}, text={event.get('text', '')[:50]}")
+
             # Only handle DMs (channel_type == 'im')
             if event.get("channel_type") != "im":
+                logger.debug(f"Ignoring non-DM message (channel_type={event.get('channel_type')})")
                 return
 
             await self._process_event(event, say, "message")
@@ -145,6 +148,8 @@ class SlackSocketModeBot:
             say: Function to send messages back
             event_type: Type of event ("message" or "mention")
         """
+        logger.info(f"Processing Slack {event_type} event: user={event.get('user')}, text={event.get('text', '')[:50]}...")
+
         try:
             # Create fresh database session for each event
             with get_bot_session() as db:

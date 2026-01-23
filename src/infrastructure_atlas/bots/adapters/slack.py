@@ -561,6 +561,7 @@ class SlackWebhookHandler:
                 elif response.type == BotResponseType.TEXT:
                     # Always use Slack formatter for proper mrkdwn formatting
                     raw_content = response.content or ""
+                    logger.info(f"Received TEXT response from orchestrator, content length: {len(raw_content)}")
 
                     formatted = self.formatter.format_agent_response(
                         agent_id=response.agent_id or "assistant",
@@ -570,11 +571,16 @@ class SlackWebhookHandler:
                     # Get content as string for fallback text
                     content_text = raw_content if isinstance(raw_content, str) else str(raw_content)
                     blocks = formatted.content.get("blocks", []) if isinstance(formatted.content, dict) else []
-                    await say(
-                        blocks=blocks,
-                        text=content_text[:150],  # Fallback text
-                        thread_ts=reply_ts,
-                    )
+                    logger.info(f"Sending Slack message with {len(blocks)} blocks")
+                    try:
+                        await say(
+                            blocks=blocks,
+                            text=content_text[:150],  # Fallback text
+                            thread_ts=reply_ts,
+                        )
+                        logger.info("Slack message sent successfully")
+                    except Exception as e:
+                        logger.error(f"Failed to send Slack message: {e}", exc_info=True)
 
                 elif response.type == BotResponseType.ERROR:
                     error_msg = response.content if isinstance(response.content, str) else str(response.content or "An error occurred")

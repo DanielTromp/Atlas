@@ -302,7 +302,15 @@ class AnthropicProvider(AIProvider):
                         retry_after=retry_after,
                     )
 
-                response.raise_for_status()
+                # Check for errors before iterating - read body to get error message
+                if response.status_code >= 400:
+                    await response.aread()
+                    error_body = response.text
+                    raise ProviderError(
+                        f"Anthropic API error: {error_body}",
+                        provider=self.provider_name,
+                        status_code=response.status_code,
+                    )
 
                 async for line in response.aiter_lines():
                     if not line or not line.startswith("data:"):
@@ -382,8 +390,14 @@ class AnthropicProvider(AIProvider):
                         )
 
         except httpx.HTTPStatusError as e:
+            # For streaming responses, we need to read the body before accessing text
+            try:
+                await e.response.aread()
+                error_body = e.response.text
+            except Exception:
+                error_body = f"HTTP {e.response.status_code}"
             raise ProviderError(
-                f"Anthropic streaming error: {e.response.text}",
+                f"Anthropic streaming error: {error_body}",
                 provider=self.provider_name,
                 status_code=e.response.status_code,
             ) from e

@@ -975,42 +975,6 @@ Returns full page content (not just snippets) from the most relevant documentati
         },
         category="documentation",
     ),
-    # Export tools
-    ToolDefinition(
-        name="export_to_xlsx",
-        description="""Export data to an Excel (.xlsx) file and upload it for download.
-Use this tool when the user wants to:
-- Export tickets, search results, or any data to a spreadsheet
-- Download data as Excel for further analysis
-- Create a formatted spreadsheet from query results
-
-The file will be automatically uploaded to the chat for the user to download.""",
-        parameters={
-            "type": "object",
-            "properties": {
-                "data": {
-                    "type": "array",
-                    "items": {"type": "object"},
-                    "description": "List of objects to export (each object becomes a row)",
-                },
-                "filename": {
-                    "type": "string",
-                    "description": "Base filename for the export (without extension)",
-                },
-                "sheet_name": {
-                    "type": "string",
-                    "description": "Name for the worksheet",
-                    "default": "Data",
-                },
-                "title": {
-                    "type": "string",
-                    "description": "Optional title row at the top of the spreadsheet",
-                },
-            },
-            "required": ["data", "filename"],
-        },
-        category="export",
-    ),
 ]
 
 

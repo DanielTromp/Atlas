@@ -250,6 +250,7 @@ class BotOrchestrator:
 
                 elif event.type == ChatEventType.MESSAGE_DELTA:
                     response_text = event.data.get("content", "")
+                    logger.info(f"MESSAGE_DELTA received, content length: {len(response_text)}")
 
                 elif event.type == ChatEventType.MESSAGE_END:
                     input_tokens = event.data.get("input_tokens", 0)
@@ -274,6 +275,7 @@ class BotOrchestrator:
                     )
 
             # Format final response
+            logger.info(f"Bot processing complete, response_text length: {len(response_text)}, has_error: {bool(error_msg)}")
             if response_text:
                 formatted = formatter.format_agent_response(
                     agent_id=agent_id or self.DEFAULT_AGENT,

@@ -120,9 +120,9 @@ MODELS = {
 
 # Default model for each agent type
 AGENT_DEFAULTS = {
-    "triage": {"model": MODELS["haiku"], "temperature": 0.3},
-    "engineer": {"model": MODELS["sonnet"], "temperature": 0.5},
-    "reviewer": {"model": MODELS["haiku"], "temperature": 0.2},
+    "triage": {"model": MODELS["haiku"], "temperature": 0.3, "max_tokens": 4096},
+    "engineer": {"model": MODELS["sonnet"], "temperature": 0.5, "max_tokens": 16384},
+    "reviewer": {"model": MODELS["haiku"], "temperature": 0.2, "max_tokens": 4096},
 }
 
 # ============================================================================
@@ -143,7 +143,7 @@ AVAILABLE_AGENTS: dict[str, AgentInfo] = {
         name="Engineer Agent",
         role="Technical investigation specialist",
         description="Investigates technical issues using infrastructure tools, analyzes systems, and proposes solutions.",
-        skills=["jira", "netbox", "zabbix", "vcenter", "commvault", "export"],
+        skills=["jira", "netbox", "zabbix", "vcenter", "confluence", "export"],
         default_model=AGENT_DEFAULTS["engineer"]["model"],
         default_temperature=AGENT_DEFAULTS["engineer"]["temperature"],
     ),
@@ -443,7 +443,8 @@ class PlaygroundRuntime:
             if config_override
             else agent_info.default_temperature
         )
-        max_tokens = config_override.get("max_tokens", 4096) if config_override else 4096
+        default_max_tokens = AGENT_DEFAULTS.get(agent_id, {}).get("max_tokens", 4096)
+        max_tokens = config_override.get("max_tokens", default_max_tokens) if config_override else default_max_tokens
 
         # Filter skills if specified
         skills = agent_info.skills
@@ -649,6 +650,7 @@ class PlaygroundRuntime:
 
             duration_ms = int((time.perf_counter() - start_time) * 1000)
 
+            logger.info(f"Yielding MESSAGE_DELTA with content length: {len(response_content)}")
             yield ChatEvent(
                 type=ChatEventType.MESSAGE_DELTA,
                 data={"content": response_content},
