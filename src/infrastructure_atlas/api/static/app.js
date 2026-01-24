@@ -12456,7 +12456,9 @@
         console.warn('Failed to load models for provider:', providerName);
         return;
       }
-      const models = await res.json();
+      const data = await res.json();
+      // API returns {"provider": "...", "models": [...]}
+      const models = Array.isArray(data) ? data : (data.models || []);
 
       // Clear existing options except "Default"
       $chatModel.innerHTML = '<option value="">Default</option>';
@@ -12465,8 +12467,8 @@
       if (Array.isArray(models)) {
         models.forEach(model => {
           const opt = document.createElement('option');
-          opt.value = model.id || model.name || '';
-          opt.textContent = model.name || model.id || '';
+          opt.value = model.id || model.model_id || model.name || '';
+          opt.textContent = model.display_name || model.name || model.id || model.model_id || '';
           if (model.description) {
             opt.title = model.description;
           }
