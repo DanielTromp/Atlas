@@ -40,24 +40,31 @@ class OpenRouterProvider(AIProvider):
     BASE_URL = "https://openrouter.ai/api/v1"
 
     # Popular models available on OpenRouter
+    # See https://openrouter.ai/models for full list
     MODELS = {
         # OpenAI models
-        "openai/gpt-5": {"context_window": 500000, "max_output": 32768},
-        "openai/gpt-5-mini": {"context_window": 400000, "max_output": 32768},
-        "openai/gpt-5-nano": {"context_window": 200000, "max_output": 16384},
+        "openai/gpt-4.1": {"context_window": 1047576, "max_output": 32768},
+        "openai/gpt-4.1-mini": {"context_window": 1047576, "max_output": 32768},
+        "openai/gpt-4.1-nano": {"context_window": 1047576, "max_output": 32768},
+        "openai/o3": {"context_window": 200000, "max_output": 100000},
+        "openai/o3-mini": {"context_window": 200000, "max_output": 100000},
+        "openai/o4-mini": {"context_window": 200000, "max_output": 100000},
         # Anthropic models
-        "anthropic/claude-opus-4.5": {"context_window": 200000, "max_output": 16384},
-        "anthropic/claude-sonnet-4.5": {"context_window": 200000, "max_output": 16384},
-        "anthropic/claude-haiku-4.5": {"context_window": 200000, "max_output": 16384},
+        "anthropic/claude-opus-4": {"context_window": 200000, "max_output": 32000},
+        "anthropic/claude-sonnet-4": {"context_window": 200000, "max_output": 64000},
+        "anthropic/claude-sonnet-4.5": {"context_window": 200000, "max_output": 64000},
+        "anthropic/claude-haiku-3.5": {"context_window": 200000, "max_output": 8192},
         # Google models
-        "google/gemini-3-pro": {"context_window": 2097152, "max_output": 16384},
-        "google/gemini-3-flash": {"context_window": 1048576, "max_output": 16384},
+        "google/gemini-2.5-pro": {"context_window": 1048576, "max_output": 65536},
+        "google/gemini-2.5-flash": {"context_window": 1048576, "max_output": 65536},
+        "google/gemini-3-pro-preview": {"context_window": 1048576, "max_output": 65536},
+        "google/gemini-3-flash-preview": {"context_window": 1048576, "max_output": 65536},
         # X.AI models
-        "x-ai/grok-4": {"context_window": 131072, "max_output": 16384},
-        "x-ai/grok-4.1-fast": {"context_window": 131072, "max_output": 16384},
+        "x-ai/grok-3": {"context_window": 131072, "max_output": 16384},
+        "x-ai/grok-3-mini": {"context_window": 131072, "max_output": 16384},
         # DeepSeek models
-        "deepseek/deepseek-chat": {"context_window": 64000, "max_output": 8192},
-        "deepseek/deepseek-reasoner": {"context_window": 64000, "max_output": 8192},
+        "deepseek/deepseek-chat-v3-0324": {"context_window": 163840, "max_output": 16384},
+        "deepseek/deepseek-r1": {"context_window": 163840, "max_output": 16384},
     }
 
     def __init__(self, config: ProviderConfig):
@@ -347,7 +354,7 @@ class OpenRouterProvider(AIProvider):
         ]
 
     def _get_fallback_model(self) -> str:
-        return "openai/gpt-5-mini"
+        return "openai/gpt-4.1-mini"
 
     async def close(self) -> None:
         if self._client:
