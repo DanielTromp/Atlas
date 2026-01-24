@@ -164,6 +164,10 @@ Key variables for container deployment:
 # Database (auto-configured in docker-compose)
 MONGODB_URI=mongodb://mongodb:27017
 
+# Session secret - REQUIRED for multi-worker deployments
+# Generate with: python -c "import secrets; print(secrets.token_hex(32))"
+ATLAS_UI_SECRET=your-64-char-hex-secret
+
 # API Authentication
 ATLAS_API_TOKEN=your-secure-token
 ATLAS_UI_PASSWORD=your-secure-password
@@ -176,6 +180,8 @@ ATLAS_DEFAULT_ADMIN_PASSWORD=your-admin-password
 ATLAS_SKIP_DB_HEALTH_CHECK=1
 ATLAS_LAZY_AI_IMPORTS=1
 ```
+
+**Important:** `ATLAS_UI_SECRET` must be set for multi-worker deployments. Without it, each worker generates a random session secret, causing sessions to break when requests hit different workers.
 
 ### Custom Port
 
