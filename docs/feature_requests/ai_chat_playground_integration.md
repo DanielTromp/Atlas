@@ -1,167 +1,208 @@
-# Feature Request: Bridge AI Chat and Playground Systems
+# Feature Request: Unify AI Chat with Playground Agents
 
 **Created:** 2026-01-24
-**Priority:** Medium
-**Status:** Proposed
+**Updated:** 2026-01-24
+**Priority:** High
+**Status:** Open
 
 ## Summary
 
-AI Chat and Playground are currently separate systems with independent tool/agent architectures. Users expect Playground agents (like `@triage`, `@ops`) to be accessible from AI Chat, but they operate on different underlying systems.
+Replace AI Chat's tool-based approach with Playground's agent-based approach. Users should get the full power of Playground agents (@ops, @triage, etc.) directly in AI Chat, with the ability to select providers and models.
+
+## Requirements
+
+1. **Default agent**: `@ops` (fast, operations-focused)
+2. **Provider selection**: Keep current provider dropdown (Anthropic, OpenAI, Gemini, etc.)
+3. **Model dropdown**: Show all models available from the selected provider
+4. **Agent selection**: Allow switching between @ops, @triage, @engineer, etc.
 
 ## Current Architecture
 
 ### AI Chat (`/api/ai/*`)
 
-- **Location:** `src/infrastructure_atlas/ai/`
 - **Providers:** OpenAI, Azure OpenAI, Anthropic, Gemini, OpenRouter, Claude Code
-- **Tool System:** `ai/tools/definitions.py` - 40+ tools defined as `ToolDefinition` objects
-- **Execution:** HTTP API calls via `ToolRegistry._api_mappings`
-- **Roles:** `triage`, `engineer`, `general` (filter available tools)
-
-**Tools include:**
-- Infrastructure: `netbox_search`, `atlas_host_info`, `atlas_host_context`
-- Monitoring: `zabbix_alerts`, `zabbix_host_search`, `commvault_backup_status`
-- Ticketing: `jira_search`, `jira_create_issue`, `jira_update_issue`, `jira_add_comment`
-- Documentation: `confluence_search`, `search_confluence_docs`, `confluence_create_page`
-- Virtualization: `vcenter_list_instances`, `vcenter_get_vms`
-- Export: `export_to_xlsx`
+- **Tool System:** 40+ tools defined as HTTP API calls
+- **Execution:** Direct LLM calls with tool definitions
+- **Roles:** `triage`, `engineer`, `general` (filter tools, not true agents)
 
 ### Playground (`/api/playground/*`)
 
-- **Location:** `src/infrastructure_atlas/agents/playground/`
-- **Backend:** LangChain with ReAct pattern
-- **Agents:** `@triage`, `@ops`, and others defined in `AVAILABLE_AGENTS`
-- **Tool System:** Skills via `SkillsRegistry` in `src/infrastructure_atlas/skills/`
-- **Execution:** Direct Python function calls with autonomous reasoning
+- **Backend:** LangChain with ChatAnthropic
+- **Agents:** @ops, @triage, @engineer (true ReAct agents)
+- **Skills:** Full skill integration (jira, netbox, zabbix, vcenter, confluence, export)
+- **Execution:** Agent loop with reasoning
 
-**Agents include:**
-- `@triage` - Fast host lookups and issue triage
-- `@ops` - Operations-focused with expanded tool access
+## Proposed Changes
 
-## The Gap
+### 1. Add Model Lists to Providers
 
-| Aspect | AI Chat | Playground |
-|--------|---------|------------|
-| Architecture | Multi-provider, stateless tools | LangChain, stateful agents |
-| Tool Definition | OpenAI function format | LangChain Tool objects |
-| Execution Model | Request → Tool → Response | ReAct loop with reasoning |
-| User Expectation | "Use @triage agent" | Works natively |
-
-**User Impact:** When users try to invoke Playground agents from AI Chat (e.g., "use @triage to check server X"), AI Chat doesn't have access to these agents. It has similar tools but not the same agent abstraction.
-
-## Proposed Solutions
-
-### Option 1: Expose Playground Agents as AI Chat Tools (Recommended)
-
-Create a bridge that exposes Playground agents as callable tools in AI Chat:
+Each provider should expose its available models:
 
 ```python
-# ai/tools/definitions.py
-ToolDefinition(
-    name="invoke_agent",
-    description="Invoke a specialized agent for complex tasks",
-    parameters={
-        "type": "object",
-        "properties": {
-            "agent": {
-                "type": "string",
-                "enum": ["triage", "ops"],
-                "description": "Agent to invoke"
-            },
-            "task": {
-                "type": "string",
-                "description": "Task description for the agent"
-            }
-        },
-        "required": ["agent", "task"]
-    }
-)
+# Already exists in AnthropicProvider
+MODELS = {
+    "claude-opus-4-5-20251101": {"context_window": 200000, "max_output": 16384},
+    "claude-sonnet-4-5-20250929": {"context_window": 200000, "max_output": 16384},
+    "claude-haiku-4-5-20251001": {"context_window": 200000, "max_output": 16384},
+}
+
+def list_models(self) -> list[dict[str, Any]]:
+    """List available models."""
+    return [{"id": model_id, "name": model_id, ...} for model_id in self.MODELS]
 ```
 
-**Pros:**
-- Minimal changes to AI Chat
-- Preserves Playground agent capabilities
-- Users can explicitly invoke agents
+**Action:** Add MODELS dict to all providers:
+- `OpenAIProvider` - gpt-4o, gpt-4o-mini, gpt-4-turbo, etc.
+- `GeminiProvider` - gemini-1.5-pro, gemini-1.5-flash, etc.
+- `OpenRouterProvider` - Dynamic from API or common models
+- `AzureOpenAIProvider` - From deployment configuration
 
-**Cons:**
-- Adds latency (nested agent calls)
-- Token usage increases
-
-### Option 2: Unify Tool Systems
-
-Refactor both systems to share a common tool registry:
+### 2. API Endpoint for Provider Models
 
 ```python
-# infrastructure/tools/unified_registry.py
-class UnifiedToolRegistry:
-    """Shared registry for both AI Chat and Playground"""
-
-    def register_tool(self, tool: UnifiedTool): ...
-    def get_tools_for_provider(self, provider: str): ...
-    def get_tools_for_langchain(self): ...
+# interfaces/api/routes/ai_chat.py
+@router.get("/providers/{provider}/models")
+async def get_provider_models(provider: str):
+    """Get available models for a provider."""
+    registry = get_provider_registry()
+    p = registry.get_provider(provider)
+    return {"models": p.list_models()}
 ```
 
-**Pros:**
-- Single source of truth
-- Consistent capabilities across systems
-- Easier maintenance
+### 3. Make Playground Runtime Provider-Agnostic
 
-**Cons:**
-- Significant refactoring effort
-- Risk of breaking existing functionality
-
-### Option 3: Agent Routing in AI Chat
-
-Add agent detection to AI Chat that routes to Playground when needed:
+Currently Playground hardcodes ChatAnthropic. Make it use the selected provider:
 
 ```python
-# In chat completion handler
-if message.startswith("@") or "use agent" in message.lower():
-    # Route to Playground agent
-    return await invoke_playground_agent(agent_name, message)
+# agents/playground.py
+class PlaygroundRuntime:
+    def __init__(
+        self,
+        agent_id: str = "ops",
+        provider: str = "anthropic",  # NEW
+        model: str | None = None,     # NEW - if None, use agent default
+        ...
+    ):
+        self.provider = provider
+        self.model = model or self._get_agent_default_model(agent_id)
 ```
 
-**Pros:**
-- Seamless user experience
-- No explicit tool invocation needed
+### 4. Update AI Chat to Use Playground
 
-**Cons:**
-- Complex routing logic
-- Potential for misrouting
+Replace AI Chat's direct LLM calls with PlaygroundRuntime:
 
-## Implementation Plan (Option 1)
+```python
+# interfaces/api/routes/ai_chat.py
+@router.post("/chat")
+async def chat_completion(request: ChatRequest):
+    runtime = PlaygroundRuntime(
+        agent_id=request.agent or "ops",
+        provider=request.provider,
+        model=request.model,
+        skills_registry=get_skills_registry(),
+    )
 
-1. **Create Agent Bridge Tool** - New tool in `ai/tools/definitions.py`
-2. **Add API Endpoint** - `/api/playground/invoke` that accepts agent name and task
-3. **Register Handler** - In `ToolRegistry._api_mappings`
-4. **Update System Prompt** - Inform AI about available agents
-5. **Test Integration** - Verify agent invocation from AI Chat
+    async for event in runtime.chat(request.messages[-1].content, session_id):
+        yield event.to_sse()
+```
 
-### Estimated Effort
+### 5. Frontend Changes
 
-- Option 1: ~2-3 days
-- Option 2: ~1-2 weeks
-- Option 3: ~3-5 days
+```javascript
+// Update AI Chat UI
+const providerSelect = document.getElementById('ai-provider');
+const modelSelect = document.getElementById('ai-model');
+const agentSelect = document.getElementById('ai-agent');  // NEW
 
-## Acceptance Criteria
+// When provider changes, fetch models
+providerSelect.addEventListener('change', async () => {
+    const models = await fetch(`/ai/providers/${providerSelect.value}/models`);
+    modelSelect.innerHTML = models.map(m => `<option value="${m.id}">${m.name}</option>`);
+});
 
-- [ ] Users can invoke Playground agents from AI Chat
-- [ ] Agent responses are properly streamed back
-- [ ] Token usage is tracked for nested calls
-- [ ] Error handling covers agent failures
-- [ ] Documentation updated
+// Agent options
+const AGENTS = [
+    { id: 'ops', name: '@ops', description: 'Fast operations queries' },
+    { id: 'triage', name: '@triage', description: 'Ticket triage and analysis' },
+    { id: 'engineer', name: '@engineer', description: 'Deep technical investigation' },
+];
+```
+
+## Provider Model Lists
+
+### Anthropic (Already Done)
+```python
+MODELS = {
+    "claude-opus-4-5-20251101": {...},
+    "claude-sonnet-4-5-20250929": {...},
+    "claude-haiku-4-5-20251001": {...},
+}
+```
+
+### OpenAI (To Add)
+```python
+MODELS = {
+    "gpt-4o": {"context_window": 128000},
+    "gpt-4o-mini": {"context_window": 128000},
+    "gpt-4-turbo": {"context_window": 128000},
+    "gpt-4": {"context_window": 8192},
+    "gpt-3.5-turbo": {"context_window": 16385},
+}
+```
+
+### Gemini (To Add)
+```python
+MODELS = {
+    "gemini-1.5-pro": {"context_window": 1000000},
+    "gemini-1.5-flash": {"context_window": 1000000},
+    "gemini-1.0-pro": {"context_window": 32000},
+}
+```
+
+## Implementation Plan
+
+### Phase 1: Add Model Lists to Providers
+1. Add `MODELS` dict to each provider
+2. Ensure `list_models()` method exists on all providers
+3. Add `/ai/providers/{provider}/models` endpoint
+
+### Phase 2: Make Playground Provider-Agnostic
+1. Abstract LLM instantiation in PlaygroundRuntime
+2. Add provider/model parameters
+3. Support LangChain wrappers for each provider (langchain-openai, langchain-google-genai, etc.)
+
+### Phase 3: Update AI Chat API
+1. Add `agent` parameter to chat endpoint
+2. Route to PlaygroundRuntime instead of direct LLM
+3. Maintain streaming support
+
+### Phase 4: Update Frontend
+1. Add model dropdown that updates on provider change
+2. Add agent selector (default: @ops)
+3. Update chat request to include agent/provider/model
+
+## Benefits
+
+- **Unified experience**: Same agents in Playground and AI Chat
+- **Full skills access**: All tools available through skills
+- **Provider flexibility**: Use any configured provider
+- **Model selection**: Choose appropriate model for task
+- **Consistent behavior**: No more confusion about tools vs skills
 
 ## Related Files
 
-- `src/infrastructure_atlas/ai/tools/definitions.py` - AI Chat tool definitions
-- `src/infrastructure_atlas/ai/tools/registry.py` - Tool execution registry
-- `src/infrastructure_atlas/agents/playground/` - Playground agents
-- `src/infrastructure_atlas/skills/` - Skills registry
-- `src/infrastructure_atlas/interfaces/api/routes/ai_chat.py` - AI Chat API
-- `src/infrastructure_atlas/interfaces/api/routes/playground.py` - Playground API
+- `src/infrastructure_atlas/ai/providers/*.py` - Add MODELS to each
+- `src/infrastructure_atlas/ai/providers/registry.py` - Provider management
+- `src/infrastructure_atlas/agents/playground.py` - Make provider-agnostic
+- `src/infrastructure_atlas/interfaces/api/routes/ai_chat.py` - Route to Playground
+- `src/infrastructure_atlas/api/static/app.js` - Frontend updates
 
-## References
+## Acceptance Criteria
 
-- AI Chat roles: `AGENT_ROLES` in `ai/tools/definitions.py`
-- Playground agents: `AVAILABLE_AGENTS` in `agents/playground/`
-- Tool execution: `ToolRegistry.execute()` in `ai/tools/registry.py`
+- [ ] All providers expose list of available models
+- [ ] `/ai/providers/{provider}/models` endpoint works
+- [ ] AI Chat uses PlaygroundRuntime with selected agent
+- [ ] Default agent is @ops
+- [ ] Model dropdown updates when provider changes
+- [ ] Streaming continues to work
+- [ ] Usage tracking preserved
