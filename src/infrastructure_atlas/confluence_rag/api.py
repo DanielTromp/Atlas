@@ -1,3 +1,10 @@
+"""Confluence RAG API routes with lazy imports for fast startup.
+
+Heavy dependencies (qdrant-client, sentence-transformers, etc.) are loaded
+lazily when first needed, allowing routes to be registered without the
+full import cost at startup.
+"""
+
 import asyncio
 import json
 import logging
@@ -7,22 +14,18 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from infrastructure_atlas.confluence_rag.chunker import ConfluenceChunker
-from infrastructure_atlas.confluence_rag.citations import CitationExtractor
+# Light imports only - heavy dependencies loaded lazily
 from infrastructure_atlas.confluence_rag.config import ConfluenceRAGSettings
-from infrastructure_atlas.confluence_rag.confluence_client import ConfluenceClient
-from infrastructure_atlas.confluence_rag.embeddings import get_embedding_pipeline
 from infrastructure_atlas.confluence_rag.models import SearchResponse
 
-# Qdrant-based implementations
-from infrastructure_atlas.confluence_rag.qdrant_search import QdrantSearchEngine, SearchConfig
-from infrastructure_atlas.confluence_rag.qdrant_store import QdrantStore
-from infrastructure_atlas.confluence_rag.qdrant_sync import QdrantSyncEngine
+if TYPE_CHECKING:
+    from infrastructure_atlas.confluence_rag.qdrant_search import QdrantSearchEngine, SearchConfig
+    from infrastructure_atlas.confluence_rag.qdrant_store import QdrantStore
 
 logger = logging.getLogger(__name__)
 
@@ -269,28 +272,35 @@ class GuideRequest(BaseModel):
 
 
 # Global singletons (cached)
-_settings = None
-_qdrant_store = None
-_search_engine = None
+_settings: ConfluenceRAGSettings | None = None
+_qdrant_store: Any = None  # QdrantStore, lazy loaded
+_search_engine: Any = None  # QdrantSearchEngine, lazy loaded
 
 
-def get_settings():
+def get_settings() -> ConfluenceRAGSettings:
     global _settings
     if not _settings:
         _settings = ConfluenceRAGSettings()
     return _settings
 
 
-def get_qdrant_store():
+def get_qdrant_store() -> "QdrantStore":
+    """Get or create the Qdrant store (lazy loaded)."""
     global _qdrant_store
     if not _qdrant_store:
+        from infrastructure_atlas.confluence_rag.qdrant_store import QdrantStore
         _qdrant_store = QdrantStore()
     return _qdrant_store
 
 
-def get_search_engine():
+def get_search_engine() -> "QdrantSearchEngine":
+    """Get or create the search engine (lazy loaded)."""
     global _search_engine
     if not _search_engine:
+        from infrastructure_atlas.confluence_rag.citations import CitationExtractor
+        from infrastructure_atlas.confluence_rag.embeddings import get_embedding_pipeline
+        from infrastructure_atlas.confluence_rag.qdrant_search import QdrantSearchEngine
+
         store = get_qdrant_store()
         settings = get_settings()
         embeddings = get_embedding_pipeline(provider=settings.embedding_provider)
@@ -300,7 +310,15 @@ def get_search_engine():
 
 
 def get_sync_engine():
-    """Create a new sync engine instance (not cached due to client lifecycle)."""
+    """Create a new sync engine instance (not cached due to client lifecycle).
+
+    Lazy loads heavy dependencies on first call.
+    """
+    from infrastructure_atlas.confluence_rag.chunker import ConfluenceChunker
+    from infrastructure_atlas.confluence_rag.confluence_client import ConfluenceClient
+    from infrastructure_atlas.confluence_rag.embeddings import get_embedding_pipeline
+    from infrastructure_atlas.confluence_rag.qdrant_sync import QdrantSyncEngine
+
     settings = get_settings()
     store = get_qdrant_store()
     confluence = ConfluenceClient(
@@ -318,6 +336,8 @@ async def search_confluence(request: SearchRequest):
     """
     Search the Confluence RAG cache using Qdrant vector search.
     """
+    from infrastructure_atlas.confluence_rag.qdrant_search import SearchConfig
+
     start_time = time.time()
     engine = get_search_engine()
 
@@ -567,6 +587,8 @@ async def generate_guide_from_docs(request: GuideRequest):
     Returns:
         Full page content from the most relevant documentation pages.
     """
+    from infrastructure_atlas.confluence_rag.qdrant_search import SearchConfig
+
     try:
         engine = get_search_engine()
     except Exception as e:

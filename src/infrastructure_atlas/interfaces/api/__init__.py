@@ -129,23 +129,23 @@ def bootstrap_api() -> APIRouter:
         logger.info("Puppet module is disabled, skipping routes")
 
     # Confluence RAG routes (Qdrant-based semantic search)
-    # These imports are heavy (transformers, docling, qdrant) - skip if ATLAS_LAZY_AI_IMPORTS=1
+    # Routes use lazy imports internally for heavy dependencies (qdrant-client, transformers)
     import os
-    if os.getenv("ATLAS_LAZY_AI_IMPORTS", "").lower() not in ("1", "true", "yes"):
-        try:
-            from infrastructure_atlas.confluence_rag.api import router as rag_router
-            from infrastructure_atlas.confluence_rag.api import warmup_search_engine
+    try:
+        from infrastructure_atlas.confluence_rag.api import router as rag_router
+        from infrastructure_atlas.confluence_rag.api import warmup_search_engine
 
-            router.include_router(rag_router)
-            logger.info("Enabled Confluence RAG API routes")
+        router.include_router(rag_router)
+        logger.info("Enabled Confluence RAG API routes")
 
-            # Warmup the embedding model at startup (skip if disabled)
-            if os.getenv("ATLAS_RAG_WARMUP", "0").lower() in ("1", "true", "yes"):
-                warmup_search_engine()
-        except Exception as e:
-            logger.warning(f"Confluence RAG routes not available: {e}")
-    else:
-        logger.info("Skipping Confluence RAG routes (ATLAS_LAZY_AI_IMPORTS=1)")
+        # Warmup the embedding model at startup (skip if lazy imports enabled or warmup disabled)
+        if (
+            os.getenv("ATLAS_LAZY_AI_IMPORTS", "").lower() not in ("1", "true", "yes")
+            and os.getenv("ATLAS_RAG_WARMUP", "0").lower() in ("1", "true", "yes")
+        ):
+            warmup_search_engine()
+    except Exception as e:
+        logger.warning(f"Confluence RAG routes not available: {e}")
 
     # Atlas Agents Platform - Workflow routes
     try:
