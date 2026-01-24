@@ -183,6 +183,7 @@
   const $pageSuggestions = document.getElementById("page-suggestions");
   const $pageSuggestionDetail = document.getElementById("page-suggestion-detail");
   const $pageAdmin = document.getElementById("page-admin");
+  const $pageAiActivity = document.getElementById("page-ai-activity");
   const $pageDrafts = document.getElementById("page-drafts");
   const $pagePlayground = document.getElementById("page-playground");
   // Tasks elements
@@ -4462,6 +4463,7 @@
       'suggestion-detail': $pageSuggestionDetail,
       account: $pageAccount,
       admin: $pageAdmin,
+      'ai-activity': $pageAiActivity,
     };
     for (const k of Object.keys(map)) {
       if (!map[k]) continue;
@@ -4489,6 +4491,8 @@
         label = 'Suggestions';
       } else if (p === 'account') {
         label = 'Account';
+      } else if (p === 'ai-activity') {
+        label = 'API Activity';
       } else {
         const activeBtn = $pages?.querySelector(`button.tab[data-page="${p}"]`);
         if (activeBtn) label = activeBtn.textContent.trim() || label;
@@ -4573,6 +4577,16 @@
         loadAdminUsers($adminUserIncludeInactive?.checked).catch(() => {});
         loadAdminGlobalApiKeys().catch(() => {});
       }
+    } else if (p === 'ai-activity') {
+      // AI Activity is shown within the admin page - redirect there with ai-activity tab
+      loadAdminSettings(adminState.settings.length === 0).catch(() => {});
+      setAdminTab('ai-activity');
+      loadAIActivityLogs().catch(() => {});
+      // Show admin page instead (ai-activity is a tab within admin)
+      page = 'admin';
+      const adminEl = map['admin'];
+      if (adminEl) adminEl.removeAttribute('hidden');
+      if (map['ai-activity']) map['ai-activity'].setAttribute('hidden', '');
     } else if (p === 'account') {
       if (!currentUser) loadCurrentUser();
       populateAccountForms();
