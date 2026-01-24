@@ -315,6 +315,23 @@ class PuppetService:
         self.session.commit()
         return True
 
+    def _resolve_local_path(self, config_id: str, stored_path: str | None) -> Path:
+        """Resolve local repository path, preferring current cache dir over stored paths.
+
+        This handles the case where configs were created on a different machine
+        (e.g., host vs container) where absolute paths differ.
+        """
+        # Always prefer computed path based on current environment
+        computed_path = self._cache_dir_path() / "repos" / config_id
+
+        if stored_path:
+            stored = Path(stored_path)
+            # Only use stored path if it exists and is within current cache dir
+            if stored.exists() and str(stored).startswith(str(self._cache_dir_path())):
+                return stored
+
+        return computed_path
+
     def get_git_client(self, config_id: str) -> GitClient:
         """Get a GitClient instance for a configuration.
 
@@ -341,7 +358,7 @@ class PuppetService:
             except Exception:
                 logger.warning("Failed to retrieve SSH key for config %s", config_id)
 
-        local_path = Path(config.local_path) if config.local_path else self._cache_dir_path() / "repos" / config_id
+        local_path = self._resolve_local_path(config_id, config.local_path)
 
         return GitClient(
             GitClientConfig(
@@ -388,8 +405,8 @@ class PuppetService:
         with client:
             repo_info = client.ensure_updated()
 
-        # Parse the repository
-        local_path = Path(config.local_path) if config.local_path else self._cache_dir_path() / "repos" / config_id
+        # Parse the repository using resolved path
+        local_path = self._resolve_local_path(config_id, config.local_path)
         parser = PuppetParser(local_path)
         inventory = parser.parse_inventory()
 
@@ -608,6 +625,23 @@ class MongoDBPuppetService:
             self._cache_dir = _resolve_cache_dir()
         return self._cache_dir
 
+    def _resolve_local_path(self, config_id: str, stored_path: str | None) -> Path:
+        """Resolve local repository path, preferring current cache dir over stored paths.
+
+        This handles the case where configs were created on a different machine
+        (e.g., host vs container) where absolute paths differ.
+        """
+        # Always prefer computed path based on current environment
+        computed_path = self._cache_dir_path() / "repos" / config_id
+
+        if stored_path:
+            stored = Path(stored_path)
+            # Only use stored path if it exists and is within current cache dir
+            if stored.exists() and str(stored).startswith(str(self._cache_dir_path())):
+                return stored
+
+        return computed_path
+
     # ------------------------------------------------------------------
     # Configuration management
     # ------------------------------------------------------------------
@@ -757,7 +791,7 @@ class MongoDBPuppetService:
             except Exception:
                 logger.warning("Failed to retrieve SSH key for config %s", config_id)
 
-        local_path = Path(config.local_path) if config.local_path else self._cache_dir_path() / "repos" / config_id
+        local_path = self._resolve_local_path(config_id, config.local_path)
 
         return GitClient(
             GitClientConfig(
@@ -793,8 +827,8 @@ class MongoDBPuppetService:
         with client:
             repo_info = client.ensure_updated()
 
-        # Parse the repository
-        local_path = Path(config.local_path) if config.local_path else self._cache_dir_path() / "repos" / config_id
+        # Parse the repository using resolved path
+        local_path = self._resolve_local_path(config_id, config.local_path)
         parser = PuppetParser(local_path)
         inventory = parser.parse_inventory()
 

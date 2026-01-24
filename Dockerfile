@@ -40,6 +40,8 @@ FROM python:3.11-slim AS runtime
 # Install runtime dependencies only
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    git \
+    openssh-client \
     && rm -rf /var/lib/apt/lists/* \
     && useradd -m -u 1000 atlas
 
