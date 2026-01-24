@@ -97,9 +97,10 @@ def get_playground_runtime(db: Session | None = None):
 class AgentConfigUpdate(BaseModel):
     """Configuration update for an agent."""
 
-    model: str | None = None
+    provider: str | None = Field(None, description="LLM provider (anthropic, openai, gemini, azure_openai)")
+    model: str | None = Field(None, description="Model identifier (provider-specific)")
     temperature: float | None = Field(None, ge=0.0, le=1.0)
-    max_tokens: int | None = Field(None, ge=100, le=8192)
+    max_tokens: int | None = Field(None, ge=100, le=16384)
     skills: list[str] | None = None
     system_prompt_override: str | None = None
 
@@ -184,6 +185,88 @@ def get_agent(agent_id: str, request: Request) -> dict[str, Any]:
     return agent.to_dict()
 
 
+# ============================================================================
+# Provider Endpoints
+# ============================================================================
+
+
+def _get_llm_factory():
+    """Lazy import of LLM factory functions."""
+    from infrastructure_atlas.agents.llm_factory import (
+        check_provider_available,
+        get_default_model,
+        get_supported_providers,
+    )
+    return get_supported_providers, get_default_model, check_provider_available
+
+
+def _get_provider_models(provider: str) -> list[dict[str, Any]]:
+    """Get models for a provider from AI providers registry."""
+    try:
+        from infrastructure_atlas.ai.providers import get_provider_registry
+        registry = get_provider_registry()
+        ai_provider = registry.get_provider(provider)
+        return ai_provider.list_models()
+    except Exception:
+        # Fallback to basic model list from llm_factory
+        _, get_default_model, _ = _get_llm_factory()
+        default_model = get_default_model(provider)
+        return [{"id": default_model, "name": default_model, "provider": provider}]
+
+
+@router.get("/providers")
+def list_providers(request: Request) -> dict[str, Any]:
+    """List all supported LLM providers for the playground.
+
+    Returns providers that can be used with the PlaygroundRuntime.
+    """
+    require_playground_permission(request)
+
+    get_supported_providers, get_default_model, check_provider_available = _get_llm_factory()
+
+    providers = []
+    for provider in get_supported_providers():
+        status = check_provider_available(provider)
+        providers.append({
+            "id": provider,
+            "name": provider.replace("_", " ").title(),
+            "default_model": get_default_model(provider),
+            "available": status.get("available", False),
+            "error": status.get("error") if not status.get("available") else None,
+        })
+
+    return {"providers": providers}
+
+
+@router.get("/providers/{provider}/models")
+def get_provider_models(provider: str, request: Request) -> dict[str, Any]:
+    """Get available models for a specific provider.
+
+    Args:
+        provider: Provider name (anthropic, openai, gemini, azure_openai)
+
+    Returns:
+        List of available models with metadata
+    """
+    require_playground_permission(request)
+
+    get_supported_providers, _, _ = _get_llm_factory()
+
+    if provider not in get_supported_providers():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Provider '{provider}' not found. Available: {', '.join(get_supported_providers())}",
+        )
+
+    models = _get_provider_models(provider)
+    return {"provider": provider, "models": models}
+
+
+# ============================================================================
+# Chat Endpoints
+# ============================================================================
+
+
 @router.post("/agents/{agent_id}/chat", response_model=None)
 async def chat_with_agent(
     agent_id: str,
@@ -194,6 +277,12 @@ async def chat_with_agent(
 
     Supports streaming responses via Server-Sent Events (SSE).
     Returns either a StreamingResponse (SSE) or ChatResponse (JSON).
+
+    The agent can use different LLM providers by specifying 'provider' in config_override:
+    - anthropic (default): Claude models
+    - openai: GPT models
+    - gemini: Google Gemini models
+    - azure_openai: Azure-hosted OpenAI models
     """
     require_playground_permission(request)
 

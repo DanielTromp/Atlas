@@ -14,9 +14,9 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
+from infrastructure_atlas.agents.llm_factory import create_llm, get_default_model, get_supported_providers
 from infrastructure_atlas.agents.usage import UsageRecord, calculate_cost, create_usage_service
 from infrastructure_atlas.infrastructure.logging import get_logger
 
@@ -291,6 +291,25 @@ class PlaygroundRuntime:
             List of agent information objects
         """
         return list(AVAILABLE_AGENTS.values())
+
+    def list_providers(self) -> list[str]:
+        """List all supported LLM providers.
+
+        Returns:
+            List of provider names (anthropic, openai, gemini, azure_openai)
+        """
+        return get_supported_providers()
+
+    def get_provider_default_model(self, provider: str) -> str:
+        """Get the default model for a provider.
+
+        Args:
+            provider: Provider name
+
+        Returns:
+            Default model identifier
+        """
+        return get_default_model(provider)
 
     def get_agent_info(self, agent_id: str) -> AgentInfo | None:
         """Get information about a specific agent.
@@ -798,18 +817,34 @@ class PlaygroundRuntime:
         self,
         agent: BaseAgent,
         config_override: dict[str, Any] | None,
-    ) -> ChatAnthropic:
-        """Create LLM instance with config overrides."""
+    ):
+        """Create LLM instance with config overrides.
+
+        Supports multiple providers: anthropic, openai, gemini, azure_openai.
+        Provider can be specified in config_override['provider'].
+        """
+        # Default to agent's model config
         model = agent.config.model
         temperature = agent.config.temperature
         max_tokens = agent.config.max_tokens
+        provider = "anthropic"  # Default provider
 
         if config_override:
+            provider = config_override.get("provider", provider)
             model = config_override.get("model", model)
             temperature = config_override.get("temperature", temperature)
             max_tokens = config_override.get("max_tokens", max_tokens)
 
-        return ChatAnthropic(
+        # If model doesn't match provider, use provider's default
+        # This handles cases like selecting "openai" but having a Claude model in config
+        if provider != "anthropic" and model.startswith("claude"):
+            model = get_default_model(provider)
+            logger.info(f"Switched to provider default model: {model} for provider {provider}")
+
+        logger.debug(f"Creating LLM: provider={provider}, model={model}, temp={temperature}")
+
+        return create_llm(
+            provider=provider,
             model=model,
             temperature=temperature,
             max_tokens=max_tokens,
