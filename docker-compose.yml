@@ -84,12 +84,10 @@ services:
       retries: 3
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # Slack Bot (optional)
+  # Slack Bot (Socket Mode - no public endpoints required)
+  # Start with: docker compose --profile bots up -d slack-bot
   # ─────────────────────────────────────────────────────────────────────────────
   slack-bot:
-    build:
-      context: .
-      dockerfile: Dockerfile
     image: atlas:latest
     container_name: atlas-slack-bot
     profiles:
@@ -99,19 +97,33 @@ services:
       - .env
     environment:
       - MONGODB_URI=mongodb://mongodb:27017
-    command: ["python", "-m", "infrastructure_atlas.cli", "bots", "run", "slack"]
+      - ATLAS_STORAGE_BACKEND=mongodb
+      # Required for Slack Socket Mode:
+      # - SLACK_BOT_TOKEN=xoxb-your-bot-token
+      # - SLACK_APP_TOKEN=xapp-your-app-level-token
+    command: ["python", "-m", "infrastructure_atlas.cli", "bots", "run-slack"]
+    # VPN DNS servers for internal service resolution (if needed)
+    dns:
+      - 10.0.10.101
+      - 10.20.10.15
+      - 8.8.8.8
     depends_on:
       mongodb:
         condition: service_healthy
     restart: unless-stopped
+    # Slack bot uses Socket Mode (WebSocket) - no healthcheck endpoint needed
+    # The bot will automatically reconnect if connection drops
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # Telegram Bot (optional)
+  # Telegram Bot (Polling Mode - no public endpoints required)
+  # Start with: docker compose --profile bots up -d telegram-bot
   # ─────────────────────────────────────────────────────────────────────────────
   telegram-bot:
-    build:
-      context: .
-      dockerfile: Dockerfile
     image: atlas:latest
     container_name: atlas-telegram-bot
     profiles:
@@ -121,11 +133,24 @@ services:
       - .env
     environment:
       - MONGODB_URI=mongodb://mongodb:27017
-    command: ["python", "-m", "infrastructure_atlas.cli", "bots", "run", "telegram"]
+      - ATLAS_STORAGE_BACKEND=mongodb
+      # Required:
+      # - TELEGRAM_BOT_TOKEN=your-bot-token-from-botfather
+    command: ["python", "-m", "infrastructure_atlas.cli", "bots", "run-telegram"]
+    # VPN DNS servers for internal service resolution (if needed)
+    dns:
+      - 10.0.10.101
+      - 10.20.10.15
+      - 8.8.8.8
     depends_on:
       mongodb:
         condition: service_healthy
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   atlas_data:
