@@ -1,6 +1,43 @@
 name: atlas
 
 services:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Atlas API Server
+  # ─────────────────────────────────────────────────────────────────────────────
+  atlas:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: atlas:latest
+    container_name: atlas-server
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # Override for container networking
+      - MONGODB_URI=mongodb://mongodb:27017
+      - ATLAS_RAG_QDRANT_HOST=qdrant
+      - ATLAS_SKIP_DB_HEALTH_CHECK=1
+      - ATLAS_LAZY_AI_IMPORTS=1
+    volumes:
+      # Persistent data
+      - atlas_data:/app/data
+      - atlas_logs:/app/logs
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -so /dev/null -w '%{http_code}' http://localhost:8000/api/health | grep -qE '^(200|401)$'"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # MongoDB Database
+  # ─────────────────────────────────────────────────────────────────────────────
   mongodb:
     image: mongo:7.0
     container_name: atlas-mongodb
@@ -17,9 +54,15 @@ services:
       timeout: 10s
       retries: 3
 
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Qdrant Vector Database (for Confluence RAG)
+  # ─────────────────────────────────────────────────────────────────────────────
   qdrant:
     image: qdrant/qdrant:latest
     container_name: atlas-qdrant
+    profiles:
+      - rag
+      - full
     ports:
       - "6333:6333"  # REST API
       - "6334:6334"  # gRPC
@@ -34,7 +77,55 @@ services:
       timeout: 10s
       retries: 3
 
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Slack Bot (optional)
+  # ─────────────────────────────────────────────────────────────────────────────
+  slack-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: atlas:latest
+    container_name: atlas-slack-bot
+    profiles:
+      - bots
+      - full
+    env_file:
+      - .env
+    environment:
+      - MONGODB_URI=mongodb://mongodb:27017
+    command: ["python", "-m", "infrastructure_atlas.cli", "bots", "run", "slack"]
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Telegram Bot (optional)
+  # ─────────────────────────────────────────────────────────────────────────────
+  telegram-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: atlas:latest
+    container_name: atlas-telegram-bot
+    profiles:
+      - bots
+      - full
+    env_file:
+      - .env
+    environment:
+      - MONGODB_URI=mongodb://mongodb:27017
+    command: ["python", "-m", "infrastructure_atlas.cli", "bots", "run", "telegram"]
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
+  atlas_data:
+    driver: local
+  atlas_logs:
+    driver: local
   mongodb_data:
     driver: local
   qdrant_storage:

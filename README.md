@@ -179,14 +179,30 @@ uv run atlas api serve --host 127.0.0.1 --port 8000
 # Production server (optimized startup, multiple workers)
 uv run atlas api prod --host 0.0.0.0 --port 8000 --workers 4
 
-# Docker / direct uvicorn (fastest startup ~8s)
-ATLAS_SKIP_DB_HEALTH_CHECK=1 ATLAS_LAZY_AI_IMPORTS=1 \
-  uvicorn infrastructure_atlas.api.app:app \
-  --host 0.0.0.0 --port 8000 --workers 4
-
 # Fast development (skip heavy AI imports)
 ATLAS_LAZY_AI_IMPORTS=1 uv run atlas api serve
 ```
+
+### Container Deployment (Docker/Podman)
+
+```bash
+# Start full stack (Atlas + MongoDB)
+docker compose up -d
+
+# With RAG support (adds Qdrant)
+docker compose --profile rag up -d
+
+# With chat bots
+docker compose --profile bots up -d
+
+# View logs
+docker compose logs -f atlas
+
+# Stop
+docker compose down
+```
+
+See [Container Deployment Guide](docs/deployment.md) for detailed instructions.
 
 ### Running Bots
 
@@ -219,6 +235,7 @@ uv run atlas bots status
 | Document | Description |
 |----------|-------------|
 | [Getting Started](docs/getting-started.md) | Installation, setup, and first steps |
+| [Container Deployment](docs/deployment.md) | Docker/Podman deployment guide |
 | [Configuration](docs/configuration.md) | Environment variables and settings |
 | [AI Chat](docs/ai-chat.md) | AI agent configuration and usage |
 | [Agent Playground](docs/playground.md) | Interactive agent testing environment |

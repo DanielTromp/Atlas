@@ -1,0 +1,60 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv
+venv/
+ENV/
+env/
+.eggs
+*.egg-info/
+*.egg
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Data and caches (mount as volumes instead)
+data/
+logs/
+backups/
+*.db
+*.sqlite
+
+# Environment files (pass via --env-file or secrets)
+.env
+.env.*
+!.env.example
+
+# Documentation and misc
+docs/
+*.md
+!README.md
+LICENSE
+
+# MCP server (separate deployment)
+mcp-server/
+
+# Build artifacts
+dist/
+build/
+*.spec
+
+# OS files
+.DS_Store
+Thumbs.db
