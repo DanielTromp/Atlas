@@ -133,6 +133,48 @@ class SlackAdapter(BotAdapter):
         # Slack doesn't support typing indicators for bots
         pass
 
+    async def add_reaction(self, channel: str, timestamp: str, emoji: str = "hourglass_flowing_sand") -> bool:
+        """Add a reaction to a message.
+
+        Args:
+            channel: Channel ID
+            timestamp: Message timestamp
+            emoji: Emoji name without colons (default: hourglass_flowing_sand ⏳)
+
+        Returns:
+            True if successful, False otherwise
+        """
+        client = self._get_client()
+        try:
+            client.reactions_add(channel=channel, timestamp=timestamp, name=emoji)
+            return True
+        except Exception as e:
+            # Ignore "already_reacted" errors
+            if "already_reacted" not in str(e):
+                logger.debug(f"Failed to add reaction: {e}")
+            return False
+
+    async def remove_reaction(self, channel: str, timestamp: str, emoji: str = "hourglass_flowing_sand") -> bool:
+        """Remove a reaction from a message.
+
+        Args:
+            channel: Channel ID
+            timestamp: Message timestamp
+            emoji: Emoji name without colons (default: hourglass_flowing_sand ⏳)
+
+        Returns:
+            True if successful, False otherwise
+        """
+        client = self._get_client()
+        try:
+            client.reactions_remove(channel=channel, timestamp=timestamp, name=emoji)
+            return True
+        except Exception as e:
+            # Ignore "no_reaction" errors
+            if "no_reaction" not in str(e):
+                logger.debug(f"Failed to remove reaction: {e}")
+            return False
+
     async def upload_file(
         self,
         chat_id: str,
@@ -331,7 +373,8 @@ class SlackWebhookHandler:
 
         # Process regular message through orchestrator
         # session_thread_ts is None for DMs (all messages share one session)
-        await self._process_message(text, user_id, channel_id, say, reply_ts, session_thread_ts)
+        message_ts = event.get("ts")  # Original message timestamp for reactions
+        await self._process_message(text, user_id, channel_id, say, reply_ts, message_ts, session_thread_ts)
 
     async def handle_app_mention(self, event: dict[str, Any], say: Any) -> None:
         """Handle an @mention of the bot.
@@ -371,7 +414,8 @@ class SlackWebhookHandler:
 
         # Use thread_ts for session if available - each thread/message gets its own memory
         session_thread_ts = actual_thread_ts or event.get("ts")
-        await self._process_message(text, user_id, channel_id, say, reply_ts, session_thread_ts)
+        message_ts = event.get("ts")  # Original message timestamp for reactions
+        await self._process_message(text, user_id, channel_id, say, reply_ts, message_ts, session_thread_ts)
 
     async def _handle_command(
         self,
@@ -518,6 +562,7 @@ class SlackWebhookHandler:
         channel_id: str,
         say: Any,
         reply_ts: str | None,
+        message_ts: str | None = None,
         session_thread_ts: str | None = None,
     ) -> None:
         """Process a message through the AI orchestrator.
@@ -528,9 +573,14 @@ class SlackWebhookHandler:
             channel_id: Channel ID
             say: Function to send responses
             reply_ts: Thread timestamp for sending replies back
+            message_ts: Original message timestamp (for reactions)
             session_thread_ts: Thread timestamp for session ID (None for DMs = shared session)
         """
         from infrastructure_atlas.bots.orchestrator import BotResponse, BotResponseType
+
+        # Add "thinking" reaction to show we're processing
+        if message_ts:
+            await self.adapter.add_reaction(channel_id, message_ts, "hourglass_flowing_sand")
 
         try:
             # Use thread_ts in conversation ID only for actual threaded conversations
@@ -554,6 +604,7 @@ class SlackWebhookHandler:
                 message=text,
                 platform_user_info=platform_user_info,
             ):
+                logger.debug(f"[SLACK] Received response type: {response.type}")
                 if response.type == BotResponseType.TYPING:
                     # Slack doesn't support typing indicators for bots
                     pass
@@ -561,7 +612,7 @@ class SlackWebhookHandler:
                 elif response.type == BotResponseType.TEXT:
                     # Always use Slack formatter for proper mrkdwn formatting
                     raw_content = response.content or ""
-                    logger.info(f"Received TEXT response from orchestrator, content length: {len(raw_content)}")
+                    logger.debug(f"[SLACK] Received TEXT response, content length: {len(raw_content)}, channel={channel_id}, thread={reply_ts}")
 
                     formatted = self.formatter.format_agent_response(
                         agent_id=response.agent_id or "assistant",
@@ -635,9 +686,16 @@ class SlackWebhookHandler:
                                 thread_ts=reply_ts,
                             )
 
+            logger.debug("[SLACK] Finished processing all responses from orchestrator")
+
         except Exception as e:
             logger.error(f"Error processing Slack message: {e}", exc_info=True)
             await say(
                 text=f":warning: *Error processing message*\n`{str(e)[:200]}`",
                 thread_ts=reply_ts,
             )
+
+        finally:
+            # Remove "thinking" reaction when done (success or error)
+            if message_ts:
+                await self.adapter.remove_reaction(channel_id, message_ts, "hourglass_flowing_sand")

@@ -517,7 +517,10 @@ class SlackFormatter(MessageFormatter):
 
         # Header with agent name and emoji
         agent_emoji = {
+            "ops": ":hammer_and_wrench:",
             "triage": ":ticket:",
+            "engineer": ":gear:",
+            "reviewer": ":mag:",
             "search": ":mag:",
             "netbox": ":globe_with_meridians:",
             "jira": ":jira:",

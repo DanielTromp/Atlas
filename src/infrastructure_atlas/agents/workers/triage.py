@@ -39,6 +39,7 @@ class TriageAgent(BaseAgent):
     2. Assesses complexity based on description and history
     3. Searches for similar resolved tickets
     4. Suggests appropriate team/assignee
+    5. Queries infrastructure systems for context (read-only)
     """
 
     def __init__(
@@ -53,7 +54,7 @@ class TriageAgent(BaseAgent):
                 prompt_file="triage.md",
                 model="claude-sonnet-4-5-20250929",
                 temperature=0.3,
-                tools=["jira", "confluence"],
+                tools=["jira", "netbox", "zabbix", "vcenter", "confluence", "export"],
             )
         super().__init__(config, skills_registry)
 

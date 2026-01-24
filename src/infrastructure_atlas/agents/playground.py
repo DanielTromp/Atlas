@@ -120,6 +120,7 @@ MODELS = {
 
 # Default model for each agent type
 AGENT_DEFAULTS = {
+    "ops": {"model": MODELS["haiku"], "temperature": 0.4, "max_tokens": 8192},
     "triage": {"model": MODELS["haiku"], "temperature": 0.3, "max_tokens": 4096},
     "engineer": {"model": MODELS["sonnet"], "temperature": 0.5, "max_tokens": 16384},
     "reviewer": {"model": MODELS["haiku"], "temperature": 0.2, "max_tokens": 4096},
@@ -129,12 +130,21 @@ AGENT_DEFAULTS = {
 # Agent definitions with metadata
 # ============================================================================
 AVAILABLE_AGENTS: dict[str, AgentInfo] = {
+    "ops": AgentInfo(
+        id="ops",
+        name="Ops Agent",
+        role="Operations Engineer",
+        description="Fast, cost-effective agent for routine operations, quick queries, and day-to-day tasks.",
+        skills=["jira", "netbox", "zabbix", "vcenter", "confluence", "export"],
+        default_model=AGENT_DEFAULTS["ops"]["model"],
+        default_temperature=AGENT_DEFAULTS["ops"]["temperature"],
+    ),
     "triage": AgentInfo(
         id="triage",
         name="Triage Agent",
         role="Ticket categorization specialist",
         description="Analyzes incoming tickets, categorizes them, assesses complexity, and suggests assignees.",
-        skills=["jira", "confluence", "export"],
+        skills=["jira", "netbox", "zabbix", "vcenter", "confluence", "export"],
         default_model=AGENT_DEFAULTS["triage"]["model"],
         default_temperature=AGENT_DEFAULTS["triage"]["temperature"],
     ),
@@ -173,7 +183,7 @@ class PlaygroundSession:
     def __init__(
         self,
         session_id: str | None = None,
-        agent_id: str = "triage",
+        agent_id: str = "ops",
         user_id: str | None = None,
         username: str | None = None,
         client: str | None = None,
@@ -296,7 +306,7 @@ class PlaygroundRuntime:
     def get_or_create_session(
         self,
         session_id: str | None = None,
-        agent_id: str = "triage",
+        agent_id: str = "ops",
         user_id: str | None = None,
         username: str | None = None,
         client: str | None = None,
@@ -422,10 +432,11 @@ class PlaygroundRuntime:
             return None
 
         # Import agent classes dynamically
-        from infrastructure_atlas.agents.workers import EngineerAgent, ReviewerAgent, TriageAgent
+        from infrastructure_atlas.agents.workers import EngineerAgent, OpsAgent, ReviewerAgent, TriageAgent
         from infrastructure_atlas.agents.workflow_agent import AgentConfig
 
         agent_classes = {
+            "ops": OpsAgent,
             "triage": TriageAgent,
             "engineer": EngineerAgent,
             "reviewer": ReviewerAgent,

@@ -95,7 +95,7 @@ class BotOrchestrator:
     AGENT_MENTION_PATTERN = re.compile(r"^@(\w+)\s+(.+)", re.DOTALL)
 
     # Default agent for unrouted messages
-    DEFAULT_AGENT = "triage"
+    DEFAULT_AGENT = "ops"
 
     def __init__(
         self,

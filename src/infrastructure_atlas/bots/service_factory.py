@@ -367,7 +367,7 @@ class MongoDBBotOrchestrator:
     AGENT_MENTION_PATTERN = re.compile(r"^@(\w+)\s+(.+)", re.DOTALL)
 
     # Default agent for unrouted messages
-    DEFAULT_AGENT = "triage"
+    DEFAULT_AGENT = "ops"
 
     def __init__(self, session: MongoDBBotSession, skills: "SkillsRegistry") -> None:
         self._session = session
@@ -538,6 +538,7 @@ class MongoDBBotOrchestrator:
                     )
 
             # Format final response
+            logger.debug(f"[ORCHESTRATOR] After event loop: response_text length={len(response_text)}, has_error={bool(error_msg)}")
             if response_text:
                 formatted = formatter.format_agent_response(
                     agent_id=agent_id or self.DEFAULT_AGENT,
@@ -545,12 +546,15 @@ class MongoDBBotOrchestrator:
                     tool_calls=tool_calls if tool_calls else None,
                 )
 
+                logger.debug(f"[ORCHESTRATOR] Yielding TEXT response with {len(response_text)} chars")
                 yield BotResponse(
                     type=BotResponseType.TEXT,
                     content=response_text,
                     agent_id=agent_id,
                     formatted=formatted,
                 )
+            else:
+                logger.warning(f"[ORCHESTRATOR] No response_text to yield! error_msg={error_msg}")
 
         except Exception as e:
             error_msg = str(e)
