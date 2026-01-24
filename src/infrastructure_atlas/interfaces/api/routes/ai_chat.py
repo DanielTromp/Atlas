@@ -63,6 +63,131 @@ def require_chat_permission(request: Request) -> None:
     require_permission(request, "chat.use")
 
 
+# ============================================================================
+# Playground Integration (Phase 3: Unified AI Chat + Playground)
+# ============================================================================
+
+
+def _get_playground_runtime(db_session=None):
+    """Get a PlaygroundRuntime instance for agent-based chat."""
+    from infrastructure_atlas.agents.playground import PlaygroundRuntime
+    from infrastructure_atlas.skills import get_skills_registry
+
+    registry = get_skills_registry()
+    return PlaygroundRuntime(registry, db_session)
+
+
+def _get_available_agents() -> dict[str, Any]:
+    """Get available playground agents."""
+    from infrastructure_atlas.agents.playground import AVAILABLE_AGENTS
+    return AVAILABLE_AGENTS
+
+
+async def _chat_with_playground_agent(
+    request: Request,
+    req: "ChatCompletionRequest",
+    user: Any,
+    session_cookie: str | None = None,
+) -> dict[str, Any]:
+    """Handle chat completion using PlaygroundRuntime.
+
+    This provides the unified experience where AI Chat uses the same
+    agents as Playground (ops, triage, engineer).
+    """
+    from infrastructure_atlas.agents.playground import ChatEventType
+
+    agent_id = req.agent or "ops"  # Default to ops agent
+    available_agents = _get_available_agents()
+
+    if agent_id not in available_agents:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid agent: {agent_id}. Available: {', '.join(available_agents.keys())}",
+        )
+
+    db = get_db_session()
+    try:
+        runtime = _get_playground_runtime(db)
+
+        # Build config override from request
+        config_override = {}
+        if req.provider:
+            config_override["provider"] = req.provider
+        if req.model:
+            config_override["model"] = req.model
+        if req.temperature is not None:
+            config_override["temperature"] = req.temperature
+        if req.max_tokens is not None:
+            config_override["max_tokens"] = req.max_tokens
+
+        # Get user info for tracking
+        user_id = str(user.id) if user else None
+        username = user.username if user else None
+
+        # Collect response from streaming events
+        response_content = ""
+        total_tokens = 0
+        input_tokens = 0
+        output_tokens = 0
+        cost_usd = 0.0
+        duration_ms = 0
+        tool_calls = []
+
+        async for event in runtime.chat(
+            agent_id=agent_id,
+            message=req.message,
+            session_id=req.session_id,
+            config_override=config_override if config_override else None,
+            stream=False,  # Non-streaming for this endpoint
+            user_id=user_id,
+            username=username,
+            client="web",
+        ):
+            if event.type == ChatEventType.MESSAGE_DELTA:
+                response_content = event.data.get("content", "")
+            elif event.type == ChatEventType.MESSAGE_END:
+                total_tokens = event.data.get("tokens", 0)
+                input_tokens = event.data.get("input_tokens", 0)
+                output_tokens = event.data.get("output_tokens", 0)
+                cost_usd = event.data.get("cost_usd", 0.0)
+                duration_ms = event.data.get("duration_ms", 0)
+            elif event.type == ChatEventType.TOOL_END:
+                tool_calls.append({
+                    "tool": event.data.get("tool"),
+                    "duration_ms": event.data.get("duration_ms"),
+                })
+            elif event.type == ChatEventType.ERROR:
+                raise HTTPException(status_code=500, detail=event.data.get("error", "Unknown error"))
+
+        # Get the session ID from runtime
+        session = runtime.get_or_create_session(
+            session_id=req.session_id,
+            agent_id=agent_id,
+            user_id=user_id,
+            username=username,
+        )
+
+        return {
+            "type": "message",
+            "session_id": session.session_id,
+            "agent": agent_id,
+            "content": response_content,
+            "model": config_override.get("model") or available_agents[agent_id].default_model,
+            "provider": config_override.get("provider", "anthropic"),
+            "usage": {
+                "prompt_tokens": input_tokens,
+                "completion_tokens": output_tokens,
+                "total_tokens": total_tokens,
+                "cost_usd": cost_usd,
+            },
+            "duration_ms": duration_ms,
+            "tool_calls": tool_calls,
+        }
+
+    finally:
+        db.close()
+
+
 # Pydantic models
 class ChatCompletionRequest(BaseModel):
     """Request for chat completion."""
@@ -76,7 +201,9 @@ class ChatCompletionRequest(BaseModel):
     tools_enabled: bool = True
     streaming: bool = True
     system_prompt: str | None = None
-    role: str = "general"  # Agent role: triage, engineer, general
+    role: str = "general"  # Agent role: triage, engineer, general (legacy)
+    # New: Playground agent integration
+    agent: str | None = None  # Playground agent: ops, triage, engineer (None = legacy mode)
 
 
 class AgentConfigRequest(BaseModel):
@@ -276,6 +403,35 @@ async def list_provider_models(request: Request, provider_name: str):
     admin_service = get_ai_admin_service()
     models = admin_service.get_provider_models(provider_name)
     return {"provider": provider_name, "models": models}
+
+
+@router.get("/agents")
+async def list_ai_agents(request: Request):
+    """List available AI agents for chat.
+
+    These are Playground agents that can be used with the AI Chat endpoint
+    by specifying the `agent` parameter.
+
+    The default agent is 'ops' which is optimized for quick operational queries.
+    """
+    require_chat_permission(request)
+
+    available_agents = _get_available_agents()
+    agents = []
+    for agent_id, agent_info in available_agents.items():
+        agents.append({
+            "id": agent_id,
+            "name": agent_info.name,
+            "role": agent_info.role,
+            "description": agent_info.description,
+            "default_model": agent_info.default_model,
+            "skills": agent_info.skills,
+        })
+
+    return {
+        "agents": agents,
+        "default": "ops",
+    }
 
 
 @router.post("/providers/{provider_name}/test")
@@ -813,7 +969,20 @@ async def chat_completion(
     request: Request,
     req: ChatCompletionRequest,
 ):
-    """Send a message and get a response (non-streaming)."""
+    """Send a message and get a response.
+
+    Supports two modes:
+    1. **Playground Agent Mode** (recommended): Set `agent` parameter to use
+       PlaygroundRuntime with full skills support. Available agents:
+       - ops (default): Fast operations queries
+       - triage: Ticket analysis and categorization
+       - engineer: Deep technical investigation
+
+    2. **Legacy Mode**: When `agent` is not specified, uses the original
+       ChatAgent with HTTP-based tools.
+
+    The `provider` and `model` parameters work in both modes.
+    """
     require_chat_permission(request)
     user = get_current_user(request)
     backend = _get_storage_backend()
@@ -827,6 +996,12 @@ async def chat_completion(
             "command_result": result.to_dict(),
         }
 
+    # Route to Playground if agent is specified
+    if req.agent:
+        session_cookie = request.cookies.get("atlas_ui")
+        return await _chat_with_playground_agent(request, req, user, session_cookie)
+
+    # Legacy mode: use original ChatAgent
     if backend == "mongodb":
         repo = _get_chat_repository()
         try:
