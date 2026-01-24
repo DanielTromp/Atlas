@@ -21,17 +21,13 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from infrastructure_atlas.agents.playground import (
-    AVAILABLE_AGENTS,
-    ChatEventType,
-    PlaygroundRuntime,
-)
 from infrastructure_atlas.bots.formatters import FormattedMessage, FormatterRegistry
 from infrastructure_atlas.bots.linking import UserLinkingService
 from infrastructure_atlas.db.models import BotConversation, BotMessage, BotPlatformAccount
 from infrastructure_atlas.infrastructure.logging import get_logger
 
 if TYPE_CHECKING:
+    from infrastructure_atlas.agents.playground import ChatEventType, PlaygroundRuntime
     from infrastructure_atlas.skills import SkillsRegistry
 
 logger = get_logger(__name__)
@@ -118,6 +114,9 @@ class BotOrchestrator:
     def runtime(self) -> PlaygroundRuntime:
         """Get or create the PlaygroundRuntime instance."""
         if self._runtime is None:
+            # Lazy import to avoid heavy langchain/transformers at module load
+            from infrastructure_atlas.agents.playground import PlaygroundRuntime
+
             self._runtime = PlaygroundRuntime(
                 skills_registry=self.skills,
                 db_session=self.db,
@@ -222,6 +221,9 @@ class BotOrchestrator:
                 if atlas_user:
                     user_id = str(atlas_user.id) if hasattr(atlas_user, "id") else None
                     username = getattr(atlas_user, "username", None)
+
+            # Lazy import to avoid heavy langchain/transformers at startup
+            from infrastructure_atlas.agents.playground import ChatEventType
 
             print(f"[ORCHESTRATOR] Starting chat with agent={agent_id or self.DEFAULT_AGENT}", flush=True)
             async for event in self.runtime.chat(
@@ -347,7 +349,9 @@ class BotOrchestrator:
         agent_name = match.group(1).lower()
         cleaned_message = match.group(2).strip()
 
-        # Validate agent exists
+        # Validate agent exists (lazy import to avoid heavy langchain at startup)
+        from infrastructure_atlas.agents.playground import AVAILABLE_AGENTS
+
         if agent_name in AVAILABLE_AGENTS:
             return agent_name, cleaned_message
 
@@ -625,6 +629,8 @@ class BotOrchestrator:
         Returns:
             List of agent info dictionaries
         """
+        from infrastructure_atlas.agents.playground import AVAILABLE_AGENTS
+
         return [
             {
                 "id": agent.id,

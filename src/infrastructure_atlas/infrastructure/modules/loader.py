@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from threading import Lock
+
 from infrastructure_atlas.infrastructure.logging import get_logger
 
 from .bots import BotsModule
@@ -16,6 +18,10 @@ from .vcenter import VCenterModule
 from .zabbix import ZabbixModule
 
 logger = get_logger(__name__)
+
+# Track initialization state to prevent duplicate registration
+_initialized = False
+_init_lock = Lock()
 
 
 def register_all_modules(registry: ModuleRegistry | None = None) -> ModuleRegistry:
@@ -60,11 +66,25 @@ def register_all_modules(registry: ModuleRegistry | None = None) -> ModuleRegist
 def initialize_modules() -> ModuleRegistry:
     """Initialize the module system.
 
-    This function should be called once at application startup.
+    This function is safe to call multiple times; only the first call will
+    actually register modules.
 
     Returns:
         The initialized module registry.
     """
-    registry = register_all_modules()
-    logger.info("Module system initialized")
-    return registry
+    global _initialized
+    with _init_lock:
+        if _initialized:
+            logger.debug("Module system already initialized, skipping")
+            return get_module_registry()
+        registry = register_all_modules()
+        _initialized = True
+        logger.info("Module system initialized")
+        return registry
+
+
+def reset_module_initialization() -> None:
+    """Reset the initialization flag. Primarily for testing."""
+    global _initialized
+    with _init_lock:
+        _initialized = False

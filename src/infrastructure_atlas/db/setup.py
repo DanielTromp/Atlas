@@ -33,24 +33,36 @@ def init_database() -> None:
         init_mongodb()
 
 
-def init_mongodb() -> None:
-    """Initialize MongoDB: create indexes and run migrations."""
+def init_mongodb(skip_health_check: bool | None = None) -> None:
+    """Initialize MongoDB: create indexes and run migrations.
+
+    Args:
+        skip_health_check: If True, skip the blocking health check at startup.
+            Defaults to ATLAS_SKIP_DB_HEALTH_CHECK env var or False.
+            Set to True for faster startup in production when MongoDB is known to be available.
+    """
+    if skip_health_check is None:
+        skip_health_check = os.getenv("ATLAS_SKIP_DB_HEALTH_CHECK", "").lower() in ("1", "true", "yes")
+
     try:
         from infrastructure_atlas.infrastructure.mongodb import get_mongodb_client
         from infrastructure_atlas.infrastructure.mongodb.migrations import run_migrations
 
-        logger.info("Initializing MongoDB...")
+        logger.info("Initializing MongoDB%s...", " (skipping health check)" if skip_health_check else "")
 
-        # Get client and verify connection
+        # Get client (lazy initialization)
         client = get_mongodb_client()
-        health = client.health_check()
-        if not health.get("healthy"):
-            logger.warning("MongoDB is not available: %s", health.get("error"))
-            logger.warning("Falling back to SQLite backend")
-            os.environ["ATLAS_STORAGE_BACKEND"] = "sqlite"
-            cfg = _alembic_config()
-            command.upgrade(cfg, "head")
-            return
+
+        if not skip_health_check:
+            # Verify connection with health check
+            health = client.health_check()
+            if not health.get("healthy"):
+                logger.warning("MongoDB is not available: %s", health.get("error"))
+                logger.warning("Falling back to SQLite backend")
+                os.environ["ATLAS_STORAGE_BACKEND"] = "sqlite"
+                cfg = _alembic_config()
+                command.upgrade(cfg, "head")
+                return
 
         # Run MongoDB migrations
         records = run_migrations(client.atlas, client.atlas_cache)

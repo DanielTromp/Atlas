@@ -167,10 +167,25 @@ cp .env.example .env
 ### Basic Usage
 
 ```bash
-# Start the web UI and API
+# Start the web UI and API (development)
 uv run atlas api serve --host 127.0.0.1 --port 8000
 
 # Open http://127.0.0.1:8000/app/ in your browser
+```
+
+### Production Deployment
+
+```bash
+# Production server (optimized startup, multiple workers)
+uv run atlas api prod --host 0.0.0.0 --port 8000 --workers 4
+
+# Docker / direct uvicorn (fastest startup ~8s)
+ATLAS_SKIP_DB_HEALTH_CHECK=1 ATLAS_LAZY_AI_IMPORTS=1 \
+  uvicorn infrastructure_atlas.api.app:app \
+  --host 0.0.0.0 --port 8000 --workers 4
+
+# Fast development (skip heavy AI imports)
+ATLAS_LAZY_AI_IMPORTS=1 uv run atlas api serve
 ```
 
 ### Running Bots
@@ -302,6 +317,8 @@ Key configuration options:
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token |
 | `ATLAS_STORAGE_BACKEND` | `sqlite` or `mongodb` |
 | `QDRANT_URL` | Vector database for Confluence RAG |
+| `ATLAS_SKIP_DB_HEALTH_CHECK` | Skip MongoDB health check at startup (faster boot) |
+| `ATLAS_LAZY_AI_IMPORTS` | Defer loading heavy AI libraries (transformers, langchain) |
 
 See [.env.example](.env.example) for the full list.
 

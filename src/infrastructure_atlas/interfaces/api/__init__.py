@@ -129,19 +129,23 @@ def bootstrap_api() -> APIRouter:
         logger.info("Puppet module is disabled, skipping routes")
 
     # Confluence RAG routes (Qdrant-based semantic search)
-    try:
-        from infrastructure_atlas.confluence_rag.api import router as rag_router
-        from infrastructure_atlas.confluence_rag.api import warmup_search_engine
+    # These imports are heavy (transformers, docling, qdrant) - skip if ATLAS_LAZY_AI_IMPORTS=1
+    import os
+    if os.getenv("ATLAS_LAZY_AI_IMPORTS", "").lower() not in ("1", "true", "yes"):
+        try:
+            from infrastructure_atlas.confluence_rag.api import router as rag_router
+            from infrastructure_atlas.confluence_rag.api import warmup_search_engine
 
-        router.include_router(rag_router)
-        logger.info("Enabled Confluence RAG API routes")
+            router.include_router(rag_router)
+            logger.info("Enabled Confluence RAG API routes")
 
-        # Warmup the embedding model at startup (skip if disabled)
-        import os
-        if os.getenv("ATLAS_RAG_WARMUP", "0").lower() in ("1", "true", "yes"):
-            warmup_search_engine()
-    except Exception as e:
-        logger.warning(f"Confluence RAG routes not available: {e}")
+            # Warmup the embedding model at startup (skip if disabled)
+            if os.getenv("ATLAS_RAG_WARMUP", "0").lower() in ("1", "true", "yes"):
+                warmup_search_engine()
+        except Exception as e:
+            logger.warning(f"Confluence RAG routes not available: {e}")
+    else:
+        logger.info("Skipping Confluence RAG routes (ATLAS_LAZY_AI_IMPORTS=1)")
 
     # Atlas Agents Platform - Workflow routes
     try:
@@ -155,14 +159,17 @@ def bootstrap_api() -> APIRouter:
     except Exception as e:
         logger.warning(f"Atlas Agents routes not available: {e}")
 
-    # Agent Playground routes
-    try:
-        from .routes import playground
+    # Agent Playground routes (imports langchain_anthropic - heavy)
+    if os.getenv("ATLAS_LAZY_AI_IMPORTS", "").lower() not in ("1", "true", "yes"):
+        try:
+            from .routes import playground
 
-        router.include_router(playground.router)
-        logger.info("Enabled Agent Playground API routes")
-    except Exception as e:
-        logger.warning(f"Agent Playground routes not available: {e}")
+            router.include_router(playground.router)
+            logger.info("Enabled Agent Playground API routes")
+        except Exception as e:
+            logger.warning(f"Agent Playground routes not available: {e}")
+    else:
+        logger.info("Skipping Agent Playground routes (ATLAS_LAZY_AI_IMPORTS=1)")
 
     # Bot platform routes (conditional on bots module)
     if registry.is_enabled("bots"):
