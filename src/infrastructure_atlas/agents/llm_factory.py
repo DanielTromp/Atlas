@@ -29,7 +29,7 @@ PROVIDER_LLM_MAPPING: dict[str, tuple[str, str]] = {
 DEFAULT_MODELS: dict[str, str] = {
     "anthropic": "claude-haiku-4-5-20251001",
     "openai": "gpt-5-mini",
-    "gemini": "gemini-3-flash",
+    "gemini": "gemini-2.5-flash",
     "azure_openai": "gpt-5-mini",
 }
 
