@@ -1020,7 +1020,7 @@ async def chat_completion(
                 repo.update_session_title(session.session_id, req.message[:60])
 
             # Determine provider and model
-            ai_defaults = get_ai_settings()
+            ai_defaults = get_current_ai_settings()
             provider_type = req.provider or session.provider_type or ai_defaults["default_provider"]
             model = req.model or session.model
 
@@ -1130,7 +1130,7 @@ async def chat_completion(
                 db.commit()
 
             # Determine provider and model
-            ai_defaults = get_ai_settings()
+            ai_defaults = get_current_ai_settings()
             provider_type = req.provider or session.provider_type or ai_defaults["default_provider"]
             model = req.model or session.model
 
@@ -1249,7 +1249,7 @@ async def chat_stream(
     # Variables for the streaming generator
     session_id = None
     session_internal_id = None
-    ai_defaults = get_ai_settings()
+    ai_defaults = get_current_ai_settings()
     provider_type = None
     model = None
     history = []
