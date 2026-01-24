@@ -24,6 +24,12 @@ services:
       # Persistent data
       - atlas_data:/app/data
       - atlas_logs:/app/logs
+    # VPN DNS servers for internal service resolution
+    # Update these IPs if your VPN uses different DNS servers
+    dns:
+      - 10.0.10.101
+      - 10.20.10.15
+      - 8.8.8.8
     depends_on:
       mongodb:
         condition: service_healthy
