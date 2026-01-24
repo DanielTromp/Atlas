@@ -426,11 +426,11 @@
                 <h2>AI Chat</h2>
                 <div class="chat-controls">
                   <label class="field">
-                    <span>Role</span>
-                    <select id="chat-role" title="Agent role determines which tools are available">
-                      <option value="triage">Triage (fast, minimal tools)</option>
-                      <option value="engineer">Engineer (all tools)</option>
-                      <option value="general" selected>General (balanced)</option>
+                    <span>Agent</span>
+                    <select id="chat-agent" title="Agent determines which tools and capabilities are available">
+                      <option value="ops" selected>@ops (Operations)</option>
+                      <option value="triage">@triage (Quick)</option>
+                      <option value="engineer">@engineer (Full)</option>
                     </select>
                   </label>
                   <label class="field">

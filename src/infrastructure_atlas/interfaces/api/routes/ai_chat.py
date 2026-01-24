@@ -85,7 +85,7 @@ def _get_available_agents() -> dict[str, Any]:
 
 async def _chat_with_playground_agent(
     request: Request,
-    req: "ChatCompletionRequest",
+    req: ChatCompletionRequest,
     user: Any,
     session_cookie: str | None = None,
 ) -> dict[str, Any]:
@@ -505,8 +505,9 @@ async def save_provider_config(
     This saves the provider config and updates environment variables
     for immediate use by the provider registry.
     """
-    from infrastructure_atlas.api.app import require_permission
     import os
+
+    from infrastructure_atlas.api.app import require_permission
 
     require_permission(request, "admin.write")
 
@@ -543,7 +544,7 @@ async def save_provider_config(
         saved_keys = []
 
         for config_key, env_var in env_map.items():
-            if config_key in config and config[config_key]:
+            if config.get(config_key):
                 value = config[config_key]
                 # Set in environment for immediate use
                 os.environ[env_var] = value
@@ -614,7 +615,7 @@ async def save_ai_settings(request: Request, settings: dict):
     return {"status": "saved", "settings": _ai_settings}
 
 
-def get_ai_settings() -> dict:
+def get_current_ai_settings() -> dict:
     """Get current AI settings (for use by other routes)."""
     return _ai_settings.copy()
 
@@ -1411,6 +1412,7 @@ async def chat_stream(
                         logger.warning(f"Failed to log AI activity: {log_err}")
             else:
                 from sqlalchemy import select
+
                 from infrastructure_atlas.db.models import ChatSession
 
                 db = get_db_session()
@@ -1593,6 +1595,7 @@ async def get_ai_stats(request: Request):
                 process_message(msg.metadata_json)
     else:
         from sqlalchemy import select
+
         from infrastructure_atlas.db.models import ChatSession
 
         db = get_db_session()

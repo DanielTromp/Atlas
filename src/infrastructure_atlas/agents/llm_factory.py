@@ -69,7 +69,7 @@ def create_llm(
     temperature: float = 0.4,
     max_tokens: int = 4096,
     **kwargs: Any,
-) -> "BaseChatModel":
+) -> BaseChatModel:
     """Create a LangChain-compatible LLM instance for the specified provider.
 
     This factory function creates the appropriate LLM class based on the provider,

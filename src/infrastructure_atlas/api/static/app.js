@@ -12304,6 +12304,7 @@
   }
 
   // Chat placeholder
+  const $chatAgent = document.getElementById('chat-agent');
   const $chatProvider = document.getElementById('chat-provider');
   const $chatModel = document.getElementById('chat-model');
   const $chatDataset = document.getElementById('chat-dataset');
@@ -12356,6 +12357,7 @@
 
   function saveChatPrefs() {
     try {
+      if ($chatAgent) localStorage.setItem('chat_agent', $chatAgent.value || 'ops');
       if ($chatProvider) localStorage.setItem('chat_provider', $chatProvider.value || '');
       if ($chatModel) localStorage.setItem('chat_model', $chatModel.value || '');
       if ($chatDataset) localStorage.setItem('chat_dataset', $chatDataset.value || 'merged');
@@ -12369,8 +12371,10 @@
   }
   function loadChatPrefs() {
     try {
+      const agent = localStorage.getItem('chat_agent');
       const prov = localStorage.getItem('chat_provider');
       const model = localStorage.getItem('chat_model');
+      if (agent && $chatAgent) $chatAgent.value = agent;
       if (prov && $chatProvider) $chatProvider.value = prov;
       if (model && $chatModel) $chatModel.value = model;
       const streamEl = document.getElementById('chat-stream');
@@ -12413,6 +12417,9 @@
   }
 
   function setupChatPrefListeners() {
+    $chatAgent?.addEventListener('change', () => {
+      saveChatPrefs();
+    });
     $chatProvider?.addEventListener('change', async () => {
       saveChatPrefs();
       await loadModelsForProvider($chatProvider.value);
@@ -12480,8 +12487,55 @@
     }
   }
 
+  async function loadChatAgents() {
+    if (!$chatAgent) return;
+
+    // Preserve current selection
+    const savedAgent = localStorage.getItem('chat_agent') || '';
+    const currentAgent = $chatAgent.value || savedAgent || 'ops';
+
+    try {
+      const res = await fetch(`${API_BASE}/ai/agents`);
+      if (!res.ok) {
+        console.warn('Failed to load agents');
+        return;
+      }
+      const data = await res.json();
+      const agents = data?.agents || [];
+      const defaultAgent = data?.default || 'ops';
+
+      // Clear existing options
+      $chatAgent.innerHTML = '';
+
+      // Add agent options
+      agents.forEach(agent => {
+        const opt = document.createElement('option');
+        opt.value = agent.id;
+        opt.textContent = `@${agent.id} (${agent.name})`;
+        if (agent.description) {
+          opt.title = agent.description;
+        }
+        $chatAgent.appendChild(opt);
+      });
+
+      // Restore selection or use default
+      const options = Array.from($chatAgent.options);
+      const matchingOption = options.find(opt => opt.value === currentAgent);
+      if (matchingOption) {
+        $chatAgent.value = currentAgent;
+      } else if (options.length > 0) {
+        $chatAgent.value = defaultAgent;
+      }
+    } catch (err) {
+      console.error('Error loading agents:', err);
+    }
+  }
+
   async function loadChatDefaults() {
     try {
+      // Load agents from API
+      await loadChatAgents();
+
       const data = await refreshChatProviders();
       if (!data) return;
       // Set default provider if none selected
@@ -12962,7 +13016,7 @@
     try {
       const toolsEnabled = !!document.getElementById('chat-include-data')?.checked;
       const wantStream = !!document.getElementById('chat-stream')?.checked;
-      const agentRole = document.getElementById('chat-role')?.value || 'general';
+      const selectedAgent = $chatAgent?.value || 'ops';
 
       // Build request payload for new AI chat API
       const requestPayload = {
@@ -12973,7 +13027,7 @@
         system_prompt: sys || undefined,
         temperature: tempPref,
         tools_enabled: toolsEnabled,
-        role: agentRole,
+        agent: selectedAgent,
       };
       
       // Streaming request to /ai/chat/stream (SSE format)
