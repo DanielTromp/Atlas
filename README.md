@@ -99,8 +99,11 @@ Full-featured Slack integration using Socket Mode (no public endpoints required)
 SLACK_BOT_TOKEN=xoxb-your-token
 SLACK_APP_TOKEN=xapp-your-app-token
 
-# Run
-uv run atlas bots run slack
+# Run locally
+uv run atlas bots run-slack
+
+# Or run in Docker
+docker compose --profile bots up -d slack-bot
 ```
 
 **Features:**
@@ -118,8 +121,11 @@ Polling-based Telegram bot for internal deployments.
 # Configure
 TELEGRAM_BOT_TOKEN=your-bot-token
 
-# Run
-uv run atlas bots run telegram
+# Run locally
+uv run atlas bots run-telegram
+
+# Or run in Docker
+docker compose --profile bots up -d telegram-bot
 ```
 
 **Features:**
@@ -208,10 +214,13 @@ See [Container Deployment Guide](docs/deployment.md) for detailed instructions.
 
 ```bash
 # Slack bot (Socket Mode)
-uv run atlas bots run slack
+uv run atlas bots run-slack
 
 # Telegram bot (Polling)
-uv run atlas bots run telegram
+uv run atlas bots run-telegram
+
+# Or via Docker (production)
+docker compose --profile bots up -d
 ```
 
 ### Common Commands

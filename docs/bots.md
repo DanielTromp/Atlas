@@ -143,12 +143,25 @@ Users must link their platform accounts to their Atlas user account before they 
 
 No public URL required. The bot polls Telegram for updates.
 
+**Local Development:**
 ```bash
 uv run atlas bots run-telegram
 ```
 
+**Docker/Container Deployment (Production):**
+```bash
+# Start the Telegram bot container
+docker compose --profile bots up -d telegram-bot
+
+# View logs
+docker compose logs -f telegram-bot
+
+# Stop
+docker compose stop telegram-bot
+```
+
 - Runs as a long-lived process
-- Use `Ctrl+C` to stop
+- Use `Ctrl+C` to stop (local) or `docker compose stop` (container)
 - Ideal for internal/private deployments
 
 #### Webhook Mode (For Public Deployments)
@@ -220,9 +233,24 @@ Full-featured Slack integration using Socket Mode (no public endpoints required)
 
 ### Running
 
+#### Local Development
+
 ```bash
 # Start the Slack bot
-uv run atlas bots run slack
+uv run atlas bots run-slack
+```
+
+#### Docker/Container Deployment (Production)
+
+```bash
+# Start the Slack bot container
+docker compose --profile bots up -d slack-bot
+
+# View logs
+docker compose logs -f slack-bot
+
+# Stop
+docker compose stop slack-bot
 ```
 
 The bot uses Socket Mode, which creates an outbound WebSocket connection to Slack. No public URLs or webhooks required.
@@ -470,6 +498,96 @@ Logs all bot messages for audit and display.
 | cost_usd | float | Request cost |
 | duration_ms | int | Processing time |
 | error | str | Error message if any |
+
+## Container Deployment
+
+Both Slack and Telegram bots can run as separate containers for production deployments.
+
+### Quick Start
+
+```bash
+# Start all bots
+docker compose --profile bots up -d
+
+# Or start specific bot
+docker compose --profile bots up -d slack-bot
+docker compose --profile bots up -d telegram-bot
+```
+
+### Required Environment Variables
+
+Add to your `.env` file:
+
+```bash
+# Enable bots module
+ATLAS_MODULE_BOTS_ENABLED=1
+
+# Slack (Socket Mode - no public URL needed)
+SLACK_BOT_TOKEN=xoxb-your-bot-token
+SLACK_APP_TOKEN=xapp-your-app-level-token
+
+# Telegram (Polling Mode - no public URL needed)
+TELEGRAM_BOT_TOKEN=your-bot-token-from-botfather
+```
+
+### Container Features
+
+The bot containers include:
+
+- **Auto-restart**: Containers restart automatically on failure
+- **Log rotation**: Logs limited to 10MB with 3 file rotation
+- **VPN DNS**: Internal DNS servers configured for VPN access to internal services
+- **MongoDB integration**: Uses shared MongoDB for conversation storage
+
+### Monitoring
+
+```bash
+# View bot logs
+docker compose logs -f slack-bot
+docker compose logs -f telegram-bot
+
+# Check bot status
+docker compose ps slack-bot telegram-bot
+
+# Restart a bot
+docker compose restart slack-bot
+```
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Docker Compose Stack                          │
+├─────────────────────────────────────────────────────────────────┤
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
+│  │  atlas       │  │  slack-bot   │  │ telegram-bot │          │
+│  │  (API/UI)    │  │  (Socket)    │  │  (Polling)   │          │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘          │
+│         │                 │                 │                   │
+│         └────────────────┼────────────────┘                    │
+│                          │                                      │
+│                   ┌──────▼───────┐                              │
+│                   │   mongodb    │                              │
+│                   │  (Database)  │                              │
+│                   └──────────────┘                              │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Profiles
+
+| Profile | Services Included |
+|---------|-------------------|
+| (none) | atlas, mongodb |
+| `bots` | + slack-bot, telegram-bot |
+| `rag` | + qdrant |
+| `full` | All services |
+
+```bash
+# Examples
+docker compose up -d                      # Core only
+docker compose --profile bots up -d       # Core + bots
+docker compose --profile full up -d       # Everything
+```
 
 ## Troubleshooting
 

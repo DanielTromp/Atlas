@@ -415,6 +415,81 @@ Health check endpoint returns:
 - `401 Unauthorized` - Service running (auth required)
 - `5xx` - Service unhealthy
 
+## Bot Deployment
+
+The Slack and Telegram bots run as separate containers, allowing independent scaling and management.
+
+### Starting Bots
+
+```bash
+# Start all bots
+docker compose --profile bots up -d
+
+# Start specific bot
+docker compose --profile bots up -d slack-bot
+docker compose --profile bots up -d telegram-bot
+
+# View bot logs
+docker compose logs -f slack-bot
+docker compose logs -f telegram-bot
+```
+
+### Required Configuration
+
+Add to your `.env` file:
+
+```bash
+# Enable bots module
+ATLAS_MODULE_BOTS_ENABLED=1
+
+# Slack Bot (Socket Mode - no public URL required)
+SLACK_BOT_TOKEN=xoxb-your-bot-token
+SLACK_APP_TOKEN=xapp-your-app-level-token
+
+# Telegram Bot (Polling Mode - no public URL required)
+TELEGRAM_BOT_TOKEN=your-bot-token-from-botfather
+```
+
+### Bot Container Features
+
+| Feature | Description |
+|---------|-------------|
+| **Auto-restart** | `restart: unless-stopped` ensures uptime |
+| **Log rotation** | 10MB max size, 3 files retained |
+| **VPN DNS** | Internal DNS servers for VPN access |
+| **MongoDB** | Shared database for conversations |
+| **No build required** | Uses pre-built `atlas:latest` image |
+
+### Slack Bot Setup
+
+1. Create app at [api.slack.com/apps](https://api.slack.com/apps)
+2. Enable Socket Mode
+3. Generate App-Level Token with `connections:write` scope
+4. Add Bot Token Scopes: `app_mentions:read`, `chat:write`, `files:write`, `im:history`, `im:read`, `im:write`, `users:read`
+5. Subscribe to events: `message.im`, `app_mention`
+6. Install to workspace
+
+### Telegram Bot Setup
+
+1. Message [@BotFather](https://t.me/BotFather) on Telegram
+2. Send `/newbot` and follow prompts
+3. Copy the bot token to `.env`
+
+### Account Linking
+
+Users must link their platform accounts to Atlas:
+
+```bash
+# Generate verification code
+docker compose exec atlas atlas bots link-user <username> slack
+
+# User sends to bot
+!link <code>   # Slack
+/link <code>   # Telegram
+```
+
+See [Bot System Documentation](bots.md) for detailed setup and usage.
+
 ## Security Best Practices
 
 1. **Never commit `.env`** - Use secrets management in production
