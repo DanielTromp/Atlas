@@ -887,6 +887,7 @@ class PlaygroundRuntime:
             duration_ms: Duration in milliseconds
             error: Error message if any
         """
+        # Record to Playground usage (for Playground dashboard)
         try:
             usage_service = create_usage_service(session=self.db_session)
             record = UsageRecord(
@@ -906,7 +907,33 @@ class PlaygroundRuntime:
             )
             usage_service.record(record)
         except Exception as e:
-            logger.error(f"Failed to record usage: {e!s}", exc_info=True)
+            logger.error(f"Failed to record playground usage: {e!s}", exc_info=True)
+
+        # Also record to AI activity logs (for Settings > AI Usage dashboard)
+        try:
+            from infrastructure_atlas.ai.usage_service import create_usage_service as create_ai_usage_service
+
+            # Determine provider from model name or session config
+            provider = "anthropic"  # Default
+            if session.config_override:
+                provider = session.config_override.get("provider", provider)
+
+            ai_usage_service = create_ai_usage_service(session=self.db_session)
+            ai_usage_service.log_activity(
+                provider=provider,
+                model=model,
+                tokens_prompt=input_tokens,
+                tokens_completion=output_tokens,
+                generation_time_ms=duration_ms,
+                streamed=True,
+                finish_reason="stop" if not error else "error",
+                cancelled=False,
+                user_id=session.user_id,
+                session_id=session.session_id,
+                app_name=f"playground/{session.agent_id}",
+            )
+        except Exception as e:
+            logger.error(f"Failed to record AI activity: {e!s}", exc_info=True)
 
     def _load_session_from_db(self, session_id: str) -> PlaygroundSession | None:
         """Load a session from the database (MongoDB or SQLite)."""
