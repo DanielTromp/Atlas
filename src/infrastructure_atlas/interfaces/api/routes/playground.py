@@ -20,18 +20,44 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from infrastructure_atlas.agents.playground import (
-    AVAILABLE_AGENTS,
-    ChatEventType,
-    PlaygroundRuntime,
-)
-from infrastructure_atlas.agents.usage import create_usage_service
 from infrastructure_atlas.db.models import PlaygroundPreset, User
 from infrastructure_atlas.db.models import PlaygroundSession as DBSession
 from infrastructure_atlas.infrastructure.logging import get_logger
-from infrastructure_atlas.skills import get_skills_registry
 
 logger = get_logger(__name__)
+
+# Lazy imports for heavy AI modules (langchain, etc.)
+# These are imported at function call time to keep startup fast
+
+
+def _get_available_agents():
+    """Lazy import of AVAILABLE_AGENTS."""
+    from infrastructure_atlas.agents.playground import AVAILABLE_AGENTS
+    return AVAILABLE_AGENTS
+
+
+def _get_chat_event_type():
+    """Lazy import of ChatEventType."""
+    from infrastructure_atlas.agents.playground import ChatEventType
+    return ChatEventType
+
+
+def _get_playground_runtime_class():
+    """Lazy import of PlaygroundRuntime class."""
+    from infrastructure_atlas.agents.playground import PlaygroundRuntime
+    return PlaygroundRuntime
+
+
+def _get_skills_registry():
+    """Lazy import of skills registry."""
+    from infrastructure_atlas.skills import get_skills_registry
+    return get_skills_registry()
+
+
+def _create_usage_service():
+    """Lazy import of usage service."""
+    from infrastructure_atlas.agents.usage import create_usage_service
+    return create_usage_service()
 
 router = APIRouter(prefix="/playground", tags=["playground"])
 
@@ -56,9 +82,10 @@ def require_playground_permission(request: Request) -> None:
     require_permission(request, "playground.use")
 
 
-def get_playground_runtime(db: Session | None = None) -> PlaygroundRuntime:
+def get_playground_runtime(db: Session | None = None):
     """Get a PlaygroundRuntime instance."""
-    registry = get_skills_registry()
+    registry = _get_skills_registry()
+    PlaygroundRuntime = _get_playground_runtime_class()
     return PlaygroundRuntime(registry, db)
 
 
@@ -140,7 +167,8 @@ def list_agents(request: Request) -> list[dict[str, Any]]:
     """List all available agents with their configurations."""
     require_playground_permission(request)
 
-    return [agent.to_dict() for agent in AVAILABLE_AGENTS.values()]
+    available_agents = _get_available_agents()
+    return [agent.to_dict() for agent in available_agents.values()]
 
 
 @router.get("/agents/{agent_id}")
@@ -148,7 +176,8 @@ def get_agent(agent_id: str, request: Request) -> dict[str, Any]:
     """Get details about a specific agent."""
     require_playground_permission(request)
 
-    agent = AVAILABLE_AGENTS.get(agent_id)
+    available_agents = _get_available_agents()
+    agent = available_agents.get(agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
 
@@ -168,7 +197,8 @@ async def chat_with_agent(
     """
     require_playground_permission(request)
 
-    if agent_id not in AVAILABLE_AGENTS:
+    available_agents = _get_available_agents()
+    if agent_id not in available_agents:
         raise HTTPException(status_code=404, detail=f"Agent '{agent_id}' not found")
 
     db = get_db_session()
@@ -186,10 +216,13 @@ async def chat_with_agent(
         if body.config_override:
             config_override = body.config_override.model_dump(exclude_none=True)
 
+        ChatEventType = _get_chat_event_type()
+
         if body.stream:
             # Streaming response via SSE
             async def event_generator():
                 tool_calls = []
+                ChatEventType = _get_chat_event_type()
                 try:
                     async for event in runtime.chat(
                         agent_id=agent_id,
@@ -303,7 +336,7 @@ def list_skills(request: Request) -> list[dict[str, Any]]:
     """List all available skills with their actions."""
     require_playground_permission(request)
 
-    registry = get_skills_registry()
+    registry = _get_skills_registry()
     return registry.list_skills()
 
 
@@ -312,7 +345,7 @@ def get_skill(skill_name: str, request: Request) -> dict[str, Any]:
     """Get details about a specific skill including action schemas."""
     require_playground_permission(request)
 
-    registry = get_skills_registry()
+    registry = _get_skills_registry()
     skill = registry.get(skill_name)
 
     if not skill:
@@ -347,7 +380,7 @@ async def execute_skill_action(
     """Execute a skill action directly."""
     require_playground_permission(request)
 
-    registry = get_skills_registry()
+    registry = _get_skills_registry()
     skill = registry.get(skill_name)
 
     if not skill:
@@ -366,6 +399,7 @@ async def execute_skill_action(
             extra={"params": params},
         )
 
+    PlaygroundRuntime = _get_playground_runtime_class()
     runtime = PlaygroundRuntime(registry)
     result = await runtime.execute_skill(skill_name, action_name, params)
 
@@ -534,7 +568,8 @@ def create_preset(
 
     try:
         # Validate agent ID
-        if body.agent_id not in AVAILABLE_AGENTS:
+        available_agents = _get_available_agents()
+        if body.agent_id not in available_agents:
             raise HTTPException(status_code=400, detail=f"Invalid agent_id: {body.agent_id}")
 
         # Check for duplicate name
@@ -642,7 +677,7 @@ def get_user_usage_stats(
     require_playground_permission(request)
 
     user = get_current_user(request)
-    usage_service = create_usage_service()
+    usage_service = _create_usage_service()
     user_id = user.id if user else None
 
     # Get overall stats
@@ -666,7 +701,7 @@ def get_recent_usage(
     require_playground_permission(request)
 
     user = get_current_user(request)
-    usage_service = create_usage_service()
+    usage_service = _create_usage_service()
     user_id = user.id if user else None
 
     return usage_service.get_recent_usage(user_id=user_id, limit=limit)

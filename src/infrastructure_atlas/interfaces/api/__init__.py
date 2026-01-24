@@ -159,17 +159,14 @@ def bootstrap_api() -> APIRouter:
     except Exception as e:
         logger.warning(f"Atlas Agents routes not available: {e}")
 
-    # Agent Playground routes (imports langchain_anthropic - heavy)
-    if os.getenv("ATLAS_LAZY_AI_IMPORTS", "").lower() not in ("1", "true", "yes"):
-        try:
-            from .routes import playground
+    # Agent Playground routes (uses lazy imports internally for heavy AI modules)
+    try:
+        from .routes import playground
 
-            router.include_router(playground.router)
-            logger.info("Enabled Agent Playground API routes")
-        except Exception as e:
-            logger.warning(f"Agent Playground routes not available: {e}")
-    else:
-        logger.info("Skipping Agent Playground routes (ATLAS_LAZY_AI_IMPORTS=1)")
+        router.include_router(playground.router)
+        logger.info("Enabled Agent Playground API routes")
+    except Exception as e:
+        logger.warning(f"Agent Playground routes not available: {e}")
 
     # Bot platform routes (conditional on bots module)
     if registry.is_enabled("bots"):
