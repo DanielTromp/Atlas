@@ -995,6 +995,7 @@
   const $accountPasswordNew = document.getElementById('account-password-new');
   const $accountPasswordStatus = document.getElementById('account-password-status');
   const $accountPrefDataset = document.getElementById('account-pref-dataset');
+  const $accountPrefTimezone = document.getElementById('account-pref-timezone');
   const $accountThemeMount = document.getElementById('account-theme-mount');
   const $accountApiList = document.getElementById('account-api-list');
   const $accountApiForm = document.getElementById('account-api-form');
@@ -1006,6 +1007,7 @@
 
   const defaultChatProviders = ['azure_openai', 'openai', 'anthropic', 'openrouter', 'gemini'];
   const ACCOUNT_DATASET_PREF_KEY = 'account_pref_dataset';
+  const ACCOUNT_TIMEZONE_PREF_KEY = 'account_pref_timezone';
 
   const chatProvidersState = {
     items: [],
@@ -1017,6 +1019,7 @@
     providers: [],
     menuOpen: false,
     prefDataset: null,
+    prefTimezone: 'Europe/Amsterdam',
   };
   const commvaultState = {
     tab: 'backups',
@@ -1730,6 +1733,9 @@
       if ($accountPrefDataset && accountState.prefDataset) {
         $accountPrefDataset.value = accountState.prefDataset;
       }
+      if ($accountPrefTimezone && accountState.prefTimezone) {
+        $accountPrefTimezone.value = accountState.prefTimezone;
+      }
     }
     updateAccountHash();
   }
@@ -1924,6 +1930,16 @@
   })();
   let dataset = savedDatasetPref || 'all';
   accountState.prefDataset = dataset;
+
+  // Load timezone preference
+  const savedTimezonePref = (() => {
+    try {
+      const val = localStorage.getItem(ACCOUNT_TIMEZONE_PREF_KEY);
+      if (val) return val;
+    } catch {}
+    return 'Europe/Amsterdam';
+  })();
+  accountState.prefTimezone = savedTimezonePref;
   page = 'export';
   const PAGE_PERSIST_KEY = 'atlas_active_page_v1';
   const ROUTABLE_PAGE_KEYS = [
@@ -2079,31 +2095,19 @@
   function formatRelativeTime(epochSeconds) {
     const seconds = Number(epochSeconds);
     if (!Number.isFinite(seconds) || seconds <= 0) return 'Never';
-    const nowMs = Date.now();
-    const diffMs = Math.max(0, nowMs - seconds * 1000);
-    const minuteMs = 60 * 1000;
-    if (diffMs < minuteMs) return 'just now';
-    const minutes = Math.round(diffMs / minuteMs);
-    if (minutes < 60) return `${minutes} minute${minutes === 1 ? '' : 's'} ago`;
-    const hours = Math.round(diffMs / (60 * minuteMs));
-    if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
-    const days = Math.round(diffMs / (24 * 60 * minuteMs));
-    if (days < 7) return `${days} day${days === 1 ? '' : 's'} ago`;
-    const weeks = Math.round(days / 7);
-    if (weeks < 5) return `${weeks} week${weeks === 1 ? '' : 's'} ago`;
     const date = new Date(seconds * 1000);
-    if (Number.isNaN(date.valueOf())) return 'Some time ago';
-    return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    if (Number.isNaN(date.valueOf())) return 'Unknown';
+    return amsDateTimeString(date);
   }
 
   function formatAbsoluteDate(iso, epochSeconds) {
     if (iso) {
       const dt = new Date(iso);
-      if (!Number.isNaN(dt.valueOf())) return dt.toLocaleString();
+      if (!Number.isNaN(dt.valueOf())) return amsDateTimeString(dt);
     }
     if (Number.isFinite(epochSeconds)) {
       const dt = new Date(epochSeconds * 1000);
-      if (!Number.isNaN(dt.valueOf())) return dt.toLocaleString();
+      if (!Number.isNaN(dt.valueOf())) return amsDateTimeString(dt);
     }
     return 'Unknown';
   }
@@ -3504,12 +3508,15 @@
     return String(a).localeCompare(String(b), undefined, { sensitivity: "base", numeric: true });
   };
 
-  // Amsterdam timezone helpers (Europe/Amsterdam)
-  const AMSTERDAM_TZ = 'Europe/Amsterdam';
-  function amsParts(date) {
+  // Timezone helpers (user-configurable, default Europe/Amsterdam)
+  const DEFAULT_TIMEZONE = 'Europe/Amsterdam';
+  function getUserTimezone() {
+    return accountState.prefTimezone || DEFAULT_TIMEZONE;
+  }
+  function tzParts(date) {
     try {
       return new Intl.DateTimeFormat('nl-NL', {
-        timeZone: AMSTERDAM_TZ,
+        timeZone: getUserTimezone(),
         year: 'numeric', month: '2-digit', day: '2-digit',
         hour: '2-digit', minute: '2-digit', second: '2-digit',
         hour12: false,
@@ -3521,39 +3528,36 @@
     for (const p of parts || []) obj[p.type] = p.value;
     return obj;
   }
+  // Keep old function names as aliases for compatibility
+  function amsParts(date) { return tzParts(date); }
   function amsDateString(date) {
-    const p = partsToObj(amsParts(date));
+    const p = partsToObj(tzParts(date));
     const day = p.day || '00';
     const month = p.month || '00';
     const year = p.year || '0000';
-    return `${day}-${month}-${year}`;
+    return `${day}/${month}/${year}`;
   }
   function amsTimeString(date, options = {}) {
-    const includeSeconds = options.includeSeconds ?? false;
-    const p = partsToObj(amsParts(date));
+    const includeSeconds = options.includeSeconds ?? true; // Default to include seconds
+    const p = partsToObj(tzParts(date));
     const hour = p.hour || '00';
     const minute = p.minute || '00';
     const second = p.second || '00';
     return includeSeconds ? `${hour}:${minute}:${second}` : `${hour}:${minute}`;
   }
   function amsDateTimeString(date, options = {}) {
-    return `${amsDateString(date)} ${amsTimeString(date, options)}`;
+    return `${amsDateString(date)}, ${amsTimeString(date, options)}`;
   }
   function sameAmsDay(a, b) {
     return amsDateString(a) === amsDateString(b);
   }
   function amsTzShort(date) {
+    const tz = getUserTimezone();
     try {
-      const parts = new Intl.DateTimeFormat('en-GB', { timeZone: AMSTERDAM_TZ, timeZoneName: 'long' }).formatToParts(date);
-      const tz = (parts.find(p => p.type === 'timeZoneName') || {}).value || '';
-      if (/summer/i.test(tz)) return 'CEST';
-      if (/standard/i.test(tz)) return 'CET';
-    } catch {}
-    try {
-      const parts = new Intl.DateTimeFormat('en-GB', { timeZone: AMSTERDAM_TZ, timeZoneName: 'short' }).formatToParts(date);
+      const parts = new Intl.DateTimeFormat('en-GB', { timeZone: tz, timeZoneName: 'short' }).formatToParts(date);
       return (parts.find(p => p.type === 'timeZoneName') || {}).value || '';
     } catch {}
-    return 'CET';
+    return '';
   }
 
   // Layout helpers
@@ -4911,6 +4915,19 @@
           fetchData();
         }
       }
+    });
+  }
+
+  // Timezone preference handler
+  if ($accountPrefTimezone) {
+    // Set initial value from saved preference
+    $accountPrefTimezone.value = accountState.prefTimezone || 'Europe/Amsterdam';
+
+    $accountPrefTimezone.addEventListener('change', (e) => {
+      const val = $accountPrefTimezone.value || 'Europe/Amsterdam';
+      accountState.prefTimezone = val;
+      try { localStorage.setItem(ACCOUNT_TIMEZONE_PREF_KEY, val); } catch {}
+      // Note: UI will update timestamps on next render/refresh
     });
   }
 
@@ -9296,7 +9313,7 @@
         const meta = document.createElement('div');
         meta.className = 'backup-meta';
         const size = backup.size ? `${(backup.size / 1024 / 1024).toFixed(2)} MB` : 'Unknown size';
-        const date = backup.created_at ? new Date(backup.created_at).toLocaleString() : '';
+        const date = backup.created_at ? amsDateTimeString(new Date(backup.created_at)) : '';
         meta.textContent = `${size} • ${date}`;
         
         info.appendChild(name);
@@ -9485,7 +9502,7 @@
         item.className = 'backup-list-item';
 
         const sizeMB = exp.size ? (exp.size / 1024 / 1024).toFixed(2) : '?';
-        const dateStr = exp.created_at ? new Date(exp.created_at).toLocaleString() : '—';
+        const dateStr = exp.created_at ? amsDateTimeString(new Date(exp.created_at)) : '—';
 
         item.innerHTML = `
           <div class="backup-info">
@@ -9791,7 +9808,7 @@
                 <td>${u.requests.toLocaleString()}</td>
                 <td>${(u.tokens || 0).toLocaleString()}</td>
                 <td>$${(u.cost_usd || 0).toFixed(4)}</td>
-                <td>${u.last_used ? new Date(u.last_used).toLocaleString() : '-'}</td>
+                <td>${u.last_used ? amsDateTimeString(new Date(u.last_used)) : '-'}</td>
               </tr>
             `).join('');
           }
@@ -9809,7 +9826,7 @@
           } else {
             recentBody.innerHTML = recent.map(r => `
               <tr>
-                <td>${new Date(r.created_at).toLocaleString()}</td>
+                <td>${amsDateTimeString(new Date(r.created_at))}</td>
                 <td>${r.username || 'anonymous'}</td>
                 <td>${r.client || 'web'}</td>
                 <td>@${r.agent_id}</td>
@@ -10249,7 +10266,7 @@
       $aiActivityBody.innerHTML = '<tr><td colspan="7" class="loading">No activity logs found.</td></tr>';
     } else {
       $aiActivityBody.innerHTML = logs.map(log => {
-        const ts = log.created_at ? new Date(log.created_at).toLocaleString() : '-';
+        const ts = log.created_at ? amsDateTimeString(new Date(log.created_at)) : '-';
         const tokens = `${log.tokens_prompt || 0}/${log.tokens_completion || 0}`;
         const speed = log.tokens_per_second ? `${log.tokens_per_second.toFixed(1)} t/s` : '-';
         const sessionId = log.session_id ? log.session_id.substring(0, 8) + '...' : '-';
@@ -10448,12 +10465,8 @@
   function formatRelativeTimeIso(isoStr) {
     if (!isoStr) return 'Never';
     const date = new Date(isoStr);
-    const now = new Date();
-    const diff = (now - date) / 1000;
-    if (diff < 60) return 'Just now';
-    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-    return date.toLocaleDateString();
+    if (Number.isNaN(date.getTime())) return isoStr;
+    return amsDateTimeString(date);
   }
 
   async function loadRAGSpaces() {
