@@ -1,0 +1,51 @@
+# Qdrant values for Infrastructure Atlas
+# Deploy with: helm install qdrant qdrant/qdrant -n infra -f qdrant-values.yaml
+
+# Single replica for development
+replicaCount: 1
+
+# Persistence
+persistence:
+  enabled: true
+  size: 5Gi
+  # storageClass: ""
+
+# Resources
+resources:
+  requests:
+    memory: "256Mi"
+    cpu: "100m"
+  limits:
+    memory: "1Gi"
+    cpu: "500m"
+
+# Service
+service:
+  type: ClusterIP
+  ports:
+    rest: 6333
+    grpc: 6334
+
+# Configuration
+config:
+  log_level: INFO
+  
+# API key (optional, for production)
+# apiKey: ""
+
+# Health checks
+livenessProbe:
+  enabled: true
+  httpGet:
+    path: /readyz
+    port: 6333
+  initialDelaySeconds: 30
+  periodSeconds: 10
+
+readinessProbe:
+  enabled: true
+  httpGet:
+    path: /readyz
+    port: 6333
+  initialDelaySeconds: 5
+  periodSeconds: 5

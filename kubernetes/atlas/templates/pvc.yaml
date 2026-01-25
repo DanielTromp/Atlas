@@ -1,0 +1,37 @@
+{{- $fullName := include "atlas.fullname" . -}}
+{{- if .Values.atlas.persistence.data.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullName }}-data
+  labels:
+    {{- include "atlas.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.atlas.persistence.data.accessMode }}
+  {{- if .Values.atlas.persistence.data.storageClass }}
+  storageClassName: {{ .Values.atlas.persistence.data.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.atlas.persistence.data.size }}
+{{- end }}
+{{- if .Values.atlas.persistence.logs.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullName }}-logs
+  labels:
+    {{- include "atlas.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.atlas.persistence.logs.accessMode }}
+  {{- if .Values.atlas.persistence.logs.storageClass }}
+  storageClassName: {{ .Values.atlas.persistence.logs.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.atlas.persistence.logs.size }}
+{{- end }}

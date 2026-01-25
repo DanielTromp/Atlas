@@ -1,0 +1,40 @@
+# MongoDB values for Infrastructure Atlas
+# Deploy with: helm install mongodb bitnami/mongodb -n infra -f mongodb-values.yaml
+
+# Single node for development
+architecture: standalone
+
+# Authentication
+auth:
+  enabled: false  # Disable for simplicity in dev, enable in prod
+  # rootPassword: ""
+  # rootUser: root
+
+# Persistence
+persistence:
+  enabled: true
+  size: 8Gi
+  # storageClass: ""
+
+# Resources
+resources:
+  requests:
+    memory: "256Mi"
+    cpu: "100m"
+  limits:
+    memory: "1Gi"
+    cpu: "500m"
+
+# Service
+service:
+  type: ClusterIP
+  port: 27017
+
+# Metrics (optional)
+metrics:
+  enabled: false
+  # serviceMonitor:
+  #   enabled: true
+
+# Logging
+# Note: MongoDB logs will be collected by Promtail

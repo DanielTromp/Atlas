@@ -1,0 +1,76 @@
+{{- if .Values.slackBot.enabled -}}
+{{- $fullName := include "atlas.fullname" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-slack-bot
+  labels:
+    {{- include "atlas.labels" . | nindent 4 }}
+    app.kubernetes.io/component: slack-bot
+spec:
+  replicas: {{ .Values.slackBot.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "atlas.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: slack-bot
+  template:
+    metadata:
+      labels:
+        {{- include "atlas.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: slack-bot
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ $fullName }}
+      {{- if .Values.atlas.hostNetwork }}
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      {{- end }}
+      {{- if .Values.atlas.dnsConfig.nameservers }}
+      dnsConfig:
+        nameservers:
+          {{- toYaml .Values.atlas.dnsConfig.nameservers | nindent 10 }}
+      {{- end }}
+      containers:
+        - name: slack-bot
+          image: "{{ .Values.atlas.image.repository }}:{{ .Values.atlas.image.tag }}"
+          imagePullPolicy: {{ .Values.atlas.image.pullPolicy }}
+          command:
+            - python
+            - -m
+            - infrastructure_atlas.cli
+            - bots
+            - run-slack
+          envFrom:
+            - configMapRef:
+                name: {{ $fullName }}-config
+            - secretRef:
+                name: {{ if .Values.secrets.existingSecret }}{{ .Values.secrets.existingSecret }}{{ else }}{{ $fullName }}-secrets{{ end }}
+          resources:
+            {{- toYaml .Values.slackBot.resources | nindent 12 }}
+        {{- if .Values.vpnSidecar.enabled }}
+        - name: vpn
+          image: "{{ .Values.vpnSidecar.image.repository }}:{{ .Values.vpnSidecar.image.tag }}"
+          securityContext:
+            capabilities:
+              add:
+                - NET_ADMIN
+          volumeMounts:
+            - name: vpn-config
+              mountPath: /vpn
+              readOnly: true
+          resources:
+            {{- toYaml .Values.vpnSidecar.resources | nindent 12 }}
+        {{- end }}
+      {{- if .Values.vpnSidecar.enabled }}
+      volumes:
+        - name: vpn-config
+          secret:
+            secretName: {{ .Values.vpnSidecar.configSecret }}
+      {{- end }}
+{{- end }}

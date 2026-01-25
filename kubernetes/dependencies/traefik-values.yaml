@@ -1,0 +1,71 @@
+# Traefik Ingress Controller values
+# Works with Docker Desktop and Rancher Desktop
+#
+# Deploy with: helm install traefik traefik/traefik -n kube-system -f traefik-values.yaml
+
+# Deployment
+deployment:
+  replicas: 1
+
+# Ports
+ports:
+  web:
+    port: 8000
+    expose:
+      default: true
+    exposedPort: 80
+    protocol: TCP
+  websecure:
+    port: 8443
+    expose:
+      default: true
+    exposedPort: 443
+    protocol: TCP
+
+# Service - LoadBalancer werkt voor zowel Docker Desktop als Rancher
+service:
+  type: LoadBalancer
+  # Docker Desktop mapped LoadBalancer automatisch naar localhost
+  # Rancher Desktop doet hetzelfde
+
+# Ingress Class
+ingressClass:
+  enabled: true
+  isDefaultClass: true
+
+# Dashboard
+ingressRoute:
+  dashboard:
+    enabled: true
+    matchRule: Host(`traefik.local`) && (PathPrefix(`/dashboard`) || PathPrefix(`/api`))
+    entryPoints:
+      - web
+
+# Logs
+logs:
+  general:
+    level: INFO
+  access:
+    enabled: true
+    format: json
+
+# Resources - laag voor development
+resources:
+  requests:
+    cpu: "50m"
+    memory: "50Mi"
+  limits:
+    cpu: "200m"
+    memory: "150Mi"
+
+# Providers
+providers:
+  kubernetesIngress:
+    enabled: true
+    publishedService:
+      enabled: true
+
+# API/Dashboard beschikbaar (development only!)
+api:
+  dashboard: true
+  insecure: true

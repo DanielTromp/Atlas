@@ -1,0 +1,203 @@
+# Default values for Infrastructure Atlas
+# This is a YAML-formatted file.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Global settings
+# ─────────────────────────────────────────────────────────────────────────────
+global:
+  # Image pull secrets for private registries
+  imagePullSecrets: []
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Atlas API Server
+# ─────────────────────────────────────────────────────────────────────────────
+atlas:
+  replicaCount: 1
+
+  image:
+    repository: atlas
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  # Use host network for VPN access (development)
+  hostNetwork: false
+  dnsPolicy: ClusterFirst
+
+  # Custom DNS servers (for VPN/internal resolution)
+  dnsConfig:
+    nameservers: []
+    # - 10.0.10.101
+    # - 10.20.10.15
+    searches: []
+    options: []
+
+  service:
+    type: ClusterIP
+    port: 8000
+
+  ingress:
+    enabled: true
+    className: traefik
+    annotations: {}
+    hosts:
+      - host: atlas.local
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "2Gi"
+      cpu: "2000m"
+
+  # Uvicorn workers
+  workers: 4
+
+  # Health checks
+  livenessProbe:
+    httpGet:
+      path: /api/health
+      port: 8000
+    initialDelaySeconds: 60
+    periodSeconds: 30
+    timeoutSeconds: 10
+    failureThreshold: 3
+
+  readinessProbe:
+    httpGet:
+      path: /api/health
+      port: 8000
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  # Node selection
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+  # Extra environment variables
+  extraEnv: []
+
+  # Volume mounts for persistent data
+  persistence:
+    data:
+      enabled: true
+      size: 1Gi
+      storageClass: ""
+      accessMode: ReadWriteOnce
+    logs:
+      enabled: true
+      size: 1Gi
+      storageClass: ""
+      accessMode: ReadWriteOnce
+
+# ─────────────────────────────────────────────────────────────────────────────
+# VPN Sidecar (for production VPN access)
+# ─────────────────────────────────────────────────────────────────────────────
+vpnSidecar:
+  enabled: false
+  type: openvpn  # openvpn or wireguard
+  image:
+    repository: dperson/openvpn-client
+    tag: latest
+  # Name of secret containing VPN config
+  configSecret: vpn-config
+  # Secret key containing the config file
+  configKey: vpn.ovpn
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "50m"
+    limits:
+      memory: "128Mi"
+      cpu: "100m"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Slack Bot
+# ─────────────────────────────────────────────────────────────────────────────
+slackBot:
+  enabled: false
+  replicaCount: 1
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Telegram Bot
+# ─────────────────────────────────────────────────────────────────────────────
+telegramBot:
+  enabled: false
+  replicaCount: 1
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+config:
+  # Log level: DEBUG, INFO, WARNING, ERROR
+  logLevel: INFO
+
+  # Storage backends
+  storageBackend: mongodb
+  cacheBackend: mongodb
+
+  # Module system
+  modulesEnabled: ""  # Empty = all enabled, or comma-separated list
+
+  # UI Theme
+  uiThemeDefault: silver-dark
+
+  # RAG Configuration
+  ragWatchedSpaces: ""  # JSON array, e.g. '["INFRA", "SE"]'
+  ragWatchedLabels: ""  # JSON array, e.g. '["procedure", "how-to"]'
+
+  # Zabbix Configuration (non-sensitive)
+  zabbixSeverities: ""     # e.g. "2,3,4"
+  zabbixGroupId: ""        # e.g. "123"
+  zabbixExcludeGroupPatterns: ""  # e.g. "Autoconfig%"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# External Services
+# ─────────────────────────────────────────────────────────────────────────────
+mongodb:
+  # Use external MongoDB or dependency chart
+  external: false
+  # If external:
+  uri: ""
+  # If using dependency (bitnami/mongodb):
+  host: mongodb.infra.svc.cluster.local
+  port: 27017
+  database: atlas
+  cacheDatabase: atlas_cache
+
+qdrant:
+  external: false
+  host: qdrant.infra.svc.cluster.local
+  port: 6333
+  collection: confluence_chunks
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Secrets Reference
+# See values-secrets.example.yaml for the full list
+# ─────────────────────────────────────────────────────────────────────────────
+secrets:
+  # Name of existing secret (if using external secret management)
+  existingSecret: ""
+  # Or define inline (not recommended for production)
+  # These are defined in values-secrets.yaml

@@ -1,0 +1,8 @@
+# Secrets - NEVER commit these
+values-secrets.yaml
+*-secrets.yaml
+!*-secrets.example.yaml
+
+# Helm build artifacts
+charts/
+Chart.lock

@@ -1,0 +1,115 @@
+# Production values for Infrastructure Atlas
+# Use with: helm install atlas ./atlas -f values-prod.yaml -f values-secrets.yaml
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Production: Use VPN Sidecar instead of hostNetwork
+# ─────────────────────────────────────────────────────────────────────────────
+atlas:
+  replicaCount: 2
+
+  # Production: don't use hostNetwork, use VPN sidecar instead
+  hostNetwork: false
+  dnsPolicy: ClusterFirst
+
+  # Multiple workers for production
+  workers: 4
+
+  # Production resources
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "2Gi"
+      cpu: "2000m"
+
+  ingress:
+    enabled: true
+    className: traefik
+    annotations:
+      traefik.ingress.kubernetes.io/router.tls: "true"
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+    hosts:
+      - host: atlas.infra.enreach.local
+        paths:
+          - path: /
+            pathType: Prefix
+    tls:
+      - secretName: atlas-tls
+        hosts:
+          - atlas.infra.enreach.local
+
+  persistence:
+    data:
+      enabled: true
+      size: 10Gi
+      storageClass: ""  # Use default
+    logs:
+      enabled: true
+      size: 5Gi
+      storageClass: ""
+
+  # Pod anti-affinity for HA
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/name
+                  operator: In
+                  values:
+                    - atlas
+            topologyKey: kubernetes.io/hostname
+
+# ─────────────────────────────────────────────────────────────────────────────
+# VPN Sidecar for internal network access
+# ─────────────────────────────────────────────────────────────────────────────
+vpnSidecar:
+  enabled: true
+  type: openvpn
+  image:
+    repository: dperson/openvpn-client
+    tag: latest
+  configSecret: atlas-vpn-config
+  configKey: client.ovpn
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "50m"
+    limits:
+      memory: "128Mi"
+      cpu: "200m"
+
+# Enable bots in production
+slackBot:
+  enabled: true
+  replicaCount: 1
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+telegramBot:
+  enabled: true
+  replicaCount: 1
+
+# Production config
+config:
+  logLevel: INFO
+
+# Production MongoDB (external or managed)
+mongodb:
+  external: false
+  host: mongodb.infra.svc.cluster.local
+  port: 27017
+
+# Production Qdrant
+qdrant:
+  external: false
+  host: qdrant.infra.svc.cluster.local
+  port: 6333

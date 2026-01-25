@@ -1,0 +1,89 @@
+# Development values for Infrastructure Atlas
+# Works with Docker Desktop and Rancher Desktop
+#
+# Use with: helm install atlas ./atlas -f values-dev.yaml -f values-secrets.yaml
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Development: Use hostNetwork for VPN access
+# ─────────────────────────────────────────────────────────────────────────────
+atlas:
+  replicaCount: 1
+
+  image:
+    repository: atlas
+    tag: latest
+    # BELANGRIJK: Never voor lokaal gebouwde images
+    pullPolicy: Never
+
+  # CRITICAL: hostNetwork geeft pods toegang tot host's VPN tunnel
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+
+  # VPN DNS servers voor interne service resolution
+  # Pas aan naar je eigen VPN DNS servers
+  dnsConfig:
+    nameservers:
+      - 10.0.10.101
+      - 10.20.10.15
+    options:
+      - name: ndots
+        value: "1"
+
+  # Single worker voor development
+  workers: 1
+
+  # Lagere resource limits voor laptop
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "1Gi"
+      cpu: "1000m"
+
+  ingress:
+    enabled: true
+    className: traefik
+    hosts:
+      - host: atlas.local
+        paths:
+          - path: /
+            pathType: Prefix
+
+  # Development: gebruik local-path storage (Docker Desktop default)
+  persistence:
+    data:
+      enabled: true
+      size: 500Mi
+      storageClass: ""  # Gebruik default StorageClass
+    logs:
+      enabled: true
+      size: 500Mi
+      storageClass: ""
+
+# VPN Sidecar niet nodig met hostNetwork
+vpnSidecar:
+  enabled: false
+
+# Bots uit in development (tenzij je ze wilt testen)
+slackBot:
+  enabled: false
+
+telegramBot:
+  enabled: false
+
+# Development logging
+config:
+  logLevel: DEBUG
+
+# Local MongoDB (deployed via bitnami/mongodb chart)
+mongodb:
+  external: false
+  host: mongodb.infra.svc.cluster.local
+  port: 27017
+
+# Local Qdrant
+qdrant:
+  external: false
+  host: qdrant.infra.svc.cluster.local
+  port: 6333

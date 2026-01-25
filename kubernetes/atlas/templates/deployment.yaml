@@ -1,0 +1,130 @@
+{{- $fullName := include "atlas.fullname" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}
+  labels:
+    {{- include "atlas.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  replicas: {{ .Values.atlas.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "atlas.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        {{- include "atlas.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: api
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secrets.yaml") . | sha256sum }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ $fullName }}
+      {{- if .Values.atlas.hostNetwork }}
+      hostNetwork: true
+      dnsPolicy: {{ .Values.atlas.dnsPolicy | default "ClusterFirstWithHostNet" }}
+      {{- else }}
+      dnsPolicy: {{ .Values.atlas.dnsPolicy | default "ClusterFirst" }}
+      {{- end }}
+      {{- if .Values.atlas.dnsConfig.nameservers }}
+      dnsConfig:
+        nameservers:
+          {{- toYaml .Values.atlas.dnsConfig.nameservers | nindent 10 }}
+        {{- if .Values.atlas.dnsConfig.searches }}
+        searches:
+          {{- toYaml .Values.atlas.dnsConfig.searches | nindent 10 }}
+        {{- end }}
+        {{- if .Values.atlas.dnsConfig.options }}
+        options:
+          {{- toYaml .Values.atlas.dnsConfig.options | nindent 10 }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: atlas
+          image: "{{ .Values.atlas.image.repository }}:{{ .Values.atlas.image.tag }}"
+          imagePullPolicy: {{ .Values.atlas.image.pullPolicy }}
+          command:
+            - uvicorn
+            - infrastructure_atlas.api.app:app
+            - --host
+            - "0.0.0.0"
+            - --port
+            - "8000"
+            - --workers
+            - "{{ .Values.atlas.workers }}"
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ $fullName }}-config
+            - secretRef:
+                name: {{ if .Values.secrets.existingSecret }}{{ .Values.secrets.existingSecret }}{{ else }}{{ $fullName }}-secrets{{ end }}
+          {{- if .Values.atlas.extraEnv }}
+          env:
+            {{- toYaml .Values.atlas.extraEnv | nindent 12 }}
+          {{- end }}
+          livenessProbe:
+            {{- toYaml .Values.atlas.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.atlas.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.atlas.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+            - name: logs
+              mountPath: /app/logs
+        {{- if .Values.vpnSidecar.enabled }}
+        - name: vpn
+          image: "{{ .Values.vpnSidecar.image.repository }}:{{ .Values.vpnSidecar.image.tag }}"
+          securityContext:
+            capabilities:
+              add:
+                - NET_ADMIN
+          volumeMounts:
+            - name: vpn-config
+              mountPath: /vpn
+              readOnly: true
+          resources:
+            {{- toYaml .Values.vpnSidecar.resources | nindent 12 }}
+        {{- end }}
+      volumes:
+        - name: data
+          {{- if .Values.atlas.persistence.data.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ $fullName }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: logs
+          {{- if .Values.atlas.persistence.logs.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ $fullName }}-logs
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- if .Values.vpnSidecar.enabled }}
+        - name: vpn-config
+          secret:
+            secretName: {{ .Values.vpnSidecar.configSecret }}
+        {{- end }}
+      {{- with .Values.atlas.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.atlas.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.atlas.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
