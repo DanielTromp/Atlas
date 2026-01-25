@@ -10,7 +10,7 @@ data:
   LOG_LEVEL: {{ .Values.config.logLevel | quote }}
   ATLAS_LOG_LEVEL: {{ .Values.config.logLevel | quote }}
   ATLAS_LOG_DIR: "logs"
-  ATLAS_LOG_FILE: "logs/atlas.log"
+  ATLAS_LOG_FILE: "atlas.log"
   UI_THEME_DEFAULT: {{ .Values.config.uiThemeDefault | quote }}
   
   # Storage backends

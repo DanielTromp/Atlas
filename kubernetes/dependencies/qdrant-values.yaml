@@ -19,12 +19,9 @@ resources:
     memory: "1Gi"
     cpu: "500m"
 
-# Service
+# Service - use default ports (6333 HTTP, 6334 gRPC)
 service:
   type: ClusterIP
-  ports:
-    rest: 6333
-    grpc: 6334
 
 # Configuration
 config:
@@ -36,16 +33,10 @@ config:
 # Health checks
 livenessProbe:
   enabled: true
-  httpGet:
-    path: /readyz
-    port: 6333
   initialDelaySeconds: 30
   periodSeconds: 10
 
 readinessProbe:
   enabled: true
-  httpGet:
-    path: /readyz
-    port: 6333
   initialDelaySeconds: 5
   periodSeconds: 5

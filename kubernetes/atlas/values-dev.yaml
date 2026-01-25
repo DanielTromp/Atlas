@@ -15,9 +15,10 @@ atlas:
     # BELANGRIJK: Never voor lokaal gebouwde images
     pullPolicy: Never
 
-  # CRITICAL: hostNetwork geeft pods toegang tot host's VPN tunnel
-  hostNetwork: true
-  dnsPolicy: ClusterFirstWithHostNet
+  # NOTE: hostNetwork disabled to avoid port conflicts
+  # Enable if you need VPN tunnel access from pod
+  hostNetwork: false
+  dnsPolicy: ClusterFirst
 
   # VPN DNS servers voor interne service resolution
   # Pas aan naar je eigen VPN DNS servers
