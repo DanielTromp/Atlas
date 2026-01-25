@@ -19,6 +19,13 @@ from .pricing import PRICING, calculate_cost
 logger = get_logger(__name__)
 
 
+def _isoformat_utc(dt: datetime | None) -> str | None:
+    """Format datetime as ISO string with UTC timezone suffix."""
+    if dt is None:
+        return None
+    return (dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt).isoformat()
+
+
 @dataclass
 class UsageStats:
     """Aggregated usage statistics."""
@@ -211,7 +218,7 @@ class AIUsageService:
         return {
             "id": log.id,
             "generation_id": log.generation_id,
-            "created_at": log.created_at.isoformat() if log.created_at else None,
+            "created_at": _isoformat_utc(log.created_at),
             "provider": log.provider,
             "model": log.model,
             "model_provider": log.model_provider,
@@ -740,7 +747,7 @@ class MongoDBIAUsageService:
         return {
             "id": str(log.get("_id", "")),
             "generation_id": log.get("generation_id"),
-            "created_at": log["created_at"].isoformat() if log.get("created_at") else None,
+            "created_at": _isoformat_utc(log.get("created_at")),
             "provider": log.get("provider"),
             "model": log.get("model"),
             "model_provider": log.get("model_provider"),

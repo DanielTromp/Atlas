@@ -4920,14 +4920,10 @@
 
   // Timezone preference handler
   if ($accountPrefTimezone) {
-    // Set initial value from saved preference
-    $accountPrefTimezone.value = accountState.prefTimezone || 'Europe/Amsterdam';
-
-    $accountPrefTimezone.addEventListener('change', (e) => {
-      const val = $accountPrefTimezone.value || 'Europe/Amsterdam';
-      accountState.prefTimezone = val;
-      try { localStorage.setItem(ACCOUNT_TIMEZONE_PREF_KEY, val); } catch {}
-      // Note: UI will update timestamps on next render/refresh
+    $accountPrefTimezone.value = accountState.prefTimezone || DEFAULT_TIMEZONE;
+    $accountPrefTimezone.addEventListener('change', () => {
+      accountState.prefTimezone = $accountPrefTimezone.value || DEFAULT_TIMEZONE;
+      try { localStorage.setItem(ACCOUNT_TIMEZONE_PREF_KEY, accountState.prefTimezone); } catch {}
     });
   }
 
@@ -5117,7 +5113,7 @@
       const d = new Date(value);
       if (Number.isNaN(d.getTime())) return '';
       const formatter = new Intl.DateTimeFormat('nl-NL', {
-        timeZone: AMSTERDAM_TZ,
+        timeZone: getUserTimezone(),
         month: 'short',
         day: '2-digit',
         hour: '2-digit',
@@ -14465,7 +14461,7 @@
           </span>
           ${ticket.linked_jira_key ? `<span class="meta-item"><a href="${ticket.linked_jira_url}" target="_blank" rel="noopener">${ticket.linked_jira_key}</a></span>` : ''}
           ${ticket.created_jira_key ? `<span class="meta-item">Created: <a href="${ticket.created_jira_url}" target="_blank" rel="noopener">${ticket.created_jira_key}</a></span>` : ''}
-          <span class="meta-item">${new Date(ticket.created_at).toLocaleDateString()}</span>
+          <span class="meta-item">${amsDateString(new Date(ticket.created_at))}</span>
         </div>
         ${ticket.suggested_labels?.length ? `<div class="draft-card-labels">${ticket.suggested_labels.map(l => `<span class="draft-card-label">${escapeHtml(l)}</span>`).join('')}</div>` : ''}
       </div>

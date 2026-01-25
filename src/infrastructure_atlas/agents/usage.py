@@ -22,6 +22,13 @@ from infrastructure_atlas.infrastructure.logging import get_logger
 logger = get_logger(__name__)
 
 
+def _isoformat_utc(dt: datetime | None) -> str | None:
+    """Format datetime as ISO string with UTC timezone suffix."""
+    if dt is None:
+        return None
+    return (dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt).isoformat()
+
+
 # ============================================================================
 # Model Pricing (USD per 1M tokens) - Update as needed
 # ============================================================================
@@ -372,7 +379,7 @@ class UsageService:
                 "tool_calls": len(r.tool_calls) if r.tool_calls else 0,
                 "duration_ms": r.duration_ms,
                 "error": r.error[:100] if r.error else None,
-                "created_at": r.created_at.isoformat(),
+                "created_at": _isoformat_utc(r.created_at),
             }
             for r in results
         ]
@@ -647,7 +654,7 @@ class MongoDBUsageService:
                 "tool_calls": len(r.get("tool_calls") or []),
                 "duration_ms": r.get("duration_ms"),
                 "error": error[:100] if error else None,
-                "created_at": r["created_at"].isoformat() if r.get("created_at") else None,
+                "created_at": _isoformat_utc(r.get("created_at")),
             })
 
         return results
