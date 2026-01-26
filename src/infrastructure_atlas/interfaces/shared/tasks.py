@@ -84,17 +84,15 @@ def _data_dir() -> Path:
 
 
 def _command_with_uv(args: Sequence[str]) -> list[str]:
-    """Build command with uv if available, otherwise use python."""
+    """Build command with uv if available, otherwise use python.
+
+    Args should NOT include "atlas" - this function adds the correct prefix:
+    - With uv: ["uv", "run", "atlas", *args]
+    - Without uv: [sys.executable, "-m", "infrastructure_atlas.cli", *args]
+    """
     if shutil.which("uv"):
-        return ["uv", "run", *args]
+        return ["uv", "run", "atlas", *args]
     return [sys.executable, "-m", "infrastructure_atlas.cli", *args]
-
-
-def _command_with_uv_python(script_path: str, args: Sequence[str]) -> list[str]:
-    """Build python command with uv if available."""
-    if shutil.which("uv"):
-        return ["uv", "run", "python", script_path, *args]
-    return [sys.executable, script_path, *args]
 
 
 def _append_task_output(buffer: list[str], line: str) -> None:
@@ -106,14 +104,14 @@ def _append_task_output(buffer: list[str], line: str) -> None:
 
 def _build_netbox_cache_command(defn: DatasetDefinition, meta: DatasetMetadata) -> list[str]:
     """Build command to refresh NetBox cache."""
-    return _command_with_uv(["atlas", "export", "cache"])
+    return _command_with_uv(["export", "cache"])
 
 
 def _make_vcenter_command_builder(config_id: str) -> CommandBuilder:
     """Create a command builder for vCenter refresh."""
 
     def _builder(_: DatasetDefinition, __: DatasetMetadata) -> list[str]:
-        return _command_with_uv(["atlas", "vcenter", "refresh", "--id", config_id])
+        return _command_with_uv(["vcenter", "refresh", "--id", config_id])
 
     return _builder
 
@@ -156,10 +154,17 @@ def _build_commvault_metadata(defn: DatasetDefinition) -> DatasetMetadata:
     return DatasetMetadata(definition=defn, files=files, last_updated=last_updated)
 
 
-def _build_commvault_command(defn: DatasetDefinition, meta: DatasetMetadata) -> list[str]:
-    """Build command to refresh all Commvault caches (backups, plans, storage)."""
-    script = str(project_root() / "scripts" / "refresh_commvault.py")
-    return _command_with_uv_python(script, [])
+def _build_commvault_command(defn: DatasetDefinition, meta: DatasetMetadata) -> list[str] | None:
+    """Build command to refresh all Commvault caches (backups, plans, storage).
+
+    Returns None because Commvault caches are refreshed via API endpoints:
+    - POST /commvault/backups/refresh
+    - GET /commvault/storage?refresh=1
+    - GET /commvault/plans?refresh=1
+
+    Use the web UI or API directly to refresh Commvault data.
+    """
+    return None
 
 
 def _collect_task_dataset_definitions() -> list[DatasetDefinition]:
@@ -242,7 +247,7 @@ def _make_foreman_command_builder(config_id: str) -> CommandBuilder:
     """Create a command builder for Foreman refresh."""
 
     def _builder(_: DatasetDefinition, __: DatasetMetadata) -> list[str]:
-        return _command_with_uv(["atlas", "foreman", "refresh", "--config-id", config_id])
+        return _command_with_uv(["foreman", "refresh", "--config-id", config_id])
 
     return _builder
 
