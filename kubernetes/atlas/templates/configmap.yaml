@@ -46,6 +46,13 @@ data:
   ATLAS_RAG_WATCHED_LABELS: {{ .Values.config.ragWatchedLabels | quote }}
   {{- end }}
 
+  # Commvault config
+  {{- if .Values.config.commvaultVerifyTls }}
+  COMMVAULT_VERIFY_TLS: {{ .Values.config.commvaultVerifyTls | quote }}
+  {{- else }}
+  COMMVAULT_VERIFY_TLS: "0"
+  {{- end }}
+
   # Zabbix config (non-sensitive)
   {{- if .Values.config.zabbixSeverities }}
   ZABBIX_SEVERITIES: {{ .Values.config.zabbixSeverities | quote }}
