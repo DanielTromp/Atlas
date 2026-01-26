@@ -19,7 +19,19 @@ loki:
   
   config:
     auth_enabled: false
-    
+
+    # Query frontend settings to handle dashboard with multiple panels
+    frontend:
+      max_outstanding_per_tenant: 2048
+      compress_responses: true
+
+    query_range:
+      parallelise_shardable_queries: false
+      max_retries: 5
+
+    querier:
+      max_concurrent: 20
+
     ingester:
       chunk_idle_period: 3m
       chunk_block_size: 262144
