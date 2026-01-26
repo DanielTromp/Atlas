@@ -1,6 +1,18 @@
 # Getting Started
 
-This guide walks you through installing and configuring Infrastructure Atlas.
+This guide walks you through installing and configuring Infrastructure Atlas for local development.
+
+> **For production deployments**, see the [Kubernetes Deployment Guide](../kubernetes/README.md) which includes MongoDB, Qdrant, logging, and monitoring.
+
+## Deployment Options
+
+| Method | Use Case | Guide |
+|--------|----------|-------|
+| **Kubernetes** | Production, full stack | [kubernetes/README.md](../kubernetes/README.md) |
+| **Docker** | Simple container deployment | [deployment.md](deployment.md) |
+| **Local** | Development (this guide) | Below |
+
+---
 
 ## Prerequisites
 
@@ -122,6 +134,11 @@ ATLAS_SSL_KEYFILE=certs/localhost-key.pem
 
 ## Next Steps
 
+### Deployment
+- [Kubernetes Deployment](../kubernetes/README.md) — **Recommended** for production
+- [Container Deployment](deployment.md) — Docker/Podman options
+
+### Configuration & Usage
 - [Configuration](configuration.md) — All environment variables
 - [CLI Reference](cli-reference.md) — Complete command guide
 - [Web UI Guide](web-ui.md) — Frontend features

@@ -1,22 +1,71 @@
-# Container Deployment Guide
+# Deployment Guide
 
-This guide covers deploying Infrastructure Atlas using Docker or Podman containers.
+This guide covers all deployment options for Infrastructure Atlas.
 
-## Quick Start
+## Deployment Options
+
+| Method | Best For | Stack Included |
+|--------|----------|----------------|
+| **[Kubernetes](#kubernetes-deployment)** | Production, full observability | MongoDB, Qdrant, Loki, Grafana, Traefik |
+| **[Docker](#docker-deployment)** | Simple single-server deployments | Atlas only (bring your own DB) |
+| **[Local](#local-development)** | Development and testing | Atlas only |
+
+---
+
+## Kubernetes Deployment
+
+**Recommended for production.** Includes the complete stack with logging and monitoring.
+
+See the full guide: **[kubernetes/README.md](../kubernetes/README.md)**
+
+### Quick Start
+
+```bash
+cd kubernetes
+
+# Configure secrets
+cp atlas/values-secrets.example.yaml atlas/values-secrets.yaml
+# Edit with your credentials
+
+# Deploy everything
+./deploy.sh
+
+# Access services
+kubectl port-forward svc/atlas 8000:8000 -n atlas
+open http://localhost:8000/app/
+```
+
+### What's Included
+
+- **Atlas API** — FastAPI server with Web UI
+- **MongoDB** — Primary database (Bitnami Helm chart)
+- **Qdrant** — Vector database for RAG search
+- **Loki Stack** — Log aggregation (Loki + Promtail + Grafana)
+- **Traefik** — Ingress controller
+- **Slack/Telegram Bots** — Optional chat integrations
+
+---
+
+## Docker Deployment
+
+For simpler deployments without Kubernetes orchestration.
+
+### Quick Start
 
 ```bash
 # 1. Configure environment
 cp .env.example .env
 # Edit .env with your credentials
 
-# 2. Start the stack
-docker compose up -d
+# 2. Build and run
+docker build -t atlas:latest .
+docker run -d -p 8000:8000 --env-file .env --name atlas atlas:latest
 
 # 3. Access the web UI
 open http://localhost:8000/app/
 ```
 
-## Architecture
+### Architecture
 
 The containerized deployment includes:
 
@@ -506,3 +555,76 @@ docker scout cves atlas:latest
 # Or with trivy
 trivy image atlas:latest
 ```
+
+---
+
+## Local Development
+
+For development without containers, run Atlas directly with Python.
+
+### Prerequisites
+
+- Python 3.11+
+- [uv](https://github.com/astral-sh/uv) package manager
+
+### Quick Start
+
+```bash
+# Configure environment
+cp .env.example .env
+# Edit .env with credentials
+
+# Start development server (auto-reload)
+uv run atlas api serve --host 127.0.0.1 --port 8000
+
+# Or production mode (multiple workers)
+uv run atlas api prod --host 0.0.0.0 --port 8000 --workers 4
+```
+
+### Performance Optimization
+
+```bash
+# Skip MongoDB health check (when DB is known available)
+ATLAS_SKIP_DB_HEALTH_CHECK=1 uv run atlas api serve
+
+# Defer loading heavy AI libraries
+ATLAS_LAZY_AI_IMPORTS=1 uv run atlas api serve
+
+# Combined (fastest startup)
+ATLAS_SKIP_DB_HEALTH_CHECK=1 ATLAS_LAZY_AI_IMPORTS=1 uv run atlas api serve
+```
+
+### HTTPS (Optional)
+
+```bash
+# Generate self-signed certificate
+mkdir -p certs
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout certs/localhost-key.pem \
+  -out certs/localhost.pem \
+  -subj "/CN=localhost"
+
+# Run with HTTPS
+uv run atlas api serve \
+  --host 127.0.0.1 --port 8443 \
+  --ssl-certfile certs/localhost.pem \
+  --ssl-keyfile certs/localhost-key.pem
+```
+
+---
+
+## Choosing a Deployment Method
+
+| Consideration | Kubernetes | Docker | Local |
+|---------------|------------|--------|-------|
+| **Production ready** | ✅ | ⚠️ | ❌ |
+| **Full stack included** | ✅ | ❌ | ❌ |
+| **Logging/Monitoring** | ✅ | ❌ | ❌ |
+| **High availability** | ✅ | ❌ | ❌ |
+| **Easy setup** | ⚠️ | ✅ | ✅ |
+| **Development iteration** | ⚠️ | ⚠️ | ✅ |
+
+**Recommendation:**
+- **Production**: Use Kubernetes with the provided Helm charts
+- **Single server**: Use Docker with external MongoDB
+- **Development**: Use local development with `uv run`

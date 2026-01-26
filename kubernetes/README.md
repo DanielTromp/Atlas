@@ -1,9 +1,9 @@
 # Infrastructure Atlas - Kubernetes Deployment
 
-Complete Kubernetes deployment voor Infrastructure Atlas met Helm charts.
-Werkt met zowel **Docker Desktop** als **Rancher Desktop**.
+Complete Kubernetes deployment for Infrastructure Atlas using Helm charts.
+Works with **Docker Desktop**, **Rancher Desktop**, and production clusters.
 
-## Architectuur Overzicht
+## Architecture Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -18,12 +18,12 @@ Werkt met zowel **Docker Desktop** als **Rancher Desktop**.
 │  │                     │  │                     │  │                    │  │
 │  │  ┌───────────────┐  │  │  ┌───────────────┐  │  │  ┌──────────────┐  │  │
 │  │  │  Atlas API    │  │  │  │    Loki       │  │  │  │   MongoDB    │  │  │
-│  │  │  (+ VPN side) │──┼──┼──│    Stack      │  │  │  │              │  │  │
+│  │  │  (Web UI)     │──┼──┼──│    Stack      │  │  │  │              │  │  │
 │  │  └───────────────┘  │  │  └───────────────┘  │  │  └──────────────┘  │  │
 │  │                     │  │                     │  │                    │  │
 │  │  ┌───────────────┐  │  │  ┌───────────────┐  │  │  ┌──────────────┐  │  │
 │  │  │  Slack Bot    │  │  │  │   Promtail    │  │  │  │   Qdrant     │  │  │
-│  │  └───────────────┘  │  │  │  (DaemonSet)  │  │  │  │              │  │  │
+│  │  └───────────────┘  │  │  │  (DaemonSet)  │  │  │  │  (RAG)       │  │  │
 │  │                     │  │  └───────────────┘  │  │  └──────────────┘  │  │
 │  │  ┌───────────────┐  │  │                     │  │                    │  │
 │  │  │ Telegram Bot  │  │  │  ┌───────────────┐  │  │                    │  │
@@ -33,112 +33,121 @@ Werkt met zowel **Docker Desktop** als **Rancher Desktop**.
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Platform Keuze
-
-| Platform | Development | Production | VPN Support |
-|----------|-------------|------------|-------------|
-| **Docker Desktop** | ✅ Aanbevolen | ❌ | hostNetwork |
-| **Rancher Desktop** | ✅ | ✅ | hostNetwork |
-| **K3s / RKE2** | ❌ | ✅ Aanbevolen | VPN sidecar |
-
-### Docker Desktop Setup
-
-1. Open Docker Desktop → Settings → Kubernetes
-2. Vink "Enable Kubernetes" aan
-3. Klik "Apply & Restart"
-4. Wacht tot het groene "Kubernetes running" icoontje verschijnt
-
-### Rancher Desktop Setup
-
-1. Open Rancher Desktop → Preferences → Kubernetes
-2. Kies Kubernetes version (1.28+ aanbevolen)
-3. Container runtime: containerd of dockerd
-
----
-
 ## Quick Start
 
 ### 1. Prerequisites
 
 ```bash
-# Helm installeren (indien nog niet aanwezig)
-brew install helm
+# Install Helm (if not already installed)
+brew install helm    # macOS
+# or: choco install kubernetes-helm  # Windows
+# or: curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
-# Controleer of Kubernetes draait
+# Verify Kubernetes is running
 kubectl cluster-info
 ```
 
-### 2. Deploy met één commando
+**Enable Kubernetes in Docker Desktop:**
+1. Open Docker Desktop → Settings → Kubernetes
+2. Check "Enable Kubernetes"
+3. Click "Apply & Restart"
+4. Wait for green "Kubernetes running" indicator
+
+### 2. Configure Secrets
 
 ```bash
 cd kubernetes
 
-# Maak secrets file (eerste keer)
+# Copy the secrets template
 cp atlas/values-secrets.example.yaml atlas/values-secrets.yaml
-# → Vul je credentials in!
 
-# Deploy alles
-chmod +x deploy.sh
+# Edit with your credentials
+# Required: atlasSecretKey, atlasUiSecret, netboxUrl, netboxToken
+```
+
+### 3. Deploy
+
+```bash
+# Deploy everything with one command
 ./deploy.sh
 ```
 
-### 3. Handmatige stappen (als je meer controle wilt)
+This deploys:
+- **MongoDB** — Primary database
+- **Qdrant** — Vector database for RAG search
+- **Traefik** — Ingress controller
+- **Loki Stack** — Logging (Loki + Promtail + Grafana)
+- **Atlas** — API server, Web UI, and bots
+
+### 4. Access Services
 
 ```bash
-# Helm repos toevoegen
-helm repo add bitnami https://charts.bitnami.com/bitnami
-helm repo add grafana https://grafana.github.io/helm-charts
-helm repo add traefik https://traefik.github.io/charts
-helm repo add qdrant https://qdrant.github.io/qdrant-helm
-helm repo update
+# Atlas API and Web UI
+kubectl port-forward svc/atlas 8000:8000 -n atlas
+open http://localhost:8000/app/
 
-# Namespaces
-kubectl create namespace atlas
-kubectl create namespace logging
-kubectl create namespace infra
-
-# Infrastructure
-helm install mongodb bitnami/mongodb -n infra -f dependencies/mongodb-values.yaml
-helm install qdrant qdrant/qdrant -n infra -f dependencies/qdrant-values.yaml
-helm install traefik traefik/traefik -n kube-system -f dependencies/traefik-values.yaml
-
-# Logging
-helm install loki grafana/loki-stack -n logging -f logging/loki-stack-values.yaml
-kubectl apply -f logging/grafana-dashboards-cm.yaml
-
-# Atlas
-helm install atlas ./atlas -n atlas -f atlas/values-dev.yaml -f atlas/values-secrets.yaml
+# Grafana (logs dashboard)
+kubectl port-forward svc/loki-grafana 3000:80 -n logging
+open http://localhost:3000
+# Login: admin / atlas-logs
 ```
 
----
+## Deployment Options
 
-## VPN Connectiviteit
+### Development (values-dev.yaml)
 
-### Het Probleem
+For local development with Docker Desktop:
 
-Docker/Kubernetes containers hebben standaard hun eigen netwerk en kunnen niet bij hosts achter je VPN tunnel.
+```bash
+helm install atlas ./atlas -n atlas \
+  -f atlas/values-dev.yaml \
+  -f atlas/values-secrets.yaml
+```
 
-### Oplossing: hostNetwork (Development)
+Features:
+- Single replica
+- Lower resource limits
+- `hostNetwork: false` (use custom DNS for VPN)
+- Local image (`pullPolicy: Never`)
 
-In development mode gebruiken de Atlas pods `hostNetwork: true`. Dit betekent:
-- Pod gebruikt het netwerk van je Mac/PC direct
-- Heeft toegang tot alles waar jouw machine bij kan, inclusief VPN
-- Geen extra configuratie nodig
+### Production (values-prod.yaml)
+
+For production clusters:
+
+```bash
+helm install atlas ./atlas -n atlas \
+  -f atlas/values-prod.yaml \
+  -f atlas/values-secrets.yaml
+```
+
+Features:
+- Multiple replicas
+- Higher resource limits
+- VPN sidecar support
+- Container registry image
+
+## VPN Connectivity
+
+### The Challenge
+
+Kubernetes pods have isolated networking and cannot access hosts behind your VPN tunnel by default.
+
+### Solution: Custom DNS (Development)
+
+Configure VPN DNS servers in the pod:
 
 ```yaml
 # values-dev.yaml
 atlas:
-  hostNetwork: true
-  dnsPolicy: ClusterFirstWithHostNet
   dnsConfig:
     nameservers:
-      - 10.0.10.101    # VPN DNS server 1
-      - 10.20.10.15    # VPN DNS server 2
+      - 10.0.10.101    # Your VPN DNS server
+      - 10.20.10.15    # Secondary DNS
 ```
 
-### Oplossing: VPN Sidecar (Production)
+### Solution: VPN Sidecar (Production)
 
-Voor production waar hostNetwork niet gewenst is:
+For production deployments where `hostNetwork` isn't suitable:
 
 ```yaml
 # values-prod.yaml
@@ -148,192 +157,203 @@ vpnSidecar:
   configSecret: atlas-vpn-config
 ```
 
----
+## Accessing Services
 
-## Toegang tot Services
-
-### Optie 1: Port-forward (Simpelst)
+### Option 1: Port-Forward (Simplest)
 
 ```bash
-# Atlas API
+# Atlas
 kubectl port-forward svc/atlas 8000:8000 -n atlas
 
 # Grafana
 kubectl port-forward svc/loki-grafana 3000:80 -n logging
+
+# MongoDB (debugging)
+kubectl port-forward svc/mongodb 27017:27017 -n infra
 ```
 
-Open http://localhost:8000 en http://localhost:3000
+### Option 2: Ingress with /etc/hosts
 
-### Optie 2: Ingress met /etc/hosts
-
-Voeg toe aan `/etc/hosts`:
+Add to `/etc/hosts`:
 ```
-127.0.0.1 atlas.local grafana.local traefik.local
+127.0.0.1 atlas.local grafana.local
 ```
 
 | Service | URL |
 |---------|-----|
 | Atlas API + UI | http://atlas.local |
 | Grafana | http://grafana.local |
-| Traefik Dashboard | http://traefik.local/dashboard/ |
 
-### Optie 3: NodePort (Docker Desktop)
+## Common Operations
 
-Als ingress problemen geeft, gebruik NodePort:
-
-```bash
-# Pas service type aan
-kubectl patch svc atlas -n atlas -p '{"spec": {"type": "NodePort"}}'
-
-# Bekijk poort
-kubectl get svc atlas -n atlas
-```
-
----
-
-## Image Building
-
-### Docker Desktop
-
-Docker images zijn automatisch beschikbaar in Kubernetes:
+### Update After Code Changes
 
 ```bash
-# Build image
+# Rebuild the Docker image
 docker build -t atlas:latest .
 
-# Gebruik in Kubernetes (pullPolicy: Never of IfNotPresent)
+# Restart the deployment
+kubectl rollout restart deploy/atlas -n atlas
+
+# Watch the rollout
+kubectl rollout status deploy/atlas -n atlas
 ```
 
-### Rancher Desktop (containerd)
+### View Logs
 
 ```bash
-# Met nerdctl
-nerdctl build -t atlas:latest .
+# Atlas API logs
+kubectl logs -f deploy/atlas -n atlas
 
-# Of via docker context
-docker context use rancher-desktop
-docker build -t atlas:latest .
+# Slack bot logs
+kubectl logs -f deploy/atlas-slack-bot -n atlas
+
+# All pods in atlas namespace
+kubectl logs -f -l app.kubernetes.io/instance=atlas -n atlas
 ```
 
----
+### Check Status
+
+```bash
+# All pods
+kubectl get pods -A | grep -E "atlas|mongodb|qdrant|loki"
+
+# Atlas health
+curl http://localhost:8000/api/health
+
+# Resource usage
+kubectl top pods -n atlas
+```
+
+### Helm Operations
+
+```bash
+# Upgrade Atlas
+helm upgrade atlas ./atlas -n atlas \
+  -f atlas/values-dev.yaml \
+  -f atlas/values-secrets.yaml
+
+# View current values
+helm get values atlas -n atlas
+
+# Rollback
+helm rollback atlas -n atlas
+```
+
+## Cleanup
+
+```bash
+# Uninstall Atlas
+helm uninstall atlas -n atlas
+
+# Uninstall dependencies
+helm uninstall mongodb -n infra
+helm uninstall qdrant -n infra
+helm uninstall loki -n logging
+helm uninstall traefik -n kube-system
+
+# Delete namespaces (removes everything)
+kubectl delete namespace atlas logging infra
+
+# Delete persistent volumes (DATA LOSS!)
+kubectl delete pvc --all -n atlas
+kubectl delete pvc --all -n infra
+kubectl delete pvc --all -n logging
+```
 
 ## Troubleshooting
 
-### Pods starten niet
+### Pods Not Starting
 
 ```bash
-# Bekijk pod status
+# Check pod status
 kubectl get pods -n atlas
 
-# Bekijk logs
-kubectl logs -f deployment/atlas -n atlas
-
-# Beschrijf pod voor events
+# View pod events
 kubectl describe pod -l app.kubernetes.io/name=atlas -n atlas
+
+# Check logs
+kubectl logs -f deploy/atlas -n atlas
 ```
 
-### VPN werkt niet in pod
+### VPN/DNS Issues
 
-1. Controleer of VPN actief is op host: `ping 10.0.10.101`
-2. Controleer of hostNetwork aan staat: `kubectl get pod -n atlas -o yaml | grep hostNetwork`
-3. Test DNS in pod: `kubectl exec -it deployment/atlas -n atlas -- nslookup netbox.internal`
+```bash
+# Test DNS resolution from pod
+ATLAS_POD=$(kubectl get pod -n atlas -l app.kubernetes.io/name=atlas -o jsonpath='{.items[0].metadata.name}')
+kubectl exec -n atlas $ATLAS_POD -- nslookup netbox.example.com
 
-### MongoDB connectie faalt
+# Test connectivity
+kubectl exec -n atlas $ATLAS_POD -- curl -s http://netbox.example.com/api/
+```
+
+### MongoDB Connection Issues
 
 ```bash
 # Check MongoDB status
 kubectl get pods -n infra -l app.kubernetes.io/name=mongodb
 
-# Port-forward voor debugging
-kubectl port-forward svc/mongodb 27017:27017 -n infra
-mongosh mongodb://localhost:27017
+# Test connection
+kubectl exec -n infra mongodb-0 -- mongosh --eval "db.adminCommand('ping')"
 ```
 
-### Image pull errors
+### Image Pull Errors
 
 ```bash
-# Voor lokale images, zet imagePullPolicy
-kubectl patch deployment atlas -n atlas -p '{"spec":{"template":{"spec":{"containers":[{"name":"atlas","imagePullPolicy":"Never"}]}}}}'
+# For local images, ensure pullPolicy is correct
+kubectl get deploy atlas -n atlas -o jsonpath='{.spec.template.spec.containers[0].imagePullPolicy}'
+
+# Should be "Never" for local images
 ```
 
----
-
-## Directory Structuur
+## Directory Structure
 
 ```
 kubernetes/
-├── README.md                    # Dit bestand
-├── deploy.sh                    # One-click deployment
-├── .gitignore
+├── README.md                    # This file
+├── deploy.sh                    # One-click deployment script
+├── test.sh                      # Validation script
 │
 ├── atlas/                       # Atlas Helm chart
 │   ├── Chart.yaml
-│   ├── values.yaml              # Defaults
-│   ├── values-dev.yaml          # Development (hostNetwork)
-│   ├── values-prod.yaml         # Production (VPN sidecar)
+│   ├── values.yaml              # Default values
+│   ├── values-dev.yaml          # Development config
+│   ├── values-prod.yaml         # Production config
 │   ├── values-secrets.example.yaml
 │   └── templates/
-│       ├── _helpers.tpl
 │       ├── deployment.yaml
 │       ├── service.yaml
 │       ├── ingress.yaml
 │       ├── configmap.yaml
 │       ├── secrets.yaml
 │       ├── pvc.yaml
-│       ├── serviceaccount.yaml
 │       ├── slack-bot.yaml
-│       ├── telegram-bot.yaml
-│       └── NOTES.txt
+│       └── telegram-bot.yaml
 │
-├── dependencies/                # Values voor externe charts
+├── dependencies/                # External chart values
 │   ├── mongodb-values.yaml
 │   ├── qdrant-values.yaml
 │   └── traefik-values.yaml
 │
-└── logging/                     # PLG Stack
+└── logging/                     # Loki stack
     ├── loki-stack-values.yaml
     └── grafana-dashboards-cm.yaml
 ```
 
----
+## Platform Compatibility
 
-## Upgraden
+| Platform | Development | Production | Notes |
+|----------|-------------|------------|-------|
+| Docker Desktop | ✅ Recommended | ❌ | Enable Kubernetes in settings |
+| Rancher Desktop | ✅ | ✅ | containerd or dockerd runtime |
+| K3s | ✅ | ✅ | Lightweight Kubernetes |
+| EKS/GKE/AKS | ❌ | ✅ | Cloud managed Kubernetes |
 
-```bash
-# Atlas upgraden na code changes
-docker build -t atlas:latest .
-helm upgrade atlas ./atlas -n atlas -f atlas/values-dev.yaml -f atlas/values-secrets.yaml
+## Next Steps
 
-# Force pod restart (als image tag niet verandert)
-kubectl rollout restart deployment/atlas -n atlas
-```
+1. **Verify Deployment**: Run `./test.sh` to validate all services
+2. **Check Logs**: Open Grafana at http://localhost:3000
+3. **Test Integrations**: Verify NetBox, Zabbix, vCenter connectivity
+4. **Configure Bots**: Set up Slack/Telegram tokens in secrets
 
-## Cleanup
-
-```bash
-# Alles verwijderen
-helm uninstall atlas -n atlas
-helm uninstall loki -n logging
-helm uninstall qdrant -n infra
-helm uninstall mongodb -n infra
-helm uninstall traefik -n kube-system
-
-# Namespaces verwijderen
-kubectl delete namespace atlas logging infra
-
-# PVCs verwijderen (DATA LOSS!)
-kubectl delete pvc --all -n atlas
-kubectl delete pvc --all -n infra
-kubectl delete pvc --all -n logging
-```
-
----
-
-## Volgende Stappen
-
-1. **Development**: Start met `values-dev.yaml` en hostNetwork
-2. **Testen**: Valideer VPN toegang naar NetBox, Zabbix, vCenter
-3. **Logging**: Check Grafana voor gecentraliseerde logs
-4. **Production**: Migreer naar datacenter met `values-prod.yaml`
-
-Voor vragen: Systems Infrastructure team
+For questions or issues, see the main [documentation](../docs/).

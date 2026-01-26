@@ -149,12 +149,19 @@ uv run atlas bots link-user <username> slack
 
 ## Quick Start
 
+Infrastructure Atlas supports multiple deployment methods. Choose based on your needs:
+
+| Method | Use Case | Includes |
+|--------|----------|----------|
+| **[Kubernetes](#kubernetes-recommended)** | Production, full stack | MongoDB, Qdrant, Logging, Ingress |
+| **[Docker](#docker)** | Simple container deployment | Atlas only |
+| **[Local Development](#local-development)** | Development, testing | Atlas only |
+
 ### Prerequisites
 
-- Python 3.11+
-- [uv](https://github.com/astral-sh/uv) package manager
-- MongoDB (optional, for high-concurrency deployments)
-- Docker (optional, for Qdrant vector search)
+- Python 3.11+ and [uv](https://github.com/astral-sh/uv) (for local development)
+- Docker Desktop or Rancher Desktop with Kubernetes enabled (for Kubernetes)
+- Docker/Podman (for container deployment)
 
 ### Installation
 
@@ -165,50 +172,78 @@ cd infrastructure-atlas
 
 # Copy environment template
 cp .env.example .env
-
 # Edit .env with your credentials
-# Required: NETBOX_URL, NETBOX_TOKEN, ANTHROPIC_API_KEY
 ```
 
-### Basic Usage
+---
+
+### Kubernetes (Recommended)
+
+**Best for:** Production deployments, full observability, high availability
+
+The Kubernetes deployment includes the complete stack: Atlas API, MongoDB, Qdrant (RAG), Loki logging, and Traefik ingress.
 
 ```bash
-# Start the web UI and API (development)
+cd kubernetes
+
+# Configure secrets (first time only)
+cp atlas/values-secrets.example.yaml atlas/values-secrets.yaml
+# Edit values-secrets.yaml with your credentials
+
+# Deploy everything with one command
+./deploy.sh
+
+# Access the UI
+kubectl port-forward svc/atlas 8000:8000 -n atlas
+open http://localhost:8000/app/
+```
+
+**What gets deployed:**
+- **atlas** namespace: Atlas API, Slack Bot, Telegram Bot
+- **infra** namespace: MongoDB, Qdrant vector database
+- **logging** namespace: Loki, Promtail, Grafana
+- **kube-system**: Traefik ingress controller
+
+See [Kubernetes Deployment Guide](kubernetes/README.md) for detailed instructions.
+
+---
+
+### Docker
+
+**Best for:** Simple deployments, single-server setups
+
+```bash
+# Build and run Atlas
+docker build -t atlas:latest .
+docker run -d -p 8000:8000 --env-file .env atlas:latest
+
+# Access the UI
+open http://localhost:8000/app/
+```
+
+**Note:** For MongoDB and Qdrant, you'll need to run them separately or use Kubernetes.
+
+See [Container Deployment Guide](docs/deployment.md) for Docker/Podman options.
+
+---
+
+### Local Development
+
+**Best for:** Development, testing, quick iteration
+
+```bash
+# Start the API server (development mode with auto-reload)
 uv run atlas api serve --host 127.0.0.1 --port 8000
 
-# Open http://127.0.0.1:8000/app/ in your browser
-```
-
-### Production Deployment
-
-```bash
-# Production server (optimized startup, multiple workers)
+# Or production mode (optimized startup, multiple workers)
 uv run atlas api prod --host 0.0.0.0 --port 8000 --workers 4
 
-# Fast development (skip heavy AI imports)
+# Fast startup (skip heavy AI imports)
 ATLAS_LAZY_AI_IMPORTS=1 uv run atlas api serve
+
+# Access the UI
+open http://127.0.0.1:8000/app/
 ```
-
-### Container Deployment (Docker/Podman)
-
-```bash
-# Start full stack (Atlas + MongoDB)
-docker compose up -d
-
-# With RAG support (adds Qdrant)
-docker compose --profile rag up -d
-
-# With chat bots
-docker compose --profile bots up -d
-
-# View logs
-docker compose logs -f atlas
-
-# Stop
-docker compose down
-```
-
-See [Container Deployment Guide](docs/deployment.md) for detailed instructions.
 
 ### Running Bots
 
@@ -241,11 +276,19 @@ uv run atlas bots status
 
 ## Documentation
 
+### Deployment Guides
+
+| Guide | Description |
+|-------|-------------|
+| [Kubernetes Deployment](kubernetes/README.md) | **Recommended** — Full stack with MongoDB, Qdrant, Logging |
+| [Container Deployment](docs/deployment.md) | Docker/Podman deployment options |
+| [Getting Started](docs/getting-started.md) | Local development setup |
+| [Configuration](docs/configuration.md) | Environment variables and settings |
+
+### Feature Documentation
+
 | Document | Description |
 |----------|-------------|
-| [Getting Started](docs/getting-started.md) | Installation, setup, and first steps |
-| [Container Deployment](docs/deployment.md) | Docker/Podman deployment guide |
-| [Configuration](docs/configuration.md) | Environment variables and settings |
 | [AI Chat](docs/ai-chat.md) | AI agent configuration and usage |
 | [Agent Playground](docs/playground.md) | Interactive agent testing environment |
 | [Bot System](docs/bots.md) | Slack, Telegram, and Teams bot setup |
@@ -281,6 +324,11 @@ infrastructure-atlas/
 │   │   ├── confluence/         # Confluence + RAG search
 │   │   └── netbox/             # NetBox queries
 │   └── confluence_rag/         # Vector search with Qdrant
+├── kubernetes/                 # Kubernetes deployment
+│   ├── deploy.sh               # One-click deployment script
+│   ├── atlas/                  # Atlas Helm chart
+│   ├── dependencies/           # MongoDB, Qdrant, Traefik values
+│   └── logging/                # Loki stack configuration
 ├── mcp-server/                 # MCP server for Claude Desktop
 ├── data/                       # Cache and export directory
 ├── docs/                       # Documentation
