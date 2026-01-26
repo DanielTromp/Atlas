@@ -16,13 +16,13 @@ persistence:
   size: 8Gi
   # storageClass: ""
 
-# Resources
+# Resources - increased for NetBox export operations
 resources:
   requests:
-    memory: "256Mi"
+    memory: "512Mi"
     cpu: "100m"
   limits:
-    memory: "1Gi"
+    memory: "2Gi"
     cpu: "500m"
 
 # Service

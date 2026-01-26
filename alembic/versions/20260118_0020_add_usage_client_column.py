@@ -18,12 +18,21 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+def _column_exists(table: str, column: str) -> bool:
+    """Check if a column exists in a table (SQLite compatible)."""
+    bind = op.get_bind()
+    result = bind.execute(sa.text(f"PRAGMA table_info({table})"))
+    columns = [row[1] for row in result]
+    return column in columns
+
+
 def upgrade() -> None:
     """Add client column to track request source (web, telegram, slack, teams)."""
-    op.add_column(
-        "playground_usage",
-        sa.Column("client", sa.String(50), nullable=True, server_default="web"),
-    )
+    if not _column_exists("playground_usage", "client"):
+        op.add_column(
+            "playground_usage",
+            sa.Column("client", sa.String(50), nullable=True, server_default="web"),
+        )
 
 
 def downgrade() -> None:

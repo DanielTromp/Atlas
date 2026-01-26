@@ -33,13 +33,13 @@ atlas:
   # Single worker voor development
   workers: 1
 
-  # Lagere resource limits voor laptop
+  # Resource limits - need 2GB for NetBox export
   resources:
     requests:
-      memory: "256Mi"
+      memory: "512Mi"
       cpu: "100m"
     limits:
-      memory: "1Gi"
+      memory: "2Gi"
       cpu: "1000m"
 
   ingress:
