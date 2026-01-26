@@ -154,17 +154,9 @@ def _build_commvault_metadata(defn: DatasetDefinition) -> DatasetMetadata:
     return DatasetMetadata(definition=defn, files=files, last_updated=last_updated)
 
 
-def _build_commvault_command(defn: DatasetDefinition, meta: DatasetMetadata) -> list[str] | None:
-    """Build command to refresh all Commvault caches (backups, plans, storage).
-
-    Returns None because Commvault caches are refreshed via API endpoints:
-    - POST /commvault/backups/refresh
-    - GET /commvault/storage?refresh=1
-    - GET /commvault/plans?refresh=1
-
-    Use the web UI or API directly to refresh Commvault data.
-    """
-    return None
+def _build_commvault_command(defn: DatasetDefinition, meta: DatasetMetadata) -> list[str]:
+    """Build command to refresh all Commvault caches (backups, plans, storage)."""
+    return _command_with_uv(["commvault", "refresh"])
 
 
 def _collect_task_dataset_definitions() -> list[DatasetDefinition]:

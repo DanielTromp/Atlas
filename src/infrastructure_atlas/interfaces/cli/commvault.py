@@ -1160,4 +1160,107 @@ def _storage_pool_to_row(pool: CommvaultStoragePool) -> dict[str, Any]:
     }
 
 
+def _data_dir() -> Path:
+    """Return the data directory path."""
+    from infrastructure_atlas.env import project_root
+
+    root = project_root()
+    raw = os.getenv("NETBOX_DATA_DIR", "data")
+    path = Path(raw) if os.path.isabs(raw) else (root / raw)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _write_json_cache(filename: str, payload: dict[str, Any]) -> Path:
+    """Write JSON cache file atomically."""
+    path = _data_dir() / filename
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
+    tmp.replace(path)
+    return path
+
+
+@app.command("refresh")
+def refresh_caches(
+    backups: bool = typer.Option(True, "--backups/--no-backups", help="Refresh backups cache."),
+    plans: bool = typer.Option(True, "--plans/--no-plans", help="Refresh plans cache."),
+    storage: bool = typer.Option(True, "--storage/--no-storage", help="Refresh storage cache."),
+    since_hours: int = typer.Option(168, "--hours", min=0, help="Backups lookback window in hours."),
+    limit: int = typer.Option(5000, "--limit", min=0, help="Maximum number of backup jobs to fetch."),
+) -> None:
+    """Refresh Commvault cache files (backups, plans, storage)."""
+    client = _commvault_client_or_exit()
+    success_count = 0
+    error_count = 0
+
+    if backups:
+        print("[bold]Refreshing backups cache...[/bold]")
+        try:
+            since = _parse_since(since_hours)
+            from infrastructure_atlas.api.app import _collect_commvault_jobs_for_ui
+
+            job_list = _collect_commvault_jobs_for_ui(client, limit=limit, offset=0, since=since)
+            jobs_serialized = [_serialise_commvault_job(job) for job in job_list.jobs]
+            payload = {
+                "jobs": jobs_serialized,
+                "generated_at": _now_utc().isoformat(),
+                "total_cached": len(jobs_serialized),
+                "since_hours": since_hours,
+                "version": 2,
+            }
+            path = _write_json_cache("commvault_backups.json", payload)
+            print(f"[green]✓ Backups: {len(jobs_serialized)} jobs written to {path}[/green]")
+            success_count += 1
+        except Exception as exc:
+            print(f"[red]✗ Backups refresh failed: {exc}[/red]")
+            error_count += 1
+
+    if plans:
+        print("[bold]Refreshing plans cache...[/bold]")
+        try:
+            plans_list = client.list_plans(limit=500)
+            from infrastructure_atlas.interfaces.api.routes.commvault import _serialise_commvault_plan
+
+            rows = [_serialise_commvault_plan(plan) for plan in plans_list]
+            plan_types = sorted({row.get("plan_type") or "Unknown" for row in rows})
+            payload = {
+                "plans": rows,
+                "generated_at": _now_utc().isoformat(),
+                "total_cached": len(rows),
+                "plan_types": plan_types,
+                "version": 1,
+            }
+            path = _write_json_cache("commvault_plans.json", payload)
+            print(f"[green]✓ Plans: {len(rows)} plans written to {path}[/green]")
+            success_count += 1
+        except Exception as exc:
+            print(f"[red]✗ Plans refresh failed: {exc}[/red]")
+            error_count += 1
+
+    if storage:
+        print("[bold]Refreshing storage cache...[/bold]")
+        try:
+            pools = list(client.list_storage_pools())
+            summaries = [_storage_pool_to_row(pool) for pool in pools]
+            payload = {
+                "pools": summaries,
+                "generated_at": _now_utc().isoformat(),
+                "total_cached": len(summaries),
+                "version": 1,
+            }
+            path = _write_json_cache("commvault_storage.json", payload)
+            print(f"[green]✓ Storage: {len(summaries)} pools written to {path}[/green]")
+            success_count += 1
+        except Exception as exc:
+            print(f"[red]✗ Storage refresh failed: {exc}[/red]")
+            error_count += 1
+
+    if error_count > 0:
+        print(f"\n[yellow]Completed with {error_count} error(s), {success_count} success(es)[/yellow]")
+        raise typer.Exit(code=1)
+    else:
+        print(f"\n[green]All {success_count} cache(s) refreshed successfully[/green]")
+
+
 __all__ = ["app"]
