@@ -188,6 +188,183 @@ async def _chat_with_playground_agent(
         db.close()
 
 
+async def _stream_with_playground_agent(
+    request: Request,
+    req: "ChatCompletionRequest",
+    user: Any,
+) -> StreamingResponse:
+    """Stream chat using PlaygroundRuntime with SSE format.
+
+    This provides streaming support for Playground agents in the AI Chat interface,
+    using the same event format as the legacy ChatAgent streaming.
+
+    Messages are saved to the AI Chat session in MongoDB for persistence.
+    """
+    from infrastructure_atlas.agents.playground import ChatEventType
+
+    agent_id = req.agent or "ops"
+    available_agents = _get_available_agents()
+
+    if agent_id not in available_agents:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid agent: {agent_id}. Available: {', '.join(available_agents.keys())}",
+        )
+
+    db = get_db_session()
+    runtime = _get_playground_runtime(db)
+    backend = _get_storage_backend()
+
+    # Build config override from request
+    config_override = {}
+    if req.provider:
+        config_override["provider"] = req.provider
+    if req.model:
+        config_override["model"] = req.model
+    if req.temperature is not None:
+        config_override["temperature"] = req.temperature
+    if req.max_tokens is not None:
+        config_override["max_tokens"] = req.max_tokens
+
+    # Get user info for tracking
+    user_id = str(user.id) if user else None
+    username = user.username if user else None
+
+    # Get or create AI Chat session and save user message
+    ai_defaults = get_current_ai_settings()
+    session_id = req.session_id
+    session_internal_id = None
+
+    if backend == "mongodb":
+        repo = _get_chat_repository()
+        session = _get_or_create_session_mongo(
+            repo,
+            session_id=req.session_id,
+            user=user,
+            provider=req.provider or config_override.get("provider"),
+            model=req.model or config_override.get("model"),
+        )
+        session_id = session.session_id
+        session_internal_id = session.id
+
+        if session.title == "New AI Chat" and req.message:
+            repo.update_session_title(session.session_id, req.message[:60])
+
+        # Save user message
+        _save_message_mongo(repo, session, "user", req.message)
+
+    async def event_generator():
+        """Generate SSE events from PlaygroundRuntime chat."""
+        tool_calls = []
+        accumulated_content = ""
+        final_usage = None
+
+        try:
+            async for event in runtime.chat(
+                agent_id=agent_id,
+                message=req.message,
+                session_id=session_id,
+                config_override=config_override if config_override else None,
+                stream=True,
+                user_id=user_id,
+                username=username,
+                client="web",
+            ):
+                if event.type == ChatEventType.MESSAGE_START:
+                    # Session started - emit session info
+                    yield f"data: {json.dumps({'type': 'session', 'session_id': event.data.get('session_id')})}\n\n"
+
+                elif event.type == ChatEventType.MESSAGE_DELTA:
+                    # Content chunk - use same format as legacy streaming
+                    content = event.data.get("content", "")
+                    if content:
+                        accumulated_content += content
+                        yield f"data: {json.dumps({'type': 'content', 'content': content})}\n\n"
+
+                elif event.type == ChatEventType.MESSAGE_END:
+                    # Message complete - emit usage info
+                    final_usage = {
+                        "prompt_tokens": event.data.get("input_tokens", 0),
+                        "completion_tokens": event.data.get("output_tokens", 0),
+                        "total_tokens": event.data.get("tokens", 0),
+                        "cost_usd": event.data.get("cost_usd", 0.0),
+                        "finish_reason": "stop",
+                    }
+                    yield f"data: {json.dumps({'type': 'done', 'finish_reason': 'stop'})}\n\n"
+                    yield f"data: {json.dumps({'type': 'usage', 'usage': final_usage})}\n\n"
+
+                elif event.type == ChatEventType.TOOL_START:
+                    # Tool execution starting
+                    tool_data = event.data
+                    tool_calls.append({
+                        "tool_call_id": tool_data.get("tool_call_id", tool_data.get("tool")),
+                        "tool_name": tool_data.get("tool"),
+                        "status": "running",
+                    })
+                    yield f"data: {json.dumps({'type': 'tool_start', 'tool_name': tool_data.get('tool'), 'tool_call_id': tool_data.get('tool_call_id', tool_data.get('tool'))})}\n\n"
+
+                elif event.type == ChatEventType.TOOL_END:
+                    # Tool execution complete
+                    tool_data = event.data
+                    tool_name = tool_data.get("tool")
+                    success = tool_data.get("error") is None
+                    # Update tool call status
+                    for tc in tool_calls:
+                        if tc["tool_name"] == tool_name:
+                            tc["status"] = "success" if success else "error"
+                            tc["success"] = success
+                            break
+                    yield f"data: {json.dumps({'type': 'tool_result', 'tool_name': tool_name, 'tool_call_id': tool_data.get('tool_call_id', tool_name), 'success': success})}\n\n"
+
+                elif event.type == ChatEventType.ERROR:
+                    # Error occurred
+                    error_msg = event.data.get("error", "Unknown error")
+                    yield f"data: {json.dumps({'type': 'error', 'error': error_msg})}\n\n"
+
+            # Save assistant response to AI Chat session
+            if backend == "mongodb" and accumulated_content:
+                try:
+                    repo = _get_chat_repository()
+                    session = repo.get_session_by_internal_id(session_internal_id)
+                    if session:
+                        usage_metadata = {}
+                        if final_usage:
+                            usage_metadata = {
+                                "usage": {
+                                    "prompt_tokens": final_usage.get("prompt_tokens", 0),
+                                    "completion_tokens": final_usage.get("completion_tokens", 0),
+                                    "total_tokens": final_usage.get("total_tokens", 0),
+                                },
+                                "cost": {"cost_usd": final_usage.get("cost_usd", 0.0)},
+                                "model": config_override.get("model") or available_agents[agent_id].default_model,
+                                "provider": config_override.get("provider", "anthropic"),
+                            }
+                        if tool_calls:
+                            usage_metadata["tool_calls"] = tool_calls
+                        _save_message_mongo(repo, session, "assistant", accumulated_content, metadata=usage_metadata if usage_metadata else None)
+                except Exception as save_err:
+                    logger.warning(f"Failed to save assistant message: {save_err}")
+
+            yield "data: [DONE]\n\n"
+
+        except Exception as e:
+            logger.error(f"Playground streaming error: {e!s}")
+            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+            yield "data: [DONE]\n\n"
+        finally:
+            db.close()
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 # Pydantic models
 class ChatCompletionRequest(BaseModel):
     """Request for chat completion."""
@@ -1227,7 +1404,14 @@ async def chat_stream(
     request: Request,
     req: ChatCompletionRequest,
 ):
-    """Send a message and stream the response."""
+    """Send a message and stream the response.
+
+    Supports two modes:
+    1. **Playground Agent Mode** (recommended): Set `agent` parameter to use
+       PlaygroundRuntime with full skills support and streaming.
+    2. **Legacy Mode**: When `agent` is not specified, uses the original
+       ChatAgent with HTTP-based tools.
+    """
     require_chat_permission(request)
     user = get_current_user(request)
     backend = _get_storage_backend()
@@ -1245,6 +1429,10 @@ async def chat_stream(
             command_stream(),
             media_type="text/event-stream",
         )
+
+    # Route to Playground streaming if agent is specified
+    if req.agent:
+        return await _stream_with_playground_agent(request, req, user)
 
     # Variables for the streaming generator
     session_id = None

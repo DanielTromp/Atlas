@@ -66,9 +66,9 @@ atlas:
 vpnSidecar:
   enabled: false
 
-# Bots uit in development (tenzij je ze wilt testen)
+# Bots enabled for development
 slackBot:
-  enabled: false
+  enabled: true
 
 telegramBot:
   enabled: false
@@ -76,6 +76,7 @@ telegramBot:
 # Development logging
 config:
   logLevel: DEBUG
+  ragWatchedSpaces: '["SE", "SPS", "mob", "INFRA"]'
 
 # Local MongoDB (deployed via bitnami/mongodb chart)
 mongodb:
@@ -88,3 +89,4 @@ qdrant:
   external: false
   host: qdrant.infra.svc.cluster.local
   port: 6333
+  collection: confluence_chunks_gemini

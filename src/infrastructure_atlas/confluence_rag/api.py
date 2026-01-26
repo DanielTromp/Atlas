@@ -12,7 +12,7 @@ import os
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any
 
@@ -53,7 +53,7 @@ def _save_sync_metadata(sync_type: str):
     try:
         SYNC_METADATA_FILE.parent.mkdir(parents=True, exist_ok=True)
         data = {
-            "last_sync_run": datetime.utcnow().isoformat(),
+            "last_sync_run": datetime.now(UTC).isoformat(),
             "last_sync_type": sync_type,
         }
         with open(SYNC_METADATA_FILE, "w") as f:
@@ -90,6 +90,12 @@ class QueryAnalytics:
         if not ANALYTICS_FILE.exists():
             return
 
+        def _ensure_utc(dt: datetime) -> datetime:
+            """Ensure datetime is timezone-aware (assume UTC if naive)."""
+            if dt.tzinfo is None:
+                return dt.replace(tzinfo=UTC)
+            return dt
+
         try:
             with open(ANALYTICS_FILE, "r") as f:
                 data = json.load(f)
@@ -97,9 +103,10 @@ class QueryAnalytics:
             # Load queries
             for q in data.get("queries", []):
                 try:
+                    ts = datetime.fromisoformat(q["timestamp"])
                     self.queries.append(QueryLog(
                         query=q["query"],
-                        timestamp=datetime.fromisoformat(q["timestamp"]),
+                        timestamp=_ensure_utc(ts),
                         result_count=q["result_count"],
                         top_score=q.get("top_score"),
                         duration_ms=q["duration_ms"],
@@ -110,10 +117,11 @@ class QueryAnalytics:
             # Load failed queries
             for key, val in data.get("failed_queries", {}).items():
                 try:
+                    ts = datetime.fromisoformat(val["last_occurred"])
                     self.failed_queries[key] = {
                         "query": val["query"],
                         "count": val["count"],
-                        "last_occurred": datetime.fromisoformat(val["last_occurred"]),
+                        "last_occurred": _ensure_utc(ts),
                     }
                 except (KeyError, ValueError):
                     continue
@@ -147,7 +155,7 @@ class QueryAnalytics:
                     }
                     for key, val in self.failed_queries.items()
                 },
-                "saved_at": datetime.utcnow().isoformat(),
+                "saved_at": datetime.now(UTC).isoformat(),
             }
 
             with open(ANALYTICS_FILE, "w") as f:
@@ -160,7 +168,7 @@ class QueryAnalytics:
         """Log a query and periodically persist to disk."""
         entry = QueryLog(
             query=query,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             result_count=result_count,
             top_score=top_score,
             duration_ms=duration_ms,
@@ -185,7 +193,7 @@ class QueryAnalytics:
 
     def get_stats(self, period: str = "week") -> dict:
         """Get analytics stats for a period."""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
 
         if period == "today":
             cutoff = now.replace(hour=0, minute=0, second=0, microsecond=0)
