@@ -1,0 +1,87 @@
+# Atlas Development - Podman Compose
+# Location: /var/lib/data/Atlas-dev/docker-compose.yml
+#
+# Start: podman-compose up -d
+# Logs:  podman-compose logs -f
+
+name: atlas-dev
+
+services:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Atlas API Server (Development)
+  # ─────────────────────────────────────────────────────────────────────────────
+  atlas:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: localhost/atlas-dev:latest
+    container_name: atlas-dev
+    # No external ports - Traefik handles HTTPS on :8443
+    expose:
+      - "8000"
+    env_file:
+      - .env
+    environment:
+      - MONGODB_URI=mongodb://mongodb:27017
+      - ATLAS_STORAGE_BACKEND=mongodb
+      - ATLAS_SKIP_DB_HEALTH_CHECK=1
+      - ATLAS_LAZY_AI_IMPORTS=1
+      # Dev-specific settings
+      - LOG_LEVEL=debug
+    volumes:
+      # Mount source for live reload (dev only)
+      - ./src:/app/src:Z
+      - ./data/app:/app/data:Z
+      - ./logs:/app/logs:Z
+    dns:
+      - 10.0.10.101
+      - 10.20.10.15
+      - 8.8.8.8
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -so /dev/null -w '%{http_code}' http://localhost:8000/health | grep -qE '^(200|401)$'"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.atlas-dev.rule=Host(`atlas-dev.internal`)"
+      - "traefik.http.routers.atlas-dev.tls=true"
+      - "traefik.http.routers.atlas-dev.entrypoints=websecure-dev"
+      - "traefik.http.services.atlas-dev.loadbalancer.server.port=8000"
+    networks:
+      - atlas-dev-net
+      - traefik-net
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # MongoDB Database (Development - separate from prod)
+  # ─────────────────────────────────────────────────────────────────────────────
+  mongodb:
+    image: docker.io/mongo:7.0
+    container_name: atlas-mongodb-dev
+    # Different port to not conflict with prod
+    ports:
+      - "127.0.0.1:27018:27017"
+    volumes:
+      - ./data/mongodb:/data/db:Z
+    environment:
+      - MONGO_INITDB_DATABASE=atlas
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - atlas-dev-net
+
+networks:
+  atlas-dev-net:
+    driver: bridge
+  traefik-net:
+    external: true
+    name: traefik-net

@@ -1,0 +1,33 @@
+# Atlas Development Service
+# Location: /etc/systemd/system/atlas-dev.service
+#
+# Enable: sudo systemctl enable atlas-dev
+# Start:  sudo systemctl start atlas-dev
+# Logs:   journalctl -u atlas-dev -f
+
+[Unit]
+Description=Atlas Infrastructure Platform (Development)
+Documentation=https://github.com/DanielTromp/Atlas
+After=network-online.target atlas-traefik.service
+Wants=network-online.target
+Requires=atlas-traefik.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/lib/data/Atlas-dev
+ExecStartPre=/usr/bin/podman-compose down --remove-orphans
+ExecStart=/usr/bin/podman-compose up
+ExecStop=/usr/bin/podman-compose down
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=180
+TimeoutStopSec=30
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=atlas-dev
+
+[Install]
+WantedBy=multi-user.target

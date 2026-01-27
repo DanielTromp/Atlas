@@ -1,0 +1,47 @@
+# Atlas Dynamic Routing Configuration
+# Location: /var/lib/data/traefik/dynamic/atlas.yml
+#
+# This file configures routing for Atlas services
+# Traefik watches this directory and reloads on changes
+
+http:
+  routers:
+    # Production Atlas - accessible via https://atlas.internal
+    atlas-prod:
+      rule: "Host(`atlas.internal`) || HostRegexp(`^atlas\\..*`)"
+      entryPoints:
+        - websecure
+      service: atlas-prod
+      tls: {}
+
+    # Development Atlas - accessible via https://atlas-dev.internal:8443
+    atlas-dev:
+      rule: "Host(`atlas-dev.internal`) || HostRegexp(`^atlas-dev\\..*`)"
+      entryPoints:
+        - websecure-dev
+      service: atlas-dev
+      tls: {}
+
+  services:
+    # Production service - container discovered via Docker provider
+    # Falls back to this if container labels don't work
+    atlas-prod:
+      loadBalancer:
+        servers:
+          - url: "http://atlas-prod:8000"
+
+    atlas-dev:
+      loadBalancer:
+        servers:
+          - url: "http://atlas-dev:8000"
+
+# TLS options
+tls:
+  options:
+    default:
+      minVersion: VersionTLS12
+      sniStrict: false
+      cipherSuites:
+        - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+        - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305

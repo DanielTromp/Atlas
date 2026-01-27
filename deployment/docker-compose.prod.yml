@@ -1,0 +1,83 @@
+# Atlas Production - Podman Compose
+# Location: /var/lib/data/Atlas/docker-compose.yml
+#
+# Start: podman-compose up -d
+# Logs:  podman-compose logs -f
+
+name: atlas-prod
+
+services:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Atlas API Server (Production)
+  # ─────────────────────────────────────────────────────────────────────────────
+  atlas:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: localhost/atlas:latest
+    container_name: atlas-prod
+    # No external ports - Traefik handles HTTPS
+    expose:
+      - "8000"
+    env_file:
+      - .env
+    environment:
+      - MONGODB_URI=mongodb://mongodb:27017
+      - ATLAS_STORAGE_BACKEND=mongodb
+      - ATLAS_SKIP_DB_HEALTH_CHECK=1
+      - ATLAS_LAZY_AI_IMPORTS=1
+    volumes:
+      - ./data/app:/app/data:Z
+      - ./logs:/app/logs:Z
+    dns:
+      - 10.0.10.101
+      - 10.20.10.15
+      - 8.8.8.8
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -so /dev/null -w '%{http_code}' http://localhost:8000/health | grep -qE '^(200|401)$'"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.atlas-prod.rule=Host(`atlas.internal`)"
+      - "traefik.http.routers.atlas-prod.tls=true"
+      - "traefik.http.routers.atlas-prod.entrypoints=websecure"
+      - "traefik.http.services.atlas-prod.loadbalancer.server.port=8000"
+    networks:
+      - atlas-net
+      - traefik-net
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # MongoDB Database (Production)
+  # ─────────────────────────────────────────────────────────────────────────────
+  mongodb:
+    image: docker.io/mongo:7.0
+    container_name: atlas-mongodb-prod
+    # Only expose to localhost for direct access/debugging
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - ./data/mongodb:/data/db:Z
+    environment:
+      - MONGO_INITDB_DATABASE=atlas
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - atlas-net
+
+networks:
+  atlas-net:
+    driver: bridge
+  traefik-net:
+    external: true
+    name: traefik-net

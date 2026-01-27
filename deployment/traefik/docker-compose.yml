@@ -1,0 +1,43 @@
+# Traefik Reverse Proxy - Podman Compose
+# Location: /var/lib/data/traefik/docker-compose.yml
+#
+# Handles HTTPS termination for Atlas prod and dev
+#
+# Start: podman-compose up -d
+# Logs:  podman-compose logs -f
+
+name: traefik
+
+services:
+  traefik:
+    image: docker.io/traefik:v3.0
+    container_name: traefik
+    command:
+      - "--configFile=/etc/traefik/traefik.yml"
+    ports:
+      # HTTPS for production
+      - "443:443"
+      # HTTPS for development
+      - "8443:8443"
+      # Dashboard (localhost only)
+      - "127.0.0.1:8080:8080"
+    volumes:
+      # Traefik configuration
+      - ./traefik.yml:/etc/traefik/traefik.yml:ro,Z
+      - ./dynamic:/etc/traefik/dynamic:ro,Z
+      - ./certs:/etc/traefik/certs:ro,Z
+      # Podman socket for container discovery
+      - /run/user/1000/podman/podman.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - traefik-net
+
+networks:
+  traefik-net:
+    driver: bridge
+    name: traefik-net

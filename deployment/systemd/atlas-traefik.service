@@ -1,0 +1,32 @@
+# Traefik Reverse Proxy Service
+# Location: /etc/systemd/system/atlas-traefik.service
+#
+# Enable: sudo systemctl enable atlas-traefik
+# Start:  sudo systemctl start atlas-traefik
+# Logs:   journalctl -u atlas-traefik -f
+
+[Unit]
+Description=Traefik Reverse Proxy for Atlas
+Documentation=https://doc.traefik.io/traefik/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/lib/data/traefik
+ExecStartPre=/usr/bin/podman-compose down --remove-orphans
+ExecStart=/usr/bin/podman-compose up
+ExecStop=/usr/bin/podman-compose down
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=120
+TimeoutStopSec=30
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=atlas-traefik
+
+[Install]
+WantedBy=multi-user.target

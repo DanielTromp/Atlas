@@ -1,0 +1,55 @@
+# Traefik Static Configuration
+# Location: /var/lib/data/traefik/traefik.yml
+
+# API and Dashboard
+api:
+  dashboard: true
+  insecure: true  # Dashboard on :8080 (localhost only via docker-compose)
+
+# Logging
+log:
+  level: INFO
+  format: common
+
+accessLog:
+  filePath: "/var/log/traefik/access.log"
+  format: common
+
+# Entry Points
+entryPoints:
+  # Production HTTPS
+  websecure:
+    address: ":443"
+    http:
+      tls: {}
+
+  # Development HTTPS
+  websecure-dev:
+    address: ":8443"
+    http:
+      tls: {}
+
+# Providers
+providers:
+  # Docker/Podman provider for automatic container discovery
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    exposedByDefault: false
+    network: traefik-net
+
+  # File provider for additional configuration
+  file:
+    directory: "/etc/traefik/dynamic"
+    watch: true
+
+# TLS Configuration
+tls:
+  stores:
+    default:
+      defaultCertificate:
+        certFile: "/etc/traefik/certs/atlas.crt"
+        keyFile: "/etc/traefik/certs/atlas.key"
+
+  certificates:
+    - certFile: "/etc/traefik/certs/atlas.crt"
+      keyFile: "/etc/traefik/certs/atlas.key"
