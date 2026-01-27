@@ -108,8 +108,6 @@ def get_metrics_snapshot() -> dict[str, Any]:
 
 
 
-
-
 def reset_metrics() -> None:
     _REGISTRY_STATE["instance"] = MetricsRegistry()
 

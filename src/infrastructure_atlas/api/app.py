@@ -13,11 +13,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
-from typing import Any
+from typing import Annotated, Any
 from zoneinfo import ZoneInfo
 
 from dotenv import dotenv_values
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
     FileResponse,
@@ -59,18 +59,17 @@ from infrastructure_atlas.application.services.suggestions import (
     migrate_csv_to_airtable,
 )
 from infrastructure_atlas.db import get_sessionmaker
-from infrastructure_atlas.db.setup import init_database
 from infrastructure_atlas.db.models import (
     RolePermission,
     User,
     UserAPIKey,
 )
+from infrastructure_atlas.db.setup import init_database
 from infrastructure_atlas.domain.integrations.commvault import (
     CommvaultJob,
     CommvaultJobList,
 )
 from infrastructure_atlas.env import load_env, project_root
-from infrastructure_atlas.infrastructure.security import sync_secure_settings
 from infrastructure_atlas.infrastructure.external.commvault_client import (
     CommvaultClient,
     CommvaultClientConfig,
@@ -78,6 +77,7 @@ from infrastructure_atlas.infrastructure.external.commvault_client import (
 )
 from infrastructure_atlas.infrastructure.logging import get_logger, logging_context, setup_logging
 from infrastructure_atlas.infrastructure.metrics import get_metrics_snapshot, snapshot_to_prometheus
+from infrastructure_atlas.infrastructure.security import sync_secure_settings
 from infrastructure_atlas.infrastructure.tracing import init_tracing, tracing_enabled
 from infrastructure_atlas.interfaces.api import bootstrap_api
 from infrastructure_atlas.interfaces.api.dependencies import (
@@ -85,9 +85,6 @@ from infrastructure_atlas.interfaces.api.dependencies import (
     OptionalUserDep,
 )
 from infrastructure_atlas.interfaces.api.middleware import ObservabilityMiddleware
-from infrastructure_atlas.interfaces.api.routes.jira import jira_search
-from infrastructure_atlas.interfaces.api.routes.netbox import netbox_search
-from infrastructure_atlas.interfaces.api.schemas import ToolDefinition
 
 try:
     from openai import OpenAI  # type: ignore
@@ -411,11 +408,6 @@ def ensure_default_admin() -> None:
 
 ensure_default_role_permissions()
 ensure_default_admin()
-
-# Metrics configuration
-METRICS_ENABLED = _env_flag("ATLAS_METRICS_ENABLED")
-METRICS_TOKEN = os.getenv("ATLAS_METRICS_TOKEN", "").strip()
-METRICS_MEDIA_TYPE = "text/plain; version=0.0.4; charset=utf-8"
 
 # Auth configuration
 API_TOKEN = os.getenv("ATLAS_API_TOKEN", "").strip()
@@ -2148,13 +2140,7 @@ def ui_config():
     return {"theme_default": theme}
 
 
-def _build_sample_prompt(definition: ToolDefinition, args: Mapping[str, Any]) -> str:
-    rendered_args = json.dumps(dict(args), indent=2, ensure_ascii=False, default=str) if args else "{}"
-    return (
-        f"Use the {definition.agent} agent's `{definition.key}` tool with these arguments:\n"
-        f"{rendered_args}\n"
-        "Provide a concise operational summary highlighting key metrics."
-    )
+ToolSamplePayloadBody = Annotated[dict[str, Any] | None, Body()]
 
 
 @app.post("/tools/{tool_key}/sample")

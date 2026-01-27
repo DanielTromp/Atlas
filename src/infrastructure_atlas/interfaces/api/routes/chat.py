@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import requests
 from fastapi import APIRouter, Body, HTTPException, Query, Request
@@ -18,6 +19,18 @@ from sqlalchemy.orm import Session
 
 from infrastructure_atlas.db.models import ChatMessage, ChatSession, GlobalAPIKey, User, UserAPIKey
 from infrastructure_atlas.infrastructure.logging import get_logger
+from infrastructure_atlas.interfaces.api.dependencies import (
+    CurrentUserDep,
+    DbSessionDep,
+    OptionalUserDep,
+    require_permission,
+)
+from infrastructure_atlas.interfaces.api.dependencies import (
+    normalise_usage as _normalise_usage,
+)
+from infrastructure_atlas.interfaces.api.dependencies import (
+    safe_json_loads as _safe_json_loads,
+)
 
 try:
     from openai import OpenAI  # type: ignore
@@ -27,16 +40,6 @@ except Exception:  # optional dependency
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
-
-# Import dependencies from shared module (not api/app.py to avoid circular import)
-from infrastructure_atlas.interfaces.api.dependencies import (
-    CurrentUserDep,
-    DbSessionDep,
-    OptionalUserDep,
-    normalise_usage as _normalise_usage,
-    require_permission,
-    safe_json_loads as _safe_json_loads,
-)
 
 
 def _get_session_local():
@@ -219,14 +222,6 @@ def _safe_to_str(value: Any) -> str | None:
         return str(value)
     except Exception as exc:  # pragma: no cover - defensive logging
         logger.debug("Skipping chat variable with non-stringable key", extra={"error": str(exc)})
-        return None
-
-
-def _safe_json_loads(data: str) -> Any | None:
-    try:
-        return json.loads(data)
-    except Exception as exc:  # pragma: no cover - defensive logging
-        logger.debug("Skipping streaming event with invalid JSON", extra={"error": str(exc)})
         return None
 
 
