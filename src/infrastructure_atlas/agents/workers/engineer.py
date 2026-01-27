@@ -40,7 +40,7 @@ class EngineerAgent(BaseAgent):
                 prompt_file="engineer.md",
                 model="claude-sonnet-4-5-20250929",
                 temperature=0.5,
-                tools=["jira", "netbox", "zabbix", "vcenter", "confluence", "export"],
+                tools=["jira", "netbox", "zabbix", "vcenter", "confluence"],
             )
         super().__init__(config, skills_registry)
 

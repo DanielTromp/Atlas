@@ -1,9 +1,8 @@
-import asyncio
 from datetime import datetime
 import logging
 import json
 
-from infrastructure_atlas.confluence_rag.models import ConfluencePage, Chunk, ChunkWithEmbedding
+from infrastructure_atlas.confluence_rag.models import ConfluencePage, ChunkWithEmbedding
 from infrastructure_atlas.confluence_rag.config import ConfluenceRAGSettings
 from infrastructure_atlas.confluence_rag.database import Database
 from infrastructure_atlas.confluence_rag.confluence_client import ConfluenceClient

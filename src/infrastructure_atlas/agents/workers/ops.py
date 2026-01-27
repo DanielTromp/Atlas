@@ -42,7 +42,7 @@ class OpsAgent(BaseAgent):
                 prompt_file="ops.md",
                 model="claude-haiku-4-5-20251001",
                 temperature=0.4,
-                tools=["jira", "netbox", "zabbix", "vcenter", "confluence", "export"],
+                tools=["jira", "netbox", "zabbix", "vcenter", "confluence"],
             )
         super().__init__(config, skills_registry)
 

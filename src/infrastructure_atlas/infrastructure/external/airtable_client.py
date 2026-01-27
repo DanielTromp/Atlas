@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import Any
 
 from pyairtable import Api, Table

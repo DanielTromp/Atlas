@@ -6,8 +6,6 @@ import hashlib
 import io
 import json
 import os
-import shutil
-import tempfile
 import zipfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime

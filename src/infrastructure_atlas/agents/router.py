@@ -157,7 +157,6 @@ class RouterAgent:
             ("incident", "jira"),
             ("confluence", "confluence"),
             ("runbook", "confluence"),
-            ("export", "export"),
             ("backup", "admin"),
             ("user", "admin"),
         )

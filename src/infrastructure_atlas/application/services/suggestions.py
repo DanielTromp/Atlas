@@ -18,7 +18,6 @@ from infrastructure_atlas.infrastructure.external.airtable_client import (
     AirtableClient,
     AirtableClientConfig,
     AirtableConfigError,
-    AirtableError,
     create_airtable_client,
     get_airtable_config_from_env,
 )

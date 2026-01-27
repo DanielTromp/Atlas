@@ -11,7 +11,7 @@ import re
 from datetime import datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Query, Request
 
 from infrastructure_atlas.infrastructure.logging import get_logger
 

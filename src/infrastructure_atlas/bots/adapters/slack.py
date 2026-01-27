@@ -31,7 +31,6 @@ from infrastructure_atlas.infrastructure.logging import get_logger
 
 if TYPE_CHECKING:
     from slack_sdk import WebClient
-    from slack_sdk.socket_mode import SocketModeClient
 
 logger = get_logger(__name__)
 
@@ -576,7 +575,7 @@ class SlackWebhookHandler:
             message_ts: Original message timestamp (for reactions)
             session_thread_ts: Thread timestamp for session ID (None for DMs = shared session)
         """
-        from infrastructure_atlas.bots.orchestrator import BotResponse, BotResponseType
+        from infrastructure_atlas.bots.orchestrator import BotResponseType
 
         # Add "thinking" reaction to show we're processing
         if message_ts:

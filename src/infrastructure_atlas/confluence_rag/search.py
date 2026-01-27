@@ -8,7 +8,7 @@ from infrastructure_atlas.confluence_rag.embeddings import EmbeddingPipeline
 from infrastructure_atlas.confluence_rag.citations import CitationExtractor
 from infrastructure_atlas.confluence_rag.models import (
     SearchResponse, SearchResult, ConfluencePage, 
-    Chunk, ChunkType, TextSpan, Citation
+    Chunk, ChunkType
 )
 
 @dataclass

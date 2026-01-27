@@ -6,7 +6,6 @@ import json
 import os
 import uuid
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock

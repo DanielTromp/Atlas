@@ -27,7 +27,7 @@ from infrastructure_atlas.db.models import BotConversation, BotMessage, BotPlatf
 from infrastructure_atlas.infrastructure.logging import get_logger
 
 if TYPE_CHECKING:
-    from infrastructure_atlas.agents.playground import ChatEventType, PlaygroundRuntime
+    from infrastructure_atlas.agents.playground import PlaygroundRuntime
     from infrastructure_atlas.skills import SkillsRegistry
 
 logger = get_logger(__name__)

@@ -5,24 +5,20 @@ Provides semantic search using Qdrant vector database with optional filtering.
 """
 
 import hashlib
-import json
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
 from infrastructure_atlas.confluence_rag.citations import CitationExtractor
-from infrastructure_atlas.confluence_rag.config import ConfluenceRAGSettings
 from infrastructure_atlas.confluence_rag.embeddings import EmbeddingPipeline
 from infrastructure_atlas.confluence_rag.models import (
     Chunk,
     ChunkType,
-    Citation,
     ConfluencePage,
     SearchResponse,
     SearchResult,
-    TextSpan,
 )
 from infrastructure_atlas.confluence_rag.qdrant_store import QdrantStore
 

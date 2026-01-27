@@ -312,36 +312,6 @@ _TOOL_METADATA: dict[str, dict[str, Any]] = {
             "space_key",
         ),
     },
-    "export_run_job": {
-        "agent": "export",
-        "name": "Export Runner",
-        "summary": "Trigger NetBox export pipelines from the agent layer.",
-        "description": ("Runs the export agent to start CLI-based NetBox exports and returns the command summary."),
-        "tags": ("export", "netbox", "automation"),
-        "ai_usage": "Start a fresh NetBox export before compiling reports or distributing datasets.",
-        "examples": (
-            "Run the full NetBox export with a forced refresh.",
-            "Export only the virtual machine inventory from NetBox.",
-        ),
-        "sample": {"dataset": "all", "force": False},
-        "response_fields": ("command", "returncode"),
-    },
-    "export_status_overview": {
-        "agent": "export",
-        "name": "Export Status",
-        "summary": "Summarise recent NetBox export artefacts.",
-        "description": (
-            "Uses the export agent to scan the data directory and report on the latest CSV/XLSX artefacts."
-        ),
-        "tags": ("export", "inventory"),
-        "ai_usage": "Check whether recent exports completed before sharing files with stakeholders.",
-        "examples": ("Show the 5 most recent NetBox export files and their timestamps.",),
-        "sample": {"limit": 5},
-        "response_fields": (
-            "files[].name",
-            "files[].modified_ams",
-        ),
-    },
     "admin_config_overview": {
         "agent": "admin",
         "name": "Admin Config Survey",

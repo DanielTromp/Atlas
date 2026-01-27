@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import os
 import uuid
 from collections.abc import Iterable, Mapping
@@ -20,7 +19,6 @@ from infrastructure_atlas.domain.entities import ForemanConfigEntity
 from infrastructure_atlas.env import project_root
 from infrastructure_atlas.infrastructure.db.repositories import SqlAlchemyForemanConfigRepository
 from infrastructure_atlas.infrastructure.external import (
-    ForemanAPIError,
     ForemanAuthError,
     ForemanClient,
     ForemanClientConfig,

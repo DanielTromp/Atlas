@@ -13,7 +13,6 @@ try:
     from langchain.agents import AgentExecutor
 except ImportError:
     from langchain.agents.agent import AgentExecutor
-from langchain_core.language_models import BaseLanguageModel
 
 from infrastructure_atlas.agents import (
     DOMAIN_SPECS,

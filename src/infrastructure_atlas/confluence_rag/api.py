@@ -14,9 +14,9 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 # Light imports only - heavy dependencies loaded lazily
@@ -24,7 +24,7 @@ from infrastructure_atlas.confluence_rag.config import ConfluenceRAGSettings
 from infrastructure_atlas.confluence_rag.models import SearchResponse
 
 if TYPE_CHECKING:
-    from infrastructure_atlas.confluence_rag.qdrant_search import QdrantSearchEngine, SearchConfig
+    from infrastructure_atlas.confluence_rag.qdrant_search import QdrantSearchEngine
     from infrastructure_atlas.confluence_rag.qdrant_store import QdrantStore
 
 logger = logging.getLogger(__name__)

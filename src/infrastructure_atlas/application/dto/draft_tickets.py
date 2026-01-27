@@ -12,9 +12,6 @@ from pydantic import Field
 from infrastructure_atlas.application.dto.base import DomainModel
 from infrastructure_atlas.domain.draft_tickets import (
     DraftTicketEntity,
-    DraftTicketLinkType,
-    DraftTicketPriority,
-    DraftTicketStatus,
 )
 
 

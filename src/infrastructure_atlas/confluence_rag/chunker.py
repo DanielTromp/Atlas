@@ -1,5 +1,4 @@
 from docling.document_converter import DocumentConverter
-from docling.datamodel.document import DoclingDocument
 from docling.datamodel.base_models import InputFormat
 import tiktoken
 from infrastructure_atlas.confluence_rag.models import Chunk, ChunkType, ConfluencePage, TextSpan

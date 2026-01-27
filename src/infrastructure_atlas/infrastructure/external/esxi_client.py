@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from datetime import datetime
 from types import TracebackType
 from typing import Any
 from urllib.parse import urlparse

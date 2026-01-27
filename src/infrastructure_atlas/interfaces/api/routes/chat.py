@@ -4,12 +4,9 @@ from __future__ import annotations
 
 import json
 import os
-import re
-import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Annotated, Any
 
 import requests
@@ -20,7 +17,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from infrastructure_atlas.db.models import ChatMessage, ChatSession, GlobalAPIKey, User, UserAPIKey
-from infrastructure_atlas.env import project_root
 from infrastructure_atlas.infrastructure.logging import get_logger
 
 try:
@@ -32,15 +28,14 @@ logger = get_logger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
-# Import dependencies (chat.py imported lazily in __init__.py to avoid circular import)
-from infrastructure_atlas.api.app import (
+# Import dependencies from shared module (not api/app.py to avoid circular import)
+from infrastructure_atlas.interfaces.api.dependencies import (
     CurrentUserDep,
     DbSessionDep,
     OptionalUserDep,
-    _csv_path,
-    _normalise_usage,
-    _safe_json_loads,
+    normalise_usage as _normalise_usage,
     require_permission,
+    safe_json_loads as _safe_json_loads,
 )
 
 
@@ -640,181 +635,6 @@ def _call_gemini(
         return ChatProviderResult(text, _normalise_usage(usage_meta))
     except Exception:
         return ChatProviderResult((data.get("text") or "").strip(), _normalise_usage(usage_meta))
-
-
-def _csv_for_dataset(dataset: str) -> Path | None:
-    target = (dataset or "").strip().lower()
-    if target == "devices":
-        p = _csv_path("netbox_devices_export.csv")
-    elif target == "vms":
-        p = _csv_path("netbox_vms_export.csv")
-    else:
-        # "all" (legacy) and "merged" both map to the merged export
-        p = _csv_path("netbox_merged_export.csv")
-    return p if p.exists() else None
-
-
-def _build_data_context(dataset: str, query: str, max_rows: int = 6, max_chars: int = 1800) -> str:
-    """Return a compact textual context from CSV based on a keyword query.
-    Includes columns and up to N matching rows across all columns (case-insensitive LIKE).
-    """
-    p = _csv_for_dataset(dataset)
-    if not p:
-        return ""
-    try:
-        # Read headers
-        import csv as _csv
-
-        with p.open("r", encoding="utf-8", errors="ignore") as fh:
-            rdr = _csv.reader(fh)
-            headers = next(rdr, [])
-        if not headers:
-            return ""
-
-        tokens = re.findall(r"[A-Za-z0-9]+", query.lower()) if query else []
-        text_keywords: list[str] = []
-        numeric_keywords: list[str] = []
-        numeric_tokens: list[int] = []
-        seen_text: set[str] = set()
-        seen_numeric: set[str] = set()
-        for token in tokens:
-            if not token:
-                continue
-            if token.isdigit():
-                try:
-                    numeric_tokens.append(int(token))
-                except ValueError:
-                    continue
-                if len(token) >= 2 and token not in seen_numeric:
-                    numeric_keywords.append(token)
-                    seen_numeric.add(token)
-                continue
-            if token in CHAT_QUERY_STOP_WORDS:
-                continue
-            if len(token) < 3:
-                continue
-            if token not in seen_text:
-                text_keywords.append(token)
-                seen_text.add(token)
-
-        keywords = text_keywords if text_keywords else numeric_keywords
-
-        limit = max_rows
-        if numeric_tokens:
-            limit = max(3, min(max(numeric_tokens), 20))
-
-        where_clauses: list[str] = []
-        if keywords:
-            for kw in keywords[:5]:
-                safe_kw = kw.replace("'", "''")
-                ors = [f"lower(CAST(\"{h}\" AS VARCHAR)) LIKE '%{safe_kw}%'" for h in headers]
-                where_clauses.append("(" + " OR ".join(ors) + ")")
-
-        def _run(where_clause: str | None = None) -> pd.DataFrame:
-            sql = "SELECT * FROM read_csv_auto(?, header=True)"
-            params: list[Any] = [p.as_posix()]
-            if where_clause:
-                sql += f" WHERE {where_clause}"
-            sql += " LIMIT ?"
-            params.append(int(limit))
-            return duckdb.query(sql, params=params).df()
-
-        if where_clauses:
-            df = _run(" OR ".join(where_clauses))
-        elif query.strip():
-            safe = query.replace("'", "''")
-            ors = [f"lower(CAST(\"{h}\" AS VARCHAR)) LIKE lower('%{safe}%')" for h in headers]
-            df = _run(" OR ".join(ors))
-            if df.empty:
-                df = _run()
-        else:
-            df = _run()
-        # Render context text
-        parts: list[str] = []
-        parts.append(f"Source file: {p.name}")
-        parts.append(f"Columns: {', '.join(map(str, headers))}")
-        if not df.empty:
-            parts.append("Relevant rows:")
-            preferred = [
-                "Name",
-                "Status",
-                "Tenant",
-                "Site",
-                "Location",
-                "Rack",
-                "Rack Position",
-                "Role",
-                "Manufacturer",
-                "Type",
-                "Platform",
-                "IP Address",
-                "IPv4 Address",
-                "IPv6 Address",
-                "ID",
-                "Serial number",
-                "Asset tag",
-                "Region",
-                "Server Group",
-                "Cluster",
-                "DTAP state",
-                "CPU",
-                "VCPUs",
-                "Memory",
-                "Memory (MB)",
-                "Disk",
-                "Harddisk",
-                "Backup",
-            ]
-            preferred_lower = [p.lower() for p in preferred]
-
-            def normalise_value(value: Any) -> Any:
-                if value is None:
-                    return None
-                if isinstance(value, pd.Timestamp):
-                    return value.isoformat()
-                if hasattr(value, "isoformat") and not isinstance(value, str | int | float | bool):
-                    try:
-                        return value.isoformat()
-                    except Exception:
-                        return str(value)
-                if isinstance(value, float) and np.isnan(value):
-                    return None
-                if isinstance(value, str | int | float | bool):
-                    return value
-                return str(value)
-
-            for idx, (_, row) in enumerate(df.iterrows(), start=1):
-                try:
-                    obj = {str(k): normalise_value(v) for k, v in row.items()}
-                except Exception:
-                    obj = {str(k): normalise_value(str(v)) for k, v in row.items()}
-
-                # Filter out empty/null values
-                non_empty = {k: v for k, v in obj.items() if v not in (None, "", "null", "None")}
-                if not non_empty:
-                    continue
-
-                title = non_empty.get("Name") or non_empty.get("Device") or non_empty.get("ID") or f"Row {idx}"
-                parts.append(f"- {title}")
-
-                seen: set[str] = set()
-                for field in preferred:
-                    if field in non_empty:
-                        value = non_empty[field]
-                        parts.append(f"    - **{field}:** {value}")
-                        seen.add(field)
-                for field, value in non_empty.items():
-                    if field in seen:
-                        continue
-                    if field.lower() in preferred_lower:
-                        continue
-                    parts.append(f"    - **{field}:** {value}")
-        context = "\n".join(parts)
-        if len(context) > max_chars:
-            context = context[: max_chars - 20] + "\n…"
-        return context
-    except Exception:
-        return ""
 
 
 @router.get("/providers")

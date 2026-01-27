@@ -15,13 +15,37 @@ from rich import print
 from rich.console import Console
 from rich.table import Table
 
-from infrastructure_atlas.api.app import (
-    _collect_commvault_jobs_for_ui,
-    _commvault_client_from_env,
-    _load_commvault_backups,
-    _parse_job_datetime,
-    _serialise_commvault_job,
-)
+# Lazy imports from api.app to avoid circular import (cli -> api.app -> bootstrap_api -> chat -> api.app)
+
+
+def _commvault_client_from_env():
+    """Lazy wrapper for _commvault_client_from_env from api.app."""
+    from infrastructure_atlas.api.app import _commvault_client_from_env as _fn
+    return _fn()
+
+
+def _collect_commvault_jobs_for_ui(client, *, limit, offset, since, **kwargs):
+    """Lazy wrapper for _collect_commvault_jobs_for_ui from api.app."""
+    from infrastructure_atlas.api.app import _collect_commvault_jobs_for_ui as _fn
+    return _fn(client, limit=limit, offset=offset, since=since, **kwargs)
+
+
+def _load_commvault_backups():
+    """Lazy wrapper for _load_commvault_backups from api.app."""
+    from infrastructure_atlas.api.app import _load_commvault_backups as _fn
+    return _fn()
+
+
+def _parse_job_datetime(value):
+    """Lazy wrapper for _parse_job_datetime from api.app."""
+    from infrastructure_atlas.api.app import _parse_job_datetime as _fn
+    return _fn(value)
+
+
+def _serialise_commvault_job(job):
+    """Lazy wrapper for _serialise_commvault_job from api.app."""
+    from infrastructure_atlas.api.app import _serialise_commvault_job as _fn
+    return _fn(job)
 from infrastructure_atlas.domain.integrations.commvault import (
     CommvaultClientJobMetrics,
     CommvaultClientReference,
@@ -1198,8 +1222,6 @@ def refresh_caches(
         print("[bold]Refreshing backups cache...[/bold]")
         try:
             since = _parse_since(since_hours)
-            from infrastructure_atlas.api.app import _collect_commvault_jobs_for_ui
-
             job_list = _collect_commvault_jobs_for_ui(client, limit=limit, offset=0, since=since)
             jobs_serialized = [_serialise_commvault_job(job) for job in job_list.jobs]
             payload = {

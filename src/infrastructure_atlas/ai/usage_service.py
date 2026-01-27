@@ -11,7 +11,7 @@ from typing import Any
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
-from infrastructure_atlas.db.models import AIActivityLog, AIModelConfig, User
+from infrastructure_atlas.db.models import AIActivityLog, AIModelConfig
 from infrastructure_atlas.infrastructure.logging import get_logger
 
 from .pricing import PRICING, calculate_cost

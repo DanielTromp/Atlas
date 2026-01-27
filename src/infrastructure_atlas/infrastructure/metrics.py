@@ -93,19 +93,6 @@ def _registry() -> MetricsRegistry:
     return _REGISTRY_STATE["instance"]
 
 
-def record_netbox_export(duration_seconds: float | None, *, mode: str, force: bool, status: str) -> None:
-    """Record metrics for a NetBox export run."""
-
-    labels = {"mode": mode, "force": str(force).lower(), "status": status}
-    _registry().counter("netbox_export_runs_total").inc(labels=labels)
-    if duration_seconds is not None:
-        hist_labels = {"mode": mode, "force": str(force).lower()}
-        _registry().histogram("netbox_export_duration_seconds").observe(
-            labels=hist_labels,
-            value=duration_seconds,
-        )
-
-
 def record_http_request(duration_seconds: float, *, method: str, path_template: str, status_code: int) -> None:
     labels = {"method": method.upper(), "path_template": path_template, "status_code": str(status_code)}
     _registry().counter("http_requests_total").inc(labels=labels)
@@ -170,7 +157,6 @@ __all__ = [
     "MetricsRegistry",
     "get_metrics_snapshot",
     "record_http_request",
-    "record_netbox_export",
     "reset_metrics",
     "snapshot_to_prometheus",
 ]

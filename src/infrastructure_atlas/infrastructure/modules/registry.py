@@ -7,7 +7,6 @@ and provides lifecycle management functionality.
 from __future__ import annotations
 
 import os
-from collections.abc import Iterable
 from threading import RLock
 from typing import TYPE_CHECKING
 

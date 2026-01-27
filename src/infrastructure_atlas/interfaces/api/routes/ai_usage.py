@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
 from infrastructure_atlas.ai.pricing import PRICING, get_model_pricing
-from infrastructure_atlas.ai.usage_service import AIUsageService, create_usage_service
+from infrastructure_atlas.ai.usage_service import create_usage_service
 from infrastructure_atlas.infrastructure.logging import get_logger
 
 logger = get_logger(__name__)

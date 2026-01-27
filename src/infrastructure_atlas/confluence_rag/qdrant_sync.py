@@ -14,7 +14,7 @@ from infrastructure_atlas.confluence_rag.chunker import ConfluenceChunker
 from infrastructure_atlas.confluence_rag.config import ConfluenceRAGSettings
 from infrastructure_atlas.confluence_rag.confluence_client import ConfluenceClient
 from infrastructure_atlas.confluence_rag.embeddings import EmbeddingPipeline
-from infrastructure_atlas.confluence_rag.models import ChunkWithEmbedding, ConfluencePage
+from infrastructure_atlas.confluence_rag.models import ConfluencePage
 from infrastructure_atlas.confluence_rag.qdrant_store import QdrantStore
 
 logger = logging.getLogger(__name__)

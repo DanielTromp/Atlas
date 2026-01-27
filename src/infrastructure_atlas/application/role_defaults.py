@@ -7,7 +7,7 @@ ROLE_CAPABILITIES: tuple[dict[str, str], ...] = (
     {
         "id": "export.run",
         "label": "Run exports",
-        "description": "Allow users to start NetBox export jobs from the Export page.",
+        "description": "Allow users to start cache refresh jobs from the Tasks page.",
     },
     {
         "id": "zabbix.ack",

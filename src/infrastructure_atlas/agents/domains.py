@@ -15,7 +15,6 @@ from langchain_core.tools import BaseTool
 from .admin import ADMIN_TOOL_KEYS, build_admin_agent
 from .confluence import CONFLUENCE_TOOL_KEYS, build_confluence_agent
 from .context import AgentContext
-from .export import EXPORT_TOOL_KEYS, build_export_agent
 from .jira import JIRA_TOOL_KEYS, build_jira_agent
 from .netbox import NETBOX_TOOL_KEYS, build_netbox_agent
 from .zabbix import ZABBIX_TOOL_KEYS, build_zabbix_agent
@@ -66,12 +65,6 @@ DOMAIN_SPECS: tuple[DomainSpec, ...] = (
         label="Confluence",
         builder=build_confluence_agent,
         tool_keys=CONFLUENCE_TOOL_KEYS,
-    ),
-    DomainSpec(
-        key="export",
-        label="Export",
-        builder=build_export_agent,
-        tool_keys=EXPORT_TOOL_KEYS,
     ),
     DomainSpec(
         key="admin",
