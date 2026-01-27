@@ -406,12 +406,12 @@ def ensure_default_admin() -> None:
             )
 
 
-ensure_default_role_permissions()
-ensure_default_admin()
-
-# Auth configuration
+# Auth configuration (must be before ensure_default_admin)
 API_TOKEN = os.getenv("ATLAS_API_TOKEN", "").strip()
 UI_PASSWORD = os.getenv("ATLAS_UI_PASSWORD", "").strip()  # legacy fallback
+
+ensure_default_role_permissions()
+ensure_default_admin()
 UI_SECRET = os.getenv("ATLAS_UI_SECRET", "").strip() or secrets.token_hex(32)
 SESSION_COOKIE_NAME = "atlas_ui"
 SESSION_USER_KEY = "user_id"

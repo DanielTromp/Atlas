@@ -22,6 +22,8 @@ WORKDIR /app
 COPY pyproject.toml uv.lock* ./
 
 # Install dependencies (without dev dependencies)
+# Use CPU-only PyTorch to reduce image size (no CUDA libraries)
+ENV UV_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cpu
 RUN uv sync --frozen --no-dev --no-install-project
 
 # Copy application code

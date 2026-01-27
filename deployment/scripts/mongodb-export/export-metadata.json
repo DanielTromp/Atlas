@@ -1,0 +1,17 @@
+{
+    "export_timestamp": "20260127_122631",
+    "source": {
+        "type": "kubernetes",
+        "namespace": "infra",
+        "pod": "mongodb-5f96b644c6-rjbrc"
+    },
+    "files": {
+        "full_backup": "atlas-mongodb-20260127_122631.archive",
+        "secure_settings": "secure_settings-20260127_122631.archive"
+    },
+    "notes": [
+        "Use mongorestore --archive --gzip < file.archive to restore",
+        "Secure settings require ATLAS_SECRET_KEY to decrypt",
+        "Import secure_settings first if restoring to new database"
+    ]
+}
