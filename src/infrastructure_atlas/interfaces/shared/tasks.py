@@ -102,11 +102,6 @@ def _append_task_output(buffer: list[str], line: str) -> None:
         del buffer[: len(buffer) - TASK_OUTPUT_LINE_LIMIT]
 
 
-def _build_netbox_cache_command(defn: DatasetDefinition, meta: DatasetMetadata) -> list[str]:
-    """Build command to refresh NetBox cache."""
-    return _command_with_uv(["export", "cache"])
-
-
 def _make_vcenter_command_builder(config_id: str) -> CommandBuilder:
     """Create a command builder for vCenter refresh."""
 
@@ -119,7 +114,7 @@ def _make_vcenter_command_builder(config_id: str) -> CommandBuilder:
 def _build_commvault_metadata(defn: DatasetDefinition) -> DatasetMetadata:
     """Build metadata for Commvault dataset, reading generated_at from JSON."""
     import json
-    from datetime import datetime, UTC
+    from datetime import datetime
 
     base = _data_dir()
     files: list[DatasetFileRecord] = []
@@ -162,13 +157,6 @@ def _build_commvault_command(defn: DatasetDefinition, meta: DatasetMetadata) -> 
 def _collect_task_dataset_definitions() -> list[DatasetDefinition]:
     """Collect all dataset task definitions."""
     definitions: list[DatasetDefinition] = [
-        DatasetDefinition(
-            id="netbox-cache",
-            label="NetBox Cache",
-            path_globs=("netbox_cache.json",),
-            description="Cached NetBox snapshot used for export diffing.",
-            command_builder=_build_netbox_cache_command,
-        ),
         DatasetDefinition(
             id="commvault",
             label="Commvault",
@@ -368,66 +356,17 @@ def _build_vcenter_metadata_mongodb(defn: DatasetDefinition) -> DatasetMetadata:
     return DatasetMetadata(definition=defn, files=[], last_updated=None)
 
 
-def _build_netbox_metadata_mongodb(defn: DatasetDefinition) -> DatasetMetadata:
-    """Build NetBox metadata from MongoDB cache."""
-    try:
-        from infrastructure_atlas.infrastructure.mongodb import get_mongodb_client
-        from infrastructure_atlas.infrastructure.mongodb.cache_repositories import MongoDBNetBoxCacheRepository
-
-        client = get_mongodb_client()
-        cache_repo = MongoDBNetBoxCacheRepository(client.atlas_cache)
-
-        # Get cache metadata (includes generated_at timestamp)
-        meta = cache_repo.get_cache_metadata()
-        stats = cache_repo.get_cache_stats()
-
-        device_count = stats.get("devices", {}).get("count", 0)
-        vm_count = stats.get("vms", {}).get("count", 0)
-
-        # Use generated_at from metadata
-        last_updated = meta.get("generated_at") if meta else None
-
-        files = [
-            DatasetFileRecord(
-                relative_path="mongodb://atlas_cache/netbox_devices",
-                absolute_path=Path("/mongodb/netbox_devices"),
-                exists=device_count > 0,
-                size_bytes=device_count,
-                modified=last_updated,
-            ),
-            DatasetFileRecord(
-                relative_path="mongodb://atlas_cache/netbox_vms",
-                absolute_path=Path("/mongodb/netbox_vms"),
-                exists=vm_count > 0,
-                size_bytes=vm_count,
-                modified=last_updated,
-            ),
-        ]
-        return DatasetMetadata(
-            definition=defn,
-            files=files,
-            last_updated=last_updated,
-            extras={"device_count": device_count, "vm_count": vm_count, "source": "mongodb"},
-        )
-    except Exception:
-        pass
-
-    return DatasetMetadata(definition=defn, files=[], last_updated=None)
-
-
 def _build_dataset_metadata(defn: DatasetDefinition) -> DatasetMetadata:
     """Build metadata for a dataset definition."""
     # Use custom metadata builder if provided
     if defn.metadata_builder is not None:
         return defn.metadata_builder(defn)
 
-    # Check if using MongoDB backend for vCenter/NetBox datasets
+    # Check if using MongoDB backend for vCenter datasets
     backend = _get_storage_backend()
     if backend == "mongodb":
         if defn.id.startswith("vcenter-"):
             return _build_vcenter_metadata_mongodb(defn)
-        if defn.id == "netbox-cache":
-            return _build_netbox_metadata_mongodb(defn)
 
     # Default metadata building logic (JSON files)
     base = _data_dir()

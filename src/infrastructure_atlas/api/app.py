@@ -1,53 +1,37 @@
 from __future__ import annotations
 
-import asyncio
-import csv
-import html
 import json
-import math
 import os
-import re
 import secrets
-import shlex
 import shutil
 import sys
 import time
-import uuid
 import warnings
-from collections import Counter
-from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
-from io import BytesIO, StringIO
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
-from typing import Annotated, Any, Literal
+from typing import Any
 from zoneinfo import ZoneInfo
 
-import duckdb
-import numpy as np
-import pandas as pd
-import requests
 from dotenv import dotenv_values
-from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
     FileResponse,
-    HTMLResponse,
     JSONResponse,
     PlainTextResponse,
     RedirectResponse,
-    StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
-from infrastructure_atlas import backup_manager, backup_sync
+from infrastructure_atlas import backup_manager
 
 # AI/LangChain functionality disabled
 # from infrastructure_atlas.application.chat_agents import AgentRuntime, AgentRuntimeError
@@ -64,7 +48,7 @@ from infrastructure_atlas.application.dto import (
     suggestions_to_dto,
 )
 from infrastructure_atlas.application.role_defaults import DEFAULT_ROLE_DEFINITIONS
-from infrastructure_atlas.application.security import hash_password, verify_password
+from infrastructure_atlas.application.security import hash_password
 from infrastructure_atlas.application.services import create_vcenter_service
 from infrastructure_atlas.application.services.suggestions import (
     SUGGESTION_CLASSIFICATIONS,
@@ -77,9 +61,6 @@ from infrastructure_atlas.application.services.suggestions import (
 from infrastructure_atlas.db import get_sessionmaker
 from infrastructure_atlas.db.setup import init_database
 from infrastructure_atlas.db.models import (
-    ChatMessage,
-    ChatSession,
-    GlobalAPIKey,
     RolePermission,
     User,
     UserAPIKey,
@@ -87,17 +68,9 @@ from infrastructure_atlas.db.models import (
 from infrastructure_atlas.domain.integrations.commvault import (
     CommvaultJob,
     CommvaultJobList,
-    CommvaultPlan,
-    CommvaultStoragePool,
 )
 from infrastructure_atlas.env import load_env, project_root
-from infrastructure_atlas.infrastructure.external import (
-    ZabbixAuthError,
-    ZabbixClient,
-    ZabbixClientConfig,
-    ZabbixConfigError,
-    ZabbixError,
-)
+from infrastructure_atlas.infrastructure.security import sync_secure_settings
 from infrastructure_atlas.infrastructure.external.commvault_client import (
     CommvaultClient,
     CommvaultClientConfig,
@@ -108,13 +81,10 @@ from infrastructure_atlas.infrastructure.metrics import get_metrics_snapshot, sn
 from infrastructure_atlas.infrastructure.tracing import init_tracing, tracing_enabled
 from infrastructure_atlas.interfaces.api import bootstrap_api
 from infrastructure_atlas.interfaces.api.dependencies import (
-    CurrentUserDep,
     DbSessionDep,
     OptionalUserDep,
 )
 from infrastructure_atlas.interfaces.api.middleware import ObservabilityMiddleware
-from infrastructure_atlas.interfaces.api.routes import tools as tools_router
-from infrastructure_atlas.interfaces.api.routes.confluence import confluence_search
 from infrastructure_atlas.interfaces.api.routes.jira import jira_search
 from infrastructure_atlas.interfaces.api.routes.netbox import netbox_search
 from infrastructure_atlas.interfaces.api.schemas import ToolDefinition
@@ -554,7 +524,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
                                     pass
 
         # Public endpoints
-        if path in ("/favicon.ico", "/favicon.png", "/health"):
+        if path in ("/favicon.ico", "/favicon.png", "/health", "/config/ui"):
             return await call_next(request)
 
         if path == "/":
@@ -661,8 +631,6 @@ def _csv_path(name: str) -> Path:
     return _data_dir() / name
 
 
-# Simple export log file (appends)
-LOG_PATH = project_root() / "export.log"
 
 # Dataset task definitions and metadata
 CommandBuilder = Callable[["DatasetDefinition", "DatasetMetadata"], list[str] | None]
@@ -708,10 +676,6 @@ def _command_with_uv(args: Sequence[str]) -> list[str]:
     return [sys.executable, "-m", "infrastructure_atlas.cli", *args]
 
 
-def _build_netbox_cache_command(defn: DatasetDefinition, meta: DatasetMetadata) -> list[str]:
-    return _command_with_uv(["atlas", "export", "cache"])
-
-
 def _make_vcenter_command_builder(config_id: str) -> CommandBuilder:
     def _builder(_: DatasetDefinition, __: DatasetMetadata) -> list[str]:
         return _command_with_uv(["atlas", "vcenter", "refresh", "--id", config_id])
@@ -720,15 +684,7 @@ def _make_vcenter_command_builder(config_id: str) -> CommandBuilder:
 
 
 def _collect_task_dataset_definitions() -> list[DatasetDefinition]:
-    definitions: list[DatasetDefinition] = [
-        DatasetDefinition(
-            id="netbox-cache",
-            label="NetBox Cache",
-            path_globs=("netbox_cache.json",),
-            description="Cached NetBox snapshot used for export diffing.",
-            command_builder=_build_netbox_cache_command,
-        ),
-    ]
+    definitions: list[DatasetDefinition] = []
     definitions.extend(_discover_vcenter_task_definitions())
     return definitions
 
@@ -1317,14 +1273,6 @@ ENV_SETTING_FIELDS: list[dict[str, Any]] = [
         "placeholder": "Optional system prompt",
         "category": "chat",
     },
-    # Export & reporting
-    {
-        "key": "NETBOX_XLSX_ORDER_FILE",
-        "label": "Column Order Template",
-        "secret": False,
-        "placeholder": "path/to/column_order.xlsx",
-        "category": "export",
-    },
     # API & Web UI
     {"key": "LOG_LEVEL", "label": "Log Level", "secret": False, "placeholder": "INFO", "category": "api"},
     {
@@ -1509,16 +1457,6 @@ ENV_SETTING_FIELDS: list[dict[str, Any]] = [
 ]
 
 
-def _write_log(msg: str) -> None:
-    try:
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with LOG_PATH.open("a", encoding="utf-8") as fh:
-            fh.write(f"[{ts}] {msg.rstrip()}\n")
-    except Exception:
-        # Logging failures should never crash the API
-        pass
-
-
 def _require_classification(value: str | None) -> str:
     if value is None or str(value).strip() == "":
         return "Could have"
@@ -1591,6 +1529,8 @@ def _write_env_value(key: str, value: str | None) -> None:
         new_lines.append(f"{key}={value}")
     env_path.write_text("\n".join(new_lines).rstrip() + "\n")
     load_env(override=True)
+    # Sync to encrypted database storage for persistence across restarts
+    sync_secure_settings([key])
 
 
 class SuggestionCreate(BaseModel):
@@ -2257,57 +2197,10 @@ def favicon_ico():
 @app.get("/health")
 def health():
     d = _data_dir()
-    dev = _csv_path("netbox_devices_export.csv")
-    vms = _csv_path("netbox_vms_export.csv")
-    merged = _csv_path("netbox_merged_export.csv")
     return {
         "status": "ok",
         "data_dir": str(d),
-        "files": {
-            "devices_csv": dev.exists(),
-            "vms_csv": vms.exists(),
-            "merged_csv": merged.exists(),
-        },
     }
-
-
-@app.get("/column-order")
-def column_order() -> list[str]:
-    """Return preferred column order based on Systems CMDB.xlsx if available.
-
-    Falls back to merged CSV headers if Excel not found; otherwise empty list.
-    """
-    try:
-        # Prefer the Excel produced by merge step
-        xlsx_path = _csv_path("Systems CMDB.xlsx")
-        if xlsx_path.exists():
-            try:
-                from openpyxl import load_workbook
-
-                wb = load_workbook(xlsx_path, read_only=True, data_only=True)
-                ws = wb.worksheets[0]
-                headers: list[str] = []
-                for cell in ws[1]:
-                    v = cell.value
-                    if v is not None:
-                        headers.append(str(v))
-                wb.close()
-                if headers:
-                    return headers
-            except Exception:
-                pass
-        # Fallback to merged CSV header
-        csv_path = _csv_path("netbox_merged_export.csv")
-        if csv_path.exists():
-            with csv_path.open("r", encoding="utf-8") as fh:
-                import csv as _csv
-
-                reader = _csv.reader(fh)
-                headers = next(reader, [])
-                return [str(h) for h in headers if h]
-    except Exception:
-        pass
-    return []
 
 
 @app.get("/")
@@ -2321,19 +2214,3 @@ _static_dir = Path(__file__).parent / "static"
 
 
 app.mount("/app", StaticFiles(directory=_static_dir, html=True), name="app")
-
-
-@app.get("/logs/tail")
-def logs_tail(n: int = Query(200, ge=1, le=5000)) -> dict:
-    """
-    Return the last N lines of the export log.
-    Response: { "lines": ["..", ".."] }
-    """
-    if not LOG_PATH.exists():
-        return {"lines": []}
-    try:
-        with LOG_PATH.open("r", encoding="utf-8", errors="ignore") as fh:
-            lines = fh.readlines()[-n:]
-        return {"lines": [ln.rstrip("\n") for ln in lines]}
-    except Exception:
-        return {"lines": []}

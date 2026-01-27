@@ -1,45 +1,23 @@
 from __future__ import annotations
 
-import asyncio
-import inspect
 import json
 import os
-import shlex
 import subprocess
 import sys
-from collections.abc import Iterable, Sequence
 from contextlib import ExitStack
 from dataclasses import asdict
-from datetime import UTC, datetime
+from datetime import UTC
 from getpass import getuser
-from time import monotonic
-from typing import Annotated
 from zoneinfo import ZoneInfo
 
 import typer
-from fastapi import HTTPException
 from rich import print
 from rich.console import Console
 from rich.table import Table
 
-from .api.app import (
-    _build_dataset_command,
-    _build_dataset_metadata,
-    _collect_task_dataset_definitions,
-)
-from .application.context import ServiceContext
-from .application.dto.admin import admin_user_to_dto, admin_users_to_dto
-from .application.orchestration import AsyncJobRunner
-from .application.services import NetboxExportService, create_admin_service
-from .db import get_sessionmaker
-from .db.setup import init_database
-from .domain.tasks import JobStatus
-from .env import load_env, project_root, require_env
+from .env import load_env, project_root
 from .infrastructure.caching import get_cache_registry
 from .infrastructure.logging import get_logger, logging_context
-from .infrastructure.metrics import record_netbox_export
-from .infrastructure.queues import InMemoryJobQueue
-from .infrastructure.tracing import init_tracing, span, tracing_enabled
 from .interfaces.cli.commvault import app as commvault_cli_app
 from .interfaces.cli.vcenter import app as vcenter_cli_app
 
@@ -142,7 +120,6 @@ def _common(
 # Import extracted CLI modules
 from .interfaces.cli import bots as bots_cli
 from .interfaces.cli import database as database_cli
-from .interfaces.cli import export as export_cli
 from .interfaces.cli import foreman as foreman_cli
 from .interfaces.cli import jira as jira_cli
 from .interfaces.cli import confluence as confluence_cli
@@ -174,7 +151,6 @@ def _register_cli_commands() -> None:
     # Module-specific commands (conditional)
     if registry.is_enabled("netbox"):
         app.add_typer(netbox_cli.app, name="netbox")
-        app.add_typer(export_cli.app, name="export")
         logger.debug("Enabled NetBox CLI commands")
     else:
         logger.debug("NetBox module disabled, skipping CLI commands")

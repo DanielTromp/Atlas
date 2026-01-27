@@ -21,7 +21,6 @@ from .draft_tickets import (
     create_draft_ticket_service,
 )
 from .foreman import ForemanService, ForemanServiceProtocol, MongoDBForemanService, create_foreman_service
-from .netbox import NetboxExportService
 from .puppet import MongoDBPuppetService, PuppetService, PuppetServiceProtocol, create_puppet_service
 from .users import DefaultUserService, create_user_service
 from .vcenter import VCenterService, create_vcenter_service
@@ -63,7 +62,6 @@ __all__ = [
     "ForemanServiceProtocol",
     "MongoDBForemanService",
     "MongoDBPuppetService",
-    "NetboxExportService",
     "PuppetService",
     "PuppetServiceProtocol",
     "UserService",

@@ -164,7 +164,6 @@
   const $navTools = document.querySelector('button[data-page="tools"]');
   const $navTasks = document.querySelector('button[data-page="tasks"]');
   const $navAdmin = document.querySelector('button[data-page="admin"]');
-  const $pageExport = document.getElementById("page-export");
   const $pageCommvault = document.getElementById("page-commvault");
   const $pageVCenter = document.getElementById("page-vcenter");
   const $pageForeman = document.getElementById("page-foreman");
@@ -212,7 +211,7 @@
   const $jiraOpen = document.getElementById('jira-open');
   const $jiraMax = document.getElementById('jira-max');
   const $jiraResults = document.getElementById('jira-results');
-  // Dataset tabs (inside Export page)
+  // Legacy export elements (no longer used, kept for null-safe references)
   const $dsTabs = document.getElementById("ds-tabs");
   const $q = document.getElementById("q");
   const $reload = document.getElementById("reload");
@@ -239,7 +238,7 @@
   let sidebarResizeTimer = 0;
   const sidebarGroups = Array.from(document.querySelectorAll('.sidebar-group'));
   const sidebarSections = Array.from(document.querySelectorAll('.sidebar-section'));
-  let page = 'export';
+  let page = 'chat';
   let sidebarFocusCollapsed = false;
 
   // Sidebar section expand/collapse functionality
@@ -320,11 +319,6 @@
     }
   });
   const SIDEBAR_SUBNAV_CONFIG = {
-    export: {
-      container: document.querySelector('[data-subnav-container="export"]'),
-      source: () => $dsTabs,
-      selector: 'button[data-ds]',
-    },
     commvault: {
       container: document.querySelector('[data-subnav-container="commvault"]'),
       source: () => $commvaultTabs,
@@ -794,7 +788,6 @@
     'zabbix': document.getElementById('admin-settings-zabbix'),
     'net-atlassian': document.getElementById('admin-settings-net'),
     'chat': document.getElementById('admin-settings-chat'),
-    'export': document.getElementById('admin-settings-export'),
     'api': document.getElementById('admin-settings-api'),
     'suggestions': document.getElementById('admin-settings-suggestions'),
     'backup': document.getElementById('admin-settings-backup'),
@@ -803,7 +796,6 @@
     'zabbix': document.getElementById('admin-panel-zabbix'),
     'net-atlassian': document.getElementById('admin-panel-net'),
     'chat': document.getElementById('admin-panel-chat'),
-    'export': document.getElementById('admin-panel-export'),
     'api': document.getElementById('admin-panel-api'),
     'ai': document.getElementById('admin-panel-ai'),
     'vcenter': document.getElementById('admin-panel-vcenter'),
@@ -1940,7 +1932,7 @@
     return 'Europe/Amsterdam';
   })();
   accountState.prefTimezone = savedTimezonePref;
-  page = 'export';
+  page = 'chat';
   const PAGE_PERSIST_KEY = 'atlas_active_page_v1';
   const ROUTABLE_PAGE_KEYS = [
     'search',
@@ -1950,7 +1942,6 @@
     'jira',
     'confluence',
     'chat',
-    'export',
     'commvault',
     'vcenter',
     'tasks',
@@ -3586,18 +3577,18 @@
       return `${Math.max(80, Math.floor(w))}px`;
     }).join(" ");
     gridTemplate = tpl;
-    $headerRow.style.gridTemplateColumns = tpl;
-    $filterRow.style.gridTemplateColumns = tpl;
+    if ($headerRow) $headerRow.style.gridTemplateColumns = tpl;
+    if ($filterRow) $filterRow.style.gridTemplateColumns = tpl;
     // Horizontal size for scrollers
     contentWidth = vis.reduce((a, c) => a + (colWidths[columns.indexOf(c)] || 180), 0);
-    $canvas.style.width = `${contentWidth}px`;
-    $rows.style.width = `${contentWidth}px`;
+    if ($canvas) $canvas.style.width = `${contentWidth}px`;
+    if ($rows) $rows.style.width = `${contentWidth}px`;
     if ($headerRows) $headerRows.style.width = `${contentWidth}px`;
   }
 
   function computeView() {
     // Global quick search
-    const q = ($q.value || "").trim().toLowerCase();
+    const q = ($q?.value || "").trim().toLowerCase();
     const hasQ = q.length > 0;
     // Column filters
     const activeCols = Object.entries(colFilters).filter(([_, v]) => (v || "").trim() !== "");
@@ -3627,11 +3618,12 @@
       });
     }
     totalHeight = view.length * rowHeight;
-    $canvas.style.height = `${totalHeight}px`;
+    if ($canvas) $canvas.style.height = `${totalHeight}px`;
     updateSummary();
   }
 
   function updateSummary() {
+    if (!$summary) return;
     const sortTxt = sortRules.length ?
       ` • sort: ` + sortRules.map(r => `${r.key} (${r.dir})`).join(", ") : '';
     $summary.textContent = `${view.length} of ${rows.length} rows` + sortTxt;
@@ -3639,6 +3631,7 @@
 
   // Rendering
   function renderHeader() {
+    if (!$headerRow) return;
     $headerRow.innerHTML = "";
     const vis = getVisibleColumns();
     vis.forEach((col) => {
@@ -3771,6 +3764,7 @@
   }
 
   function renderFilters() {
+    if (!$filterRow) return;
     $filterRow.innerHTML = "";
     const usedIds = new Set();
     const ensureId = (col, index) => {
@@ -3813,6 +3807,7 @@
   }
 
   function renderVisible() {
+    if (!$bodyScroll || !$rows) return;
     if (!view.length) {
       $rows.innerHTML = '';
       $rows.style.top = `0px`;
@@ -3853,33 +3848,38 @@
     $rows.appendChild(frag);
   }
 
-  // Scrolling & resize
+  // Scrolling & resize (legacy Export page grid - elements may not exist)
   let syncing = false;
-  $bodyScroll.addEventListener('scroll', () => {
-    if (!syncing) {
-      syncing = true;
-      // Sync header's scrollLeft to body (header scrollbar hidden via CSS)
-      if ($headerScroll) $headerScroll.scrollLeft = $bodyScroll.scrollLeft;
-      if (!raf) raf = requestAnimationFrame(() => { raf = null; renderVisible(); });
-      syncing = false;
-    }
-  });
+  if ($bodyScroll) {
+    $bodyScroll.addEventListener('scroll', () => {
+      if (!syncing) {
+        syncing = true;
+        // Sync header's scrollLeft to body (header scrollbar hidden via CSS)
+        if ($headerScroll) $headerScroll.scrollLeft = $bodyScroll.scrollLeft;
+        if (!raf) raf = requestAnimationFrame(() => { raf = null; renderVisible(); });
+        syncing = false;
+      }
+    });
+  }
   // Keep header and body scroll in sync when user drags the header area (rare)
-  $headerScroll.addEventListener('scroll', () => {
-    if (!syncing) {
-      syncing = true;
-      if ($bodyScroll) $bodyScroll.scrollLeft = $headerScroll.scrollLeft;
-      syncing = false;
-    }
-  });
+  if ($headerScroll) {
+    $headerScroll.addEventListener('scroll', () => {
+      if (!syncing) {
+        syncing = true;
+        if ($bodyScroll) $bodyScroll.scrollLeft = $headerScroll.scrollLeft;
+        syncing = false;
+      }
+    });
+  }
 
   const handleResize = () => {
+    if (!$bodyScroll) return;
     viewportHeight = $bodyScroll.clientHeight;
     updateTemplates();
     computeView();
     renderVisible();
   };
-  if (typeof ResizeObserver === 'function') {
+  if ($body && typeof ResizeObserver === 'function') {
     const resizeObs = new ResizeObserver(() => handleResize());
     resizeObs.observe($body);
   } else {
@@ -3988,29 +3988,16 @@
   // Data
   async function fetchData() {
     // dataset already set by tab click
-    $summary.textContent = 'Loading…';
+    if ($summary) $summary.textContent = 'Loading…';
     try {
-      // optional: get column order hint from backend
-      let preferred = [];
-      try {
-        const or = await fetch(`${API_BASE}/column-order`);
-        if (or.ok) preferred = await or.json();
-      } catch {}
-
       const url = `${API_BASE}/${dataset === 'all' ? 'all' : dataset}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       const data = await res.json();
       rows = Array.isArray(data) ? data : [];
       const headers = rows.length ? Object.keys(rows[0]) : [];
-      // Column order: prefer saved, else preferred, else natural
-      let saved = loadColumns(headers);
-      if (preferred && preferred.length) {
-        const orderIdx = new Map(preferred.map((h, i) => [h, i]));
-        columns = saved.slice().sort((a, b) => (orderIdx.get(a) ?? 1e9) - (orderIdx.get(b) ?? 1e9));
-      } else {
-        columns = saved;
-      }
+      // Column order: use saved or natural order
+      columns = loadColumns(headers);
       colFilters = loadFilters();
       // Visibility: default all true; keep only known headers
       try {
@@ -4037,26 +4024,26 @@
       renderFilters();
       computeView();
       // Scroll to top
-      $bodyScroll.scrollTop = 0;
+      if ($bodyScroll) $bodyScroll.scrollTop = 0;
       renderVisible();
-      if (!rows.length) {
+      if (!rows.length && $rows) {
         $rows.innerHTML = `<div class="empty">No data found.</div>`;
       }
       updateURLDebounced();
     } catch (e) {
       console.error(e);
-      $summary.textContent = `Error loading data: ${e.message || e}`;
+      if ($summary) $summary.textContent = `Error loading data: ${e.message || e}`;
       rows = []; view = []; columns = []; colFilters = {}; sortRules = [];
-      $headerRow.innerHTML = '';
-      $filterRow.innerHTML = '';
-      $rows.innerHTML = `<div class="empty">Could not load data.</div>`;
+      if ($headerRow) $headerRow.innerHTML = '';
+      if ($filterRow) $filterRow.innerHTML = '';
+      if ($rows) $rows.innerHTML = `<div class="empty">Could not load data.</div>`;
     }
   }
 
-  // Events
-  $reload.addEventListener('click', () => { fetchData(); updateURLDebounced(); });
-  $q.addEventListener('input', debounce(() => { computeView(); renderVisible(); }, 160));
-  $q.addEventListener('input', updateURLDebounced);
+  // Events (legacy Export page - elements may not exist)
+  $reload?.addEventListener('click', () => { fetchData(); updateURLDebounced(); });
+  $q?.addEventListener('input', debounce(() => { computeView(); renderVisible(); }, 160));
+  $q?.addEventListener('input', updateURLDebounced);
 
   // Reset all column filters (does not clear global Search)
   $resetFilters?.addEventListener('click', () => {
@@ -4091,81 +4078,6 @@
     logPollTimer = setInterval(() => fetchLogsOnce(n), intervalMs);
   }
 
-  // Stream export logs to the progress panel
-  async function runExportFor(ds) {
-    if (!hasPermission('export.run')) {
-      alert('You do not have permission to run exports.');
-      return;
-    }
-    // New stream: default to following the tail
-    followTail = true;
-    stopLogPolling();
-    const url = `${API_BASE}/export/stream?dataset=${encodeURIComponent(ds === 'all' ? 'all' : ds)}`;
-    if ($progressPanel && $progressLog) {
-      $progressLog.textContent = '';
-      $progressPanel.hidden = false;
-    }
-    if ($updateBtn) $updateBtn.disabled = true;
-    let ok = true;
-    let logText = '';
-    try {
-      const res = await fetch(url, { method: 'GET' });
-      if (!res.ok || !res.body) throw new Error(`${res.status} ${res.statusText}`);
-      const reader = res.body.getReader();
-      const td = new TextDecoder();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if ($progressLog) {
-          const chunk = td.decode(value, { stream: true });
-          $progressLog.textContent += chunk;
-          logText += chunk;
-          if (followTail) $progressLog.scrollTop = $progressLog.scrollHeight;
-        }
-      }
-      // Check exit code footer like "[exit 1]"
-      const m = /\[exit\s+(\d+)\]/.exec(logText);
-      if (m && Number(m[1]) !== 0) ok = false;
-    } catch (e) {
-      ok = false;
-      if ($progressLog) $progressLog.textContent += `\n[error] ${e && e.message ? e.message : e}\n`;
-    } finally {
-      if ($updateBtn) $updateBtn.disabled = false;
-      if (ok) {
-        await fetchData();
-        if ($progressPanel) $progressPanel.hidden = true;
-      } else {
-        // Keep the panel open so the user can read errors
-        if ($progressLog) $progressLog.scrollTop = $progressLog.scrollHeight;
-        // Begin polling recent logs after a short pause
-        setTimeout(() => startLogPolling(300, 1500), 600);
-      }
-    }
-  }
-  $updateBtn?.addEventListener('click', async () => {
-    const label = dataset === 'all' ? 'All (merge)' : (dataset.charAt(0).toUpperCase() + dataset.slice(1));
-    if (!confirm(`Run export for "${label}" now?`)) return;
-    await runExportFor(dataset);
-  });
-  $progressClose?.addEventListener('click', () => { if ($progressPanel) $progressPanel.hidden = true; });
-
-  // View recent logs button
-  $viewLogs?.addEventListener('click', () => {
-    if ($progressPanel && $progressLog) {
-      $progressPanel.hidden = false;
-      $progressLog.textContent = '';
-      followTail = true;
-      startLogPolling(300, 1500);
-    }
-  });
-
-  // Stop polling when panel is hidden via Esc or programmatically
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !$progressPanel.hidden) {
-      $progressPanel.hidden = true;
-      stopLogPolling();
-    }
-  });
 
   // Add manual resize behavior for both corners
   function setupResizeHandle(handle, mode) {
@@ -4387,7 +4299,7 @@
   }
 
   function nextAccessiblePage(preferred = 'search') {
-    const candidates = [preferred, 'search', 'export', 'zabbix'];
+    const candidates = [preferred, 'search', 'chat', 'zabbix'];
     for (const candidate of candidates) {
       if (canAccessPage(candidate)) return candidate;
     }
@@ -4404,8 +4316,7 @@
     const canForeman = canAccessPage('foreman');
     const canPuppet = canAccessPage('puppet');
     const canAdmin = canAccessPage('admin');
-     const canTasks = canAccessPage('tasks');
-    const canRunExport = hasPermission('export.run');
+    const canTasks = canAccessPage('tasks');
     const canAck = hasPermission('zabbix.ack');
 
     if ($navTools) $navTools.hidden = !canTools;
@@ -4416,7 +4327,6 @@
     if ($navTasks) $navTasks.hidden = !canTasks;
     if ($navAdmin) $navAdmin.hidden = !canAdmin;
 
-    if ($updateBtn) $updateBtn.disabled = !canRunExport;
     if ($zbxAck) $zbxAck.disabled = !canAck;
     if ($zhostAck) $zhostAck.disabled = !canAck;
 
@@ -4454,7 +4364,6 @@
       jira: $pageJira,
       confluence: $pageConfluence,
       chat: $pageChat,
-      export: $pageExport,
       commvault: $pageCommvault,
       vcenter: $pageVCenter,
       foreman: $pageForeman,
@@ -4529,10 +4438,8 @@
         $suggestionsButton.classList.remove('active');
       }
     }
-    // When switching into Export, ensure data is loaded/refreshed
-    if (p === 'export') {
-      fetchData();
-    } else if (p === 'commvault') {
+    // When switching into pages, ensure data is loaded/refreshed
+    if (p === 'commvault') {
       setCommvaultTab(commvaultState.tab || 'backups');
     } else if (p === 'vcenter') {
       loadVCenterInstances().catch(() => {});
@@ -4704,7 +4611,7 @@
     pgBtns.forEach((btn) => {
       btn.addEventListener('click', (e) => {
         e.preventDefault();
-        const p = btn.getAttribute('data-page') || 'export';
+        const p = btn.getAttribute('data-page') || 'chat';
         if (!canAccessPage(p)) {
           alert('You do not have access to that page.');
           return;
@@ -4723,27 +4630,6 @@
         if (isDrawerMode()) {
           closeSidebarDrawer();
         }
-      });
-    });
-  }
-
-  // Dataset tab switching (Export page)
-  if ($dsTabs) {
-    const dsBtns = Array.from($dsTabs.querySelectorAll('button.tab'));
-    dsBtns.forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        e.preventDefault();
-        const ds = btn.getAttribute('data-ds') || 'devices';
-        dataset = ds;
-        // Toggle active
-        $dsTabs.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.getAttribute('data-ds') === ds));
-        accountState.prefDataset = ds;
-        try { localStorage.setItem(ACCOUNT_DATASET_PREF_KEY, ds); } catch {}
-        if ($accountPrefDataset) $accountPrefDataset.value = ds;
-        fetchData();
-        updateURLDebounced();
-        buildSidebarSubnav('export');
-        syncSidebarSubnavActive('export');
       });
     });
   }
@@ -9132,7 +9018,6 @@
     renderAdminGroup(adminContainers['zabbix'], groups['zabbix'] || [], { emptyMessage: 'Configure Zabbix connection settings.' });
     renderAdminGroup(adminContainers['net-atlassian'], groups['net-atlassian'] || [], { emptyMessage: 'Configure NetBox and Atlassian access.' });
     renderAdminGroup(adminContainers['chat'], groups['chat'] || [], { emptyMessage: 'Add API keys and defaults to enable chat providers.' });
-    renderAdminGroup(adminContainers['export'], groups['export'] || [], { emptyMessage: 'No export settings available.' });
     renderAdminGroup(adminContainers['api'], groups['api'] || [], { emptyMessage: 'No API/UI settings available.' });
     renderAdminGroup(adminContainers['suggestions'], groups['suggestions'] || [], { emptyMessage: 'Configure Airtable integration for suggestions.' });
     renderAdminGroup(adminContainers['backup'], groups['backup'] || [], { emptyMessage: 'Configure backup options.' });
@@ -13859,21 +13744,8 @@
       let rows = Array.isArray(data?.rows) ? data.rows.slice() : [];
       try { rows.sort((a,b) => (new Date(b['Updated']||0)) - (new Date(a['Updated']||0))); } catch {}
       if (!rows.length) { if ($nbResults) $nbResults.textContent = 'No results.'; return; }
-      // Determine columns: prefer /column-order intersection if available
-      let columns = [];
-      try {
-        const pref = await fetch(`${API_BASE}/column-order`);
-        const order = await pref.json();
-        const keys = Object.keys(rows[0] || {});
-        if (Array.isArray(order) && order.length) {
-          columns = order.filter(c => keys.includes(c));
-          for (const k of keys) if (!columns.includes(k)) columns.push(k);
-        } else {
-          columns = keys;
-        }
-      } catch {
-        columns = Object.keys(rows[0] || {});
-      }
+      // Determine columns from data
+      let columns = Object.keys(rows[0] || {});
       // Hide internal helper fields
       columns = columns.filter(c => String(c).toLowerCase() !== 'ui_path');
       // Ensure Updated column is visible and placed near the end
@@ -14361,11 +14233,6 @@
   }
   loadTools();
   showPage(initialPage);
-  // Ensure Export dataset loads immediately on first load
-  if (initialPage === 'export') {
-    try { fetchData(); } catch {}
-  }
-  // When switching to chat, ensure session and history are loaded
 
 
   // ---------------------------

@@ -40,6 +40,11 @@ SECURE_ENV_KEYS: tuple[str, ...] = (
     "BACKUP_PASSWORD",
     "CONTEXT7_API_KEY",
     "ATLAS_SSL_KEY_PASSWORD",
+    # Airtable / Suggestions
+    "AIRTABLE_PAT",
+    "AIRTABLE_BASE_ID",
+    "AIRTABLE_TABLE_NAME",
+    "AIRTABLE_CACHE_TTL",
     # AI provider default models (persisted to survive restarts)
     "OPENAI_DEFAULT_MODEL",
     "OPENROUTER_DEFAULT_MODEL",

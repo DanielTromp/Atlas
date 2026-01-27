@@ -21,12 +21,11 @@ class NetBoxModule(BaseModule):
                 "NETBOX_DATA_DIR",
                 "NETBOX_DEBUG",
                 "NETBOX_EXTRA_HEADERS",
-                "NETBOX_XLSX_ORDER_FILE",
             ]),
             category="integration",
             author="Atlas Team",
             documentation_url="https://netbox.readthedocs.io/",
-            release_notes="Initial release with device and VM export functionality",
+            release_notes="NetBox DCIM/IPAM integration for device and VM search",
         )
 
     def health_check(self) -> ModuleHealthStatus:

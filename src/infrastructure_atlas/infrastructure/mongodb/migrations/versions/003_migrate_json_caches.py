@@ -1,6 +1,6 @@
 """Migrate JSON cache files to MongoDB.
 
-This migration reads vCenter and NetBox cache files and imports them
+This migration reads vCenter cache files and imports them
 into MongoDB collections.
 """
 
@@ -15,10 +15,6 @@ from typing import Any
 from pymongo.database import Database
 
 from infrastructure_atlas.infrastructure.logging import get_logger
-from infrastructure_atlas.infrastructure.mongodb.mappers import (
-    document_to_vcenter_vm,
-    vcenter_vm_to_document,
-)
 
 logger = get_logger(__name__)
 
@@ -182,146 +178,6 @@ def _migrate_vcenter_cache(data_dir: Path, cache_db: Database) -> dict[str, Any]
     return results
 
 
-def _migrate_netbox_cache(data_dir: Path, cache_db: Database) -> dict[str, Any]:
-    """Migrate NetBox JSON cache file to MongoDB.
-
-    Args:
-        data_dir: The data directory path.
-        cache_db: The cache database.
-
-    Returns:
-        Dict with migration results.
-    """
-    results: dict[str, Any] = {
-        "devices_migrated": 0,
-        "vms_migrated": 0,
-        "errors": [],
-    }
-
-    cache_file = data_dir / "netbox_cache.json"
-    if not cache_file.exists():
-        logger.info("NetBox cache file not found: %s", cache_file)
-        results["status"] = "skipped"
-        results["reason"] = f"File not found: {cache_file}"
-        return results
-
-    try:
-        with cache_file.open("r", encoding="utf-8") as fh:
-            cache_data = json.load(fh)
-    except (json.JSONDecodeError, OSError) as e:
-        logger.warning("Failed to read NetBox cache file: %s", e)
-        results["status"] = "error"
-        results["error"] = str(e)
-        return results
-
-    # Extract devices and VMs from the cache structure
-    resources = cache_data.get("resources", {})
-    devices_data = resources.get("devices", {}).get("items", [])
-    vms_data = resources.get("vms", {}).get("items", [])
-
-    devices_collection = cache_db["netbox_devices"]
-    vms_collection = cache_db["netbox_vms"]
-
-    # Migrate devices
-    if devices_data:
-        from pymongo.operations import ReplaceOne
-        documents = []
-        for device in devices_data:
-            netbox_id = device.get("id")
-            if netbox_id is None:
-                continue
-
-            doc = {
-                "_id": f"netbox_device_{netbox_id}",
-                "netbox_id": int(netbox_id),
-                "name": device.get("name", ""),
-                "status": device.get("status"),
-                "status_label": device.get("status_label"),
-                "role": device.get("role"),
-                "tenant": device.get("tenant"),
-                "tenant_group": device.get("tenant_group"),
-                "site": device.get("site"),
-                "location": device.get("location"),
-                "cluster": device.get("cluster"),
-                "primary_ip": device.get("primary_ip"),
-                "primary_ip4": device.get("primary_ip4"),
-                "primary_ip6": device.get("primary_ip6"),
-                "oob_ip": device.get("oob_ip"),
-                "tags": device.get("tags", []),
-                "last_updated": _parse_datetime(device.get("last_updated")),
-                "custom_fields": device.get("custom_fields", {}),
-                "manufacturer": device.get("manufacturer"),
-                "model": device.get("model"),
-                "rack": device.get("rack"),
-                "rack_unit": device.get("rack_unit"),
-                "serial": device.get("serial"),
-                "asset_tag": device.get("asset_tag"),
-                "site_group": device.get("site_group"),
-                "region": device.get("region"),
-                "description": device.get("description"),
-                "raw": device.get("raw", {}),
-                "cached_at": datetime.now(UTC),
-            }
-            documents.append(doc)
-
-        if documents:
-            operations = [
-                ReplaceOne({"_id": doc["_id"]}, doc, upsert=True)
-                for doc in documents
-            ]
-            result = devices_collection.bulk_write(operations, ordered=False)
-            results["devices_migrated"] = result.upserted_count + result.modified_count
-            logger.info("Migrated %d NetBox devices", results["devices_migrated"])
-
-    # Migrate VMs
-    if vms_data:
-        from pymongo.operations import ReplaceOne
-        documents = []
-        for vm in vms_data:
-            netbox_id = vm.get("id")
-            if netbox_id is None:
-                continue
-
-            doc = {
-                "_id": f"netbox_vm_{netbox_id}",
-                "netbox_id": int(netbox_id),
-                "name": vm.get("name", ""),
-                "status": vm.get("status"),
-                "status_label": vm.get("status_label"),
-                "role": vm.get("role"),
-                "tenant": vm.get("tenant"),
-                "tenant_group": vm.get("tenant_group"),
-                "site": vm.get("site"),
-                "location": vm.get("location"),
-                "cluster": vm.get("cluster"),
-                "primary_ip": vm.get("primary_ip"),
-                "primary_ip4": vm.get("primary_ip4"),
-                "primary_ip6": vm.get("primary_ip6"),
-                "oob_ip": vm.get("oob_ip"),
-                "tags": vm.get("tags", []),
-                "last_updated": _parse_datetime(vm.get("last_updated")),
-                "custom_fields": vm.get("custom_fields", {}),
-                "platform": vm.get("platform"),
-                "role_detail": vm.get("role_detail"),
-                "description": vm.get("description"),
-                "raw": vm.get("raw", {}),
-                "cached_at": datetime.now(UTC),
-            }
-            documents.append(doc)
-
-        if documents:
-            operations = [
-                ReplaceOne({"_id": doc["_id"]}, doc, upsert=True)
-                for doc in documents
-            ]
-            result = vms_collection.bulk_write(operations, ordered=False)
-            results["vms_migrated"] = result.upserted_count + result.modified_count
-            logger.info("Migrated %d NetBox VMs", results["vms_migrated"])
-
-    results["status"] = "completed"
-    return results
-
-
 def upgrade(app_db: Database, cache_db: Database) -> dict[str, Any]:
     """Run the upgrade migration.
 
@@ -334,7 +190,6 @@ def upgrade(app_db: Database, cache_db: Database) -> dict[str, Any]:
     """
     results: dict[str, Any] = {
         "vcenter": {},
-        "netbox": {},
     }
 
     data_dir = _get_data_dir()
@@ -343,14 +198,9 @@ def upgrade(app_db: Database, cache_db: Database) -> dict[str, Any]:
     # Migrate vCenter cache
     results["vcenter"] = _migrate_vcenter_cache(data_dir, cache_db)
 
-    # Migrate NetBox cache
-    results["netbox"] = _migrate_netbox_cache(data_dir, cache_db)
-
     # Calculate totals
     vcenter_vms = results["vcenter"].get("vms_migrated", 0)
-    netbox_devices = results["netbox"].get("devices_migrated", 0)
-    netbox_vms = results["netbox"].get("vms_migrated", 0)
-    results["total_records"] = vcenter_vms + netbox_devices + netbox_vms
+    results["total_records"] = vcenter_vms
 
     return results
 
@@ -370,8 +220,6 @@ def downgrade(app_db: Database, cache_db: Database) -> dict[str, Any]:
     """
     collections = [
         "vcenter_vms",
-        "netbox_devices",
-        "netbox_vms",
     ]
 
     results: dict[str, Any] = {

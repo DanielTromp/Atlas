@@ -279,17 +279,6 @@
                 </span>
               </button>
               <div class="sidebar-section-items" id="sidebar-section-system-items" hidden>
-                <div class="sidebar-group" data-page="export">
-                  <button class="tab sidebar-item" data-page="export" type="button" aria-controls="sidebar-subitems-export" aria-expanded="false">
-                    <span class="sidebar-item-icon" aria-hidden="true">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5"></path>
-                      </svg>
-                    </span>
-                    <span class="sidebar-item-label">Export</span>
-                  </button>
-                  <div class="sidebar-subitems" id="sidebar-subitems-export" data-subnav-container="export" hidden></div>
-                </div>
                 <div class="sidebar-group" data-page="tools">
                   <button class="tab sidebar-item" data-page="tools" type="button">
                     <span class="sidebar-item-icon" aria-hidden="true">
@@ -551,53 +540,6 @@
             </label>
           </div>
           <div id="search-results" class="feed empty">Enter a search term and press Search.</div>
-        </div>
-      </section>
-
-      <!-- Export Page -->
-      <section class="page" id="page-export">
-        <div class="panel panel-export">
-          <nav class="tabs" id="ds-tabs" aria-label="Datasets">
-            <button class="tab active" data-ds="all">All</button>
-            <button class="tab" data-ds="devices">Devices</button>
-            <button class="tab" data-ds="vms">VMs</button>
-          </nav>
-          <div class="toolbar">
-            <label class="field grow">
-              <span>Search</span>
-              <input id="q" type="text" placeholder="Search all columns" />
-            </label>
-            <button id="hideBtn" class="btn" title="Hide fields">👁️‍🗨️ Hide fields</button>
-            <button id="resetFilters" class="btn ghost" title="Reset all column filters">Reset filters</button>
-            <button id="updateBtn" class="btn" title="Run export and refresh">Update dataset</button>
-            <button id="viewLogs" class="btn" title="View recent export logs">View logs</button>
-            <button id="downloadCsv" class="btn" title="Download filtered CSV">Download CSV</button>
-            <label class="field">
-              <span>Density</span>
-              <select id="density">
-                <option value="comfortable" selected>Comfortable</option>
-                <option value="compact">Compact</option>
-              </select>
-            </label>
-            <button id="reload" class="btn">Refresh</button>
-            <span id="summary" class="summary"></span>
-          </div>
-          <div class="grid root" id="grid-root">
-            <div class="grid header">
-              <div class="header-scroll" id="header-scroll">
-                <div class="header-rows">
-                  <div class="header-row" id="header-row"></div>
-                  <div class="filter-row" id="filter-row"></div>
-                </div>
-              </div>
-            </div>
-            <div class="grid body" id="body">
-              <div class="body-scroll" id="body-scroll">
-                <div class="canvas" id="canvas"></div>
-                <div class="rows" id="rows"></div>
-              </div>
-            </div>
-          </div>
         </div>
       </section>
 
@@ -1116,7 +1058,6 @@
                 </button>
                 <div class="admin-nav-items">
                   <button class="admin-tab" data-admin-tab="api">API &amp; UI</button>
-                  <button class="admin-tab" data-admin-tab="export">Export</button>
                   <button class="admin-tab" data-admin-tab="suggestions">Suggestions</button>
                   <button class="admin-tab" data-admin-tab="backup">Backup</button>
                 </div>
@@ -1146,9 +1087,6 @@
             </section>
             <section id="admin-panel-net" class="admin-panel" data-admin-tab="net-atlassian">
               <div id="admin-settings-net" class="admin-settings-group"></div>
-            </section>
-            <section id="admin-panel-export" class="admin-panel" data-admin-tab="export">
-              <div id="admin-settings-export" class="admin-settings-group"></div>
             </section>
             <section id="admin-panel-api" class="admin-panel" data-admin-tab="api">
               <div id="admin-settings-api" class="admin-settings-group"></div>

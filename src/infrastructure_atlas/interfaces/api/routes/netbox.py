@@ -2,68 +2,15 @@
 
 from __future__ import annotations
 
-import csv
 import os
 from typing import Any, Literal
 
-import duckdb
-import numpy as np
-import pandas as pd
 import requests
 from fastapi import APIRouter, HTTPException, Query
 
 from infrastructure_atlas.infrastructure.modules import get_module_registry
 
 router = APIRouter(tags=["netbox"])
-
-
-# Import _csv_path from core routes
-def _csv_path(name: str):
-    """Get path to a file in the data directory."""
-    from pathlib import Path
-
-    from infrastructure_atlas.env import project_root
-
-    root = project_root()
-    raw = os.getenv("NETBOX_DATA_DIR", "data")
-    path = Path(raw) if os.path.isabs(raw) else (root / raw)
-    path.mkdir(parents=True, exist_ok=True)
-    return path / name
-
-
-def _list_records(
-    csv_name: str,
-    limit: int | None,
-    offset: int,
-    order_by: str | None,
-    order_dir: Literal["asc", "desc"],
-) -> list[dict]:
-    """Query CSV file using DuckDB with optional ordering and pagination."""
-    path = _csv_path(csv_name)
-    if not path.exists():
-        raise HTTPException(status_code=404, detail=f"{csv_name} not found")
-    # Read headers to validate order_by
-    with path.open(newline="", encoding="utf-8") as fh:
-        reader = csv.reader(fh)
-        headers = next(reader, [])
-    if order_by and order_by not in headers:
-        raise HTTPException(status_code=400, detail=f"Invalid order_by: {order_by}")
-
-    ident = f'"{order_by}" {order_dir.upper()}' if order_by else None
-    sql = "SELECT * FROM read_csv_auto(?, header=True)"
-    params: list[Any] = [path.as_posix()]
-    if ident:
-        sql += f" ORDER BY {ident}"
-    if limit is not None:
-        sql += " LIMIT ? OFFSET ?"
-        params.extend([int(limit), int(offset)])
-
-    df = duckdb.query(sql, params=params).df()
-    # Normalize to JSON‑safe values: NaN/NaT/±Inf -> None
-    if not df.empty:
-        df = df.replace([np.inf, -np.inf], np.nan)
-        df = df.astype(object).where(pd.notnull(df), None)
-    return df.to_dict(orient="records")
 
 
 def _nb_session() -> tuple[requests.Session, str]:
@@ -91,43 +38,6 @@ def require_netbox_enabled():
         registry.require_enabled("netbox")
     except Exception as e:
         raise HTTPException(status_code=403, detail=f"NetBox module is disabled: {e}")
-
-
-# Legacy routes at root level (for backward compatibility)
-@router.get("/devices")
-def devices(
-    limit: int | None = Query(None, ge=1, description="Max rows to return (omit for all)"),
-    offset: int = Query(0, ge=0),
-    order_by: str | None = Query(None, description="Column name to order by"),
-    order_dir: Literal["asc", "desc"] = Query("asc"),
-):
-    """List NetBox devices from CSV export."""
-    require_netbox_enabled()
-    return _list_records("netbox_devices_export.csv", limit, offset, order_by, order_dir)
-
-
-@router.get("/vms")
-def vms(
-    limit: int | None = Query(None, ge=1, description="Max rows to return (omit for all)"),
-    offset: int = Query(0, ge=0),
-    order_by: str | None = Query(None, description="Column name to order by"),
-    order_dir: Literal["asc", "desc"] = Query("asc"),
-):
-    """List NetBox VMs from CSV export."""
-    require_netbox_enabled()
-    return _list_records("netbox_vms_export.csv", limit, offset, order_by, order_dir)
-
-
-@router.get("/all")
-def all_merged(
-    limit: int | None = Query(None, ge=1, description="Max rows to return (omit for all)"),
-    offset: int = Query(0, ge=0),
-    order_by: str | None = Query(None, description="Column name to order by"),
-    order_dir: Literal["asc", "desc"] = Query("asc"),
-):
-    """List all merged NetBox data from CSV export."""
-    require_netbox_enabled()
-    return _list_records("netbox_merged_export.csv", limit, offset, order_by, order_dir)
 
 
 @router.get("/netbox/config")

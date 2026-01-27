@@ -22,7 +22,6 @@ if TYPE_CHECKING:
     )
     from infrastructure_atlas.infrastructure.mongodb.cache_repositories import (
         MongoDBCommvaultCacheRepository,
-        MongoDBNetBoxCacheRepository,
         MongoDBVCenterCacheRepository,
     )
 
@@ -149,18 +148,6 @@ def get_vcenter_cache_repository() -> MongoDBVCenterCacheRepository:
 
     _, cache_db = _get_mongodb_databases()
     return MongoDBVCenterCacheRepository(cache_db)
-
-
-def get_netbox_cache_repository() -> MongoDBNetBoxCacheRepository:
-    """Get the NetBox cache repository.
-
-    Currently only supports MongoDB. JSON backend would require implementing
-    file-based operations with proper locking.
-    """
-    from infrastructure_atlas.infrastructure.mongodb.cache_repositories import MongoDBNetBoxCacheRepository
-
-    _, cache_db = _get_mongodb_databases()
-    return MongoDBNetBoxCacheRepository(cache_db)
 
 
 def get_commvault_cache_repository() -> MongoDBCommvaultCacheRepository:
@@ -293,6 +280,5 @@ __all__ = [
     "get_foreman_config_repository",
     # Cache repositories (MongoDB only)
     "get_vcenter_cache_repository",
-    "get_netbox_cache_repository",
     "get_commvault_cache_repository",
 ]

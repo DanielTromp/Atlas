@@ -7,7 +7,6 @@ Supports automatic cleanup of old exports.
 from __future__ import annotations
 
 import csv
-import io
 import tempfile
 import time
 from datetime import datetime

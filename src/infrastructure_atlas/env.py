@@ -28,9 +28,10 @@ def load_env(override: bool = False, dotenv_path: Path | None = None) -> Path:
     over .env file values. This allows users to override defaults via the UI.
     """
     root = project_root()
-    env_path = Path(dotenv_path) if dotenv_path else Path(find_dotenv(filename=".env", usecwd=False))
-    if not env_path or not str(env_path):
-        # Fallback to root/.env even if it doesn't exist
+    found = find_dotenv(filename=".env", usecwd=False) if not dotenv_path else None
+    env_path = Path(dotenv_path) if dotenv_path else (Path(found) if found else None)
+    # Fallback to root/.env if find_dotenv returned empty or a directory
+    if not env_path or str(env_path) == "." or env_path.is_dir():
         env_path = root / ".env"
     # Load database-stored settings FIRST (user overrides via UI)
     sync_secure_settings()

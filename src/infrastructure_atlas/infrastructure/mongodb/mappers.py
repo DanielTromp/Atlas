@@ -26,7 +26,6 @@ from infrastructure_atlas.domain.entities import (
     UserEntity,
     VCenterConfigEntity,
 )
-from infrastructure_atlas.domain.integrations import NetboxDeviceRecord, NetboxVMRecord
 from infrastructure_atlas.domain.integrations.vcenter import VCenterVM
 
 
@@ -509,144 +508,6 @@ def document_to_vcenter_vm(doc: Mapping[str, Any]) -> VCenterVM:
     )
 
 
-# =============================================================================
-# NetBox Device Cache Mappers
-# =============================================================================
-
-
-def netbox_device_to_document(record: NetboxDeviceRecord) -> dict[str, Any]:
-    """Convert a NetboxDeviceRecord to a MongoDB cache document."""
-    return {
-        "_id": f"netbox_device_{record.id}",
-        "netbox_id": int(record.id),
-        "name": record.name,
-        "status": record.status,
-        "status_label": record.status_label,
-        "role": record.role,
-        "tenant": record.tenant,
-        "tenant_group": record.tenant_group,
-        "site": record.site,
-        "location": record.location,
-        "cluster": record.cluster,
-        "primary_ip": record.primary_ip,
-        "primary_ip4": record.primary_ip4,
-        "primary_ip6": record.primary_ip6,
-        "oob_ip": record.oob_ip,
-        "tags": list(record.tags),
-        "last_updated": record.last_updated,
-        "custom_fields": record.custom_fields,
-        "manufacturer": record.manufacturer,
-        "model": record.model,
-        "rack": record.rack,
-        "rack_unit": record.rack_unit,
-        "serial": record.serial,
-        "asset_tag": record.asset_tag,
-        "site_group": record.site_group,
-        "region": record.region,
-        "description": record.description,
-        "raw": record.raw,
-        "cached_at": _now_utc(),
-    }
-
-
-def document_to_netbox_device(doc: Mapping[str, Any]) -> NetboxDeviceRecord:
-    """Convert a MongoDB cache document to a NetboxDeviceRecord."""
-    tags = doc.get("tags") or ()
-    return NetboxDeviceRecord(
-        id=int(doc.get("netbox_id") or 0),
-        name=str(doc.get("name") or ""),
-        status=doc.get("status"),
-        status_label=doc.get("status_label"),
-        role=doc.get("role"),
-        tenant=doc.get("tenant"),
-        tenant_group=doc.get("tenant_group"),
-        site=doc.get("site"),
-        location=doc.get("location"),
-        cluster=doc.get("cluster"),
-        primary_ip=doc.get("primary_ip"),
-        primary_ip4=doc.get("primary_ip4"),
-        primary_ip6=doc.get("primary_ip6"),
-        oob_ip=doc.get("oob_ip"),
-        tags=tuple(tags) if not isinstance(tags, tuple) else tags,
-        last_updated=_parse_datetime(doc.get("last_updated")),
-        custom_fields=doc.get("custom_fields") or {},
-        raw=doc.get("raw") or {},
-        source=None,
-        manufacturer=doc.get("manufacturer"),
-        model=doc.get("model"),
-        rack=doc.get("rack"),
-        rack_unit=doc.get("rack_unit"),
-        serial=doc.get("serial"),
-        asset_tag=doc.get("asset_tag"),
-        site_group=doc.get("site_group"),
-        region=doc.get("region"),
-        description=doc.get("description"),
-    )
-
-
-# =============================================================================
-# NetBox VM Cache Mappers
-# =============================================================================
-
-
-def netbox_vm_to_document(record: NetboxVMRecord) -> dict[str, Any]:
-    """Convert a NetboxVMRecord to a MongoDB cache document."""
-    return {
-        "_id": f"netbox_vm_{record.id}",
-        "netbox_id": int(record.id),
-        "name": record.name,
-        "status": record.status,
-        "status_label": record.status_label,
-        "role": record.role,
-        "tenant": record.tenant,
-        "tenant_group": record.tenant_group,
-        "site": record.site,
-        "location": record.location,
-        "cluster": record.cluster,
-        "primary_ip": record.primary_ip,
-        "primary_ip4": record.primary_ip4,
-        "primary_ip6": record.primary_ip6,
-        "oob_ip": record.oob_ip,
-        "tags": list(record.tags),
-        "last_updated": record.last_updated,
-        "custom_fields": record.custom_fields,
-        "platform": record.platform,
-        "role_detail": record.role_detail,
-        "description": record.description,
-        "raw": record.raw,
-        "cached_at": _now_utc(),
-    }
-
-
-def document_to_netbox_vm(doc: Mapping[str, Any]) -> NetboxVMRecord:
-    """Convert a MongoDB cache document to a NetboxVMRecord."""
-    tags = doc.get("tags") or ()
-    return NetboxVMRecord(
-        id=int(doc.get("netbox_id") or 0),
-        name=str(doc.get("name") or ""),
-        status=doc.get("status"),
-        status_label=doc.get("status_label"),
-        role=doc.get("role"),
-        tenant=doc.get("tenant"),
-        tenant_group=doc.get("tenant_group"),
-        site=doc.get("site"),
-        location=doc.get("location"),
-        cluster=doc.get("cluster"),
-        primary_ip=doc.get("primary_ip"),
-        primary_ip4=doc.get("primary_ip4"),
-        primary_ip6=doc.get("primary_ip6"),
-        oob_ip=doc.get("oob_ip"),
-        tags=tuple(tags) if not isinstance(tags, tuple) else tags,
-        last_updated=_parse_datetime(doc.get("last_updated")),
-        custom_fields=doc.get("custom_fields") or {},
-        raw=doc.get("raw") or {},
-        source=None,
-        platform=doc.get("platform"),
-        role_detail=doc.get("role_detail"),
-        description=doc.get("description"),
-    )
-
-
 # ---------------------------------------------------------------------------
 # Bot Platform Account Mappers
 # ---------------------------------------------------------------------------
@@ -822,12 +683,6 @@ __all__ = [
     # VCenter VM cache mappers
     "vcenter_vm_to_document",
     "document_to_vcenter_vm",
-    # NetBox device cache mappers
-    "netbox_device_to_document",
-    "document_to_netbox_device",
-    # NetBox VM cache mappers
-    "netbox_vm_to_document",
-    "document_to_netbox_vm",
     # Bot platform account mappers
     "bot_platform_account_to_document",
     "document_to_bot_platform_account",

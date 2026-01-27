@@ -50,10 +50,9 @@ def bootstrap_api() -> APIRouter:
     router.include_router(claude_cli.router)
 
     # Chat routes (imported lazily to avoid circular import)
-    from .routes import chat, export
+    from .routes import chat
 
     router.include_router(chat.router)
-    router.include_router(export.router)
 
     # AI Chat routes (new multi-provider chat system)
     try:

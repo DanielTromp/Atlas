@@ -262,35 +262,6 @@ VCENTER_VMS_INDEXES = CollectionIndexes(
     ),
 )
 
-NETBOX_DEVICES_INDEXES = CollectionIndexes(
-    collection="netbox_devices",
-    indexes=(
-        IndexModel([("netbox_id", ASCENDING)], unique=True, name="idx_netbox_id_unique"),
-        IndexModel([("name", ASCENDING)], name="idx_name"),
-        IndexModel([("primary_ip", ASCENDING)], sparse=True, name="idx_primary_ip"),
-        IndexModel([("site", ASCENDING)], name="idx_site"),
-        IndexModel([("status", ASCENDING)], name="idx_status"),
-        IndexModel([("role", ASCENDING)], sparse=True, name="idx_role"),
-        IndexModel([("tenant", ASCENDING)], sparse=True, name="idx_tenant"),
-        IndexModel([("last_updated", DESCENDING)], name="idx_last_updated"),
-        IndexModel([("name", TEXT), ("primary_ip", TEXT)], name="idx_text_search"),
-    ),
-)
-
-NETBOX_VMS_INDEXES = CollectionIndexes(
-    collection="netbox_vms",
-    indexes=(
-        IndexModel([("netbox_id", ASCENDING)], unique=True, name="idx_netbox_id_unique"),
-        IndexModel([("name", ASCENDING)], name="idx_name"),
-        IndexModel([("primary_ip", ASCENDING)], sparse=True, name="idx_primary_ip"),
-        IndexModel([("cluster", ASCENDING)], sparse=True, name="idx_cluster"),
-        IndexModel([("status", ASCENDING)], name="idx_status"),
-        IndexModel([("site", ASCENDING)], sparse=True, name="idx_site"),
-        IndexModel([("last_updated", DESCENDING)], name="idx_last_updated"),
-        IndexModel([("name", TEXT), ("primary_ip", TEXT)], name="idx_text_search"),
-    ),
-)
-
 COMMVAULT_JOBS_INDEXES = CollectionIndexes(
     collection="commvault_jobs",
     indexes=(
@@ -335,8 +306,6 @@ APPLICATION_INDEXES: tuple[CollectionIndexes, ...] = (
 # All cache indexes
 CACHE_INDEXES: tuple[CollectionIndexes, ...] = (
     VCENTER_VMS_INDEXES,
-    NETBOX_DEVICES_INDEXES,
-    NETBOX_VMS_INDEXES,
     COMMVAULT_JOBS_INDEXES,
 )
 
