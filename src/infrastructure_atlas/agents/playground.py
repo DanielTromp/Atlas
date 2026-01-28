@@ -22,119 +22,6 @@ DEFAULT_LLM_PROVIDER = os.getenv("ATLAS_DEFAULT_LLM_PROVIDER", "anthropic")
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from infrastructure_atlas.agents.llm_factory import create_llm, get_default_model, get_supported_providers
-
-
-def _convert_tools_for_gemini(tools: list) -> list[dict]:
-    """Convert LangChain tools to Gemini-compatible function declarations.
-
-    Gemini's function calling API has strict schema requirements and doesn't
-    support certain fields like 'callbacks' with complex nested types.
-    This function extracts just the essential function declaration info.
-
-    Args:
-        tools: List of LangChain StructuredTool instances
-
-    Returns:
-        List of Gemini-compatible function declaration dicts
-    """
-    declarations = []
-    for tool in tools:
-        # Get the basic tool info
-        name = getattr(tool, "name", str(tool))
-        description = getattr(tool, "description", "")
-
-        # Build a clean parameter schema without problematic fields
-        params = {"type": "object", "properties": {}, "required": []}
-
-        if hasattr(tool, "args_schema") and tool.args_schema:
-            try:
-                schema = tool.args_schema.model_json_schema()
-                props = schema.get("properties", {})
-                required = schema.get("required", [])
-
-                # Filter out problematic properties and clean up nested schemas
-                for prop_name, prop_def in props.items():
-                    # Skip config/callbacks which Gemini doesn't support
-                    if prop_name in ("config", "callbacks", "run_manager"):
-                        continue
-
-                    # Clean up the property definition
-                    clean_prop = _clean_schema_for_gemini(prop_def)
-                    if clean_prop:
-                        params["properties"][prop_name] = clean_prop
-                        if prop_name in required:
-                            params["required"].append(prop_name)
-            except Exception as e:
-                logger.warning(f"Could not extract schema for tool {name}: {e}")
-
-        declarations.append({
-            "name": name,
-            "description": description[:1024] if description else f"Execute {name}",
-            "parameters": params if params["properties"] else None,
-        })
-
-    return declarations
-
-
-def _clean_schema_for_gemini(prop_def: dict) -> dict | None:
-    """Clean a JSON schema property definition for Gemini compatibility.
-
-    Args:
-        prop_def: Property definition from JSON schema
-
-    Returns:
-        Cleaned property definition or None if should be skipped
-    """
-    if not isinstance(prop_def, dict):
-        return None
-
-    # Skip anyOf/oneOf which Gemini doesn't handle well
-    if "anyOf" in prop_def or "oneOf" in prop_def:
-        # Try to extract a simple type
-        for option in prop_def.get("anyOf", []) + prop_def.get("oneOf", []):
-            if isinstance(option, dict) and option.get("type") in ("string", "integer", "number", "boolean"):
-                return {"type": option["type"], "description": prop_def.get("description", "")}
-        return {"type": "string", "description": prop_def.get("description", "")}
-
-    result = {}
-
-    # Copy basic fields
-    if "type" in prop_def:
-        result["type"] = prop_def["type"]
-    if "description" in prop_def:
-        result["description"] = prop_def["description"][:512]
-    if "enum" in prop_def:
-        result["enum"] = prop_def["enum"]
-    if "default" in prop_def:
-        result["default"] = prop_def["default"]
-
-    # Handle arrays
-    if prop_def.get("type") == "array" and "items" in prop_def:
-        items = prop_def["items"]
-        if isinstance(items, dict):
-            if items.get("type") in ("string", "integer", "number", "boolean"):
-                result["items"] = {"type": items["type"]}
-            else:
-                result["items"] = {"type": "string"}  # Fallback
-        else:
-            result["items"] = {"type": "string"}
-
-    # Handle objects - simplify nested objects
-    if prop_def.get("type") == "object":
-        result["type"] = "object"
-        if "properties" in prop_def:
-            result["properties"] = {}
-            for k, v in prop_def["properties"].items():
-                if k not in ("config", "callbacks", "run_manager"):
-                    cleaned = _clean_schema_for_gemini(v)
-                    if cleaned:
-                        result["properties"][k] = cleaned
-
-    # If no type was set, default to string
-    if "type" not in result:
-        result["type"] = "string"
-
-    return result
 from infrastructure_atlas.agents.usage import UsageRecord, calculate_cost, create_usage_service
 from infrastructure_atlas.infrastructure.logging import get_logger
 
@@ -684,17 +571,7 @@ class PlaygroundRuntime:
             tools = agent._tools if hasattr(agent, "_tools") else []
 
             if tools:
-                # Detect if using Gemini provider
-                provider = DEFAULT_LLM_PROVIDER
-                if session.config_override:
-                    provider = session.config_override.get("provider", provider)
-
-                if provider == "gemini":
-                    # Convert tools to Gemini-compatible format
-                    gemini_tools = _convert_tools_for_gemini(tools)
-                    llm = llm.bind_tools(gemini_tools)
-                else:
-                    llm = llm.bind_tools(tools)
+                llm = llm.bind_tools(tools)
 
             # Build system prompt with user context
             system_prompt = agent._system_prompt
@@ -728,13 +605,12 @@ class PlaygroundRuntime:
             model = session.config_override.get("model", agent.config.model) if session.config_override else agent.config.model
 
             for iteration in range(max_iterations):
-                logger.info(f"LLM iteration {iteration + 1}/{max_iterations} starting")
+                logger.debug(f"LLM iteration {iteration + 1}/{max_iterations}")
                 # Use async LLM call to avoid blocking the event loop
                 response = await asyncio.wait_for(
                     llm.ainvoke(langchain_messages),
                     timeout=120.0,  # 2 minute timeout for LLM calls
                 )
-                logger.info(f"LLM response received, type={type(response).__name__}, has_tool_calls={hasattr(response, 'tool_calls') and bool(response.tool_calls)}")
 
                 # Track tokens separately
                 if hasattr(response, "usage_metadata") and response.usage_metadata:
@@ -743,11 +619,9 @@ class PlaygroundRuntime:
 
                 # Check for tool calls
                 if hasattr(response, "tool_calls") and response.tool_calls:
-                    logger.info(f"Processing {len(response.tool_calls)} tool calls")
                     langchain_messages.append(response)
 
                     for tool_call in response.tool_calls:
-                        logger.info(f"Tool call: {tool_call}")
                         tool_name = tool_call["name"]
                         tool_args = tool_call.get("args", {})
 
@@ -824,7 +698,7 @@ class PlaygroundRuntime:
 
             duration_ms = int((time.perf_counter() - start_time) * 1000)
 
-            logger.info(f"Yielding MESSAGE_DELTA with content length: {len(response_content)}")
+            logger.debug(f"Response content length: {len(response_content)}")
             yield ChatEvent(
                 type=ChatEventType.MESSAGE_DELTA,
                 data={"content": response_content},
