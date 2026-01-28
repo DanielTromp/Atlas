@@ -94,9 +94,13 @@ class ConfluenceSkill(BaseSkill):
     def _get_rest_session(self) -> tuple[requests.Session, str]:
         """Get or create REST API session lazily."""
         if self._session is None:
-            base = os.getenv("ATLASSIAN_BASE_URL", "").strip() or os.getenv("JIRA_BASE_URL", "").strip()
-            email = os.getenv("ATLASSIAN_EMAIL", "").strip() or os.getenv("JIRA_EMAIL", "").strip()
-            token = os.getenv("ATLASSIAN_API_TOKEN", "").strip() or os.getenv("JIRA_API_TOKEN", "").strip()
+            # Strip quotes that may be embedded in .env values
+            base = (os.getenv("ATLASSIAN_BASE_URL", "").strip().strip('"') or
+                    os.getenv("JIRA_BASE_URL", "").strip().strip('"'))
+            email = (os.getenv("ATLASSIAN_EMAIL", "").strip().strip('"') or
+                     os.getenv("JIRA_EMAIL", "").strip().strip('"'))
+            token = (os.getenv("ATLASSIAN_API_TOKEN", "").strip().strip('"') or
+                     os.getenv("JIRA_API_TOKEN", "").strip().strip('"'))
 
             if not (base and email and token):
                 raise RuntimeError(
@@ -254,6 +258,85 @@ class ConfluenceSkill(BaseSkill):
 
         logger.info("ConfluenceSkill initialized with 10 actions")
 
+    def _search_confluence_direct(
+        self,
+        query: str,
+        top_k: int = 10,
+    ) -> dict[str, Any]:
+        """Search Confluence directly using CQL text search (keyword-based).
+
+        This is used as a fallback when RAG returns no results.
+
+        Args:
+            query: Search query text
+            top_k: Maximum number of results
+
+        Returns:
+            Search results from direct Confluence API
+        """
+        start_time = time.time()
+        try:
+            session, wiki_url = self._get_rest_session()
+
+            # CQL text search - searches in title, content, and other text fields
+            # Escape special CQL characters in query
+            escaped_query = query.replace('"', '\\"')
+            cql = f'type = "page" AND text ~ "{escaped_query}"'
+
+            response = session.get(
+                f"{wiki_url}/rest/api/content/search",
+                params={
+                    "cql": cql,
+                    "limit": top_k,
+                    "expand": "version,space,ancestors,metadata.labels",
+                },
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            duration_ms = int((time.time() - start_time) * 1000)
+            results = data.get("results", [])
+
+            logger.info(
+                f"Confluence direct search completed",
+                extra={"query": query[:50], "results": len(results), "time_ms": duration_ms},
+            )
+
+            # Format results similar to RAG results for consistency
+            formatted_results = []
+            for page in results:
+                space = page.get("space", {})
+                ancestors = page.get("ancestors", [])
+                labels = [lbl.get("name") for lbl in page.get("metadata", {}).get("labels", {}).get("results", [])]
+
+                formatted_results.append({
+                    "chunk_id": f"direct-{page.get('id')}",
+                    "content": page.get("title", ""),  # Direct search doesn't return content snippets
+                    "relevance_score": None,  # CQL doesn't provide relevance scores
+                    "page": {
+                        "page_id": page.get("id"),
+                        "title": page.get("title"),
+                        "space_key": space.get("key"),
+                        "url": f"{wiki_url.replace('/wiki', '')}{page.get('_links', {}).get('webui', '')}",
+                        "labels": labels,
+                    },
+                    "context_path": [space.get("key", "")] + [a.get("title", "") for a in ancestors] + [page.get("title", "")],
+                    "citations": [],
+                    "search_type": "direct",  # Indicate this came from direct search
+                })
+
+            return {
+                "success": True,
+                "query": query,
+                "total_results": len(formatted_results),
+                "search_time_ms": duration_ms,
+                "search_type": "direct",
+                "results": formatted_results,
+            }
+        except Exception as e:
+            logger.error(f"Failed to search Confluence directly: {e}")
+            return {"success": False, "error": str(e)}
+
     def _search(
         self,
         query: str,
@@ -262,6 +345,9 @@ class ConfluenceSkill(BaseSkill):
         include_citations: bool = True,
     ) -> dict[str, Any]:
         """Search Confluence documentation semantically.
+
+        First tries RAG (semantic search), then falls back to direct Confluence
+        CQL search if no results are found.
 
         Args:
             query: Search query text
@@ -273,6 +359,9 @@ class ConfluenceSkill(BaseSkill):
             Search results with relevance scores and optional citations
         """
         start_time = time.time()
+        rag_error = None
+
+        # First try RAG search
         try:
             logger.info(f"Confluence RAG search starting", extra={"query": query[:100], "top_k": top_k})
             search_engine = self._get_search_engine()
@@ -298,40 +387,61 @@ class ConfluenceSkill(BaseSkill):
                 extra={"query": query[:50], "results": response.total_results, "time_ms": duration_ms},
             )
 
-            return {
-                "success": True,
-                "query": response.query,
-                "total_results": response.total_results,
-                "search_time_ms": response.search_time_ms,
-                "results": [
-                    {
-                        "chunk_id": r.chunk_id,
-                        "content": r.content[:500] + "..." if len(r.content) > 500 else r.content,
-                        "relevance_score": r.relevance_score,
-                        "page": {
-                            "page_id": r.page.page_id,
-                            "title": r.page.title,
-                            "space_key": r.page.space_key,
-                            "url": r.page.url,
-                            "labels": r.page.labels,
-                        },
-                        "context_path": r.context_path,
-                        "citations": [
-                            {
-                                "quote": c.quote,
-                                "page_title": c.page_title,
-                                "section": c.section,
-                                "confidence": c.confidence_score,
-                            }
-                            for c in r.citations
-                        ],
-                    }
-                    for r in response.results
-                ],
-            }
+            # If RAG found results, return them
+            if response.results:
+                return {
+                    "success": True,
+                    "query": response.query,
+                    "total_results": response.total_results,
+                    "search_time_ms": response.search_time_ms,
+                    "search_type": "rag",
+                    "results": [
+                        {
+                            "chunk_id": r.chunk_id,
+                            "content": r.content[:500] + "..." if len(r.content) > 500 else r.content,
+                            "relevance_score": r.relevance_score,
+                            "page": {
+                                "page_id": r.page.page_id,
+                                "title": r.page.title,
+                                "space_key": r.page.space_key,
+                                "url": r.page.url,
+                                "labels": r.page.labels,
+                            },
+                            "context_path": r.context_path,
+                            "citations": [
+                                {
+                                    "quote": c.quote,
+                                    "page_title": c.page_title,
+                                    "section": c.section,
+                                    "confidence": c.confidence_score,
+                                }
+                                for c in r.citations
+                            ],
+                        }
+                        for r in response.results
+                    ],
+                }
+
+            # RAG returned no results - will fall through to direct search
+            logger.info(f"RAG returned no results, falling back to direct Confluence search")
+
         except Exception as e:
-            logger.error(f"Failed to search Confluence: {e}")
-            return {"success": False, "error": str(e)}
+            logger.warning(f"RAG search failed, falling back to direct search: {e}")
+            rag_error = str(e)
+
+        # Fallback to direct Confluence CQL search
+        logger.info(f"Executing direct Confluence search fallback", extra={"query": query[:50]})
+        direct_result = self._search_confluence_direct(query, top_k)
+
+        if direct_result.get("success"):
+            direct_result["fallback_reason"] = rag_error or "RAG returned no results"
+            return direct_result
+
+        # Both searches failed
+        return {
+            "success": False,
+            "error": f"Both RAG and direct search failed. RAG: {rag_error}, Direct: {direct_result.get('error')}",
+        }
 
     def _get_page(self, page_id: str) -> dict[str, Any]:
         """Get a Confluence page by ID.

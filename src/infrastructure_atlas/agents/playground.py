@@ -7,6 +7,7 @@ agents and skills without the full orchestration pipeline.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -15,9 +16,125 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+# Default LLM provider - can be overridden via ATLAS_DEFAULT_LLM_PROVIDER env var
+DEFAULT_LLM_PROVIDER = os.getenv("ATLAS_DEFAULT_LLM_PROVIDER", "anthropic")
+
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from infrastructure_atlas.agents.llm_factory import create_llm, get_default_model, get_supported_providers
+
+
+def _convert_tools_for_gemini(tools: list) -> list[dict]:
+    """Convert LangChain tools to Gemini-compatible function declarations.
+
+    Gemini's function calling API has strict schema requirements and doesn't
+    support certain fields like 'callbacks' with complex nested types.
+    This function extracts just the essential function declaration info.
+
+    Args:
+        tools: List of LangChain StructuredTool instances
+
+    Returns:
+        List of Gemini-compatible function declaration dicts
+    """
+    declarations = []
+    for tool in tools:
+        # Get the basic tool info
+        name = getattr(tool, "name", str(tool))
+        description = getattr(tool, "description", "")
+
+        # Build a clean parameter schema without problematic fields
+        params = {"type": "object", "properties": {}, "required": []}
+
+        if hasattr(tool, "args_schema") and tool.args_schema:
+            try:
+                schema = tool.args_schema.model_json_schema()
+                props = schema.get("properties", {})
+                required = schema.get("required", [])
+
+                # Filter out problematic properties and clean up nested schemas
+                for prop_name, prop_def in props.items():
+                    # Skip config/callbacks which Gemini doesn't support
+                    if prop_name in ("config", "callbacks", "run_manager"):
+                        continue
+
+                    # Clean up the property definition
+                    clean_prop = _clean_schema_for_gemini(prop_def)
+                    if clean_prop:
+                        params["properties"][prop_name] = clean_prop
+                        if prop_name in required:
+                            params["required"].append(prop_name)
+            except Exception as e:
+                logger.warning(f"Could not extract schema for tool {name}: {e}")
+
+        declarations.append({
+            "name": name,
+            "description": description[:1024] if description else f"Execute {name}",
+            "parameters": params if params["properties"] else None,
+        })
+
+    return declarations
+
+
+def _clean_schema_for_gemini(prop_def: dict) -> dict | None:
+    """Clean a JSON schema property definition for Gemini compatibility.
+
+    Args:
+        prop_def: Property definition from JSON schema
+
+    Returns:
+        Cleaned property definition or None if should be skipped
+    """
+    if not isinstance(prop_def, dict):
+        return None
+
+    # Skip anyOf/oneOf which Gemini doesn't handle well
+    if "anyOf" in prop_def or "oneOf" in prop_def:
+        # Try to extract a simple type
+        for option in prop_def.get("anyOf", []) + prop_def.get("oneOf", []):
+            if isinstance(option, dict) and option.get("type") in ("string", "integer", "number", "boolean"):
+                return {"type": option["type"], "description": prop_def.get("description", "")}
+        return {"type": "string", "description": prop_def.get("description", "")}
+
+    result = {}
+
+    # Copy basic fields
+    if "type" in prop_def:
+        result["type"] = prop_def["type"]
+    if "description" in prop_def:
+        result["description"] = prop_def["description"][:512]
+    if "enum" in prop_def:
+        result["enum"] = prop_def["enum"]
+    if "default" in prop_def:
+        result["default"] = prop_def["default"]
+
+    # Handle arrays
+    if prop_def.get("type") == "array" and "items" in prop_def:
+        items = prop_def["items"]
+        if isinstance(items, dict):
+            if items.get("type") in ("string", "integer", "number", "boolean"):
+                result["items"] = {"type": items["type"]}
+            else:
+                result["items"] = {"type": "string"}  # Fallback
+        else:
+            result["items"] = {"type": "string"}
+
+    # Handle objects - simplify nested objects
+    if prop_def.get("type") == "object":
+        result["type"] = "object"
+        if "properties" in prop_def:
+            result["properties"] = {}
+            for k, v in prop_def["properties"].items():
+                if k not in ("config", "callbacks", "run_manager"):
+                    cleaned = _clean_schema_for_gemini(v)
+                    if cleaned:
+                        result["properties"][k] = cleaned
+
+    # If no type was set, default to string
+    if "type" not in result:
+        result["type"] = "string"
+
+    return result
 from infrastructure_atlas.agents.usage import UsageRecord, calculate_cost, create_usage_service
 from infrastructure_atlas.infrastructure.logging import get_logger
 
@@ -567,7 +684,17 @@ class PlaygroundRuntime:
             tools = agent._tools if hasattr(agent, "_tools") else []
 
             if tools:
-                llm = llm.bind_tools(tools)
+                # Detect if using Gemini provider
+                provider = DEFAULT_LLM_PROVIDER
+                if session.config_override:
+                    provider = session.config_override.get("provider", provider)
+
+                if provider == "gemini":
+                    # Convert tools to Gemini-compatible format
+                    gemini_tools = _convert_tools_for_gemini(tools)
+                    llm = llm.bind_tools(gemini_tools)
+                else:
+                    llm = llm.bind_tools(tools)
 
             # Build system prompt with user context
             system_prompt = agent._system_prompt
@@ -844,7 +971,7 @@ class PlaygroundRuntime:
         model = agent.config.model
         temperature = agent.config.temperature
         max_tokens = agent.config.max_tokens
-        provider = "anthropic"  # Default provider
+        provider = DEFAULT_LLM_PROVIDER  # Default provider (set via ATLAS_DEFAULT_LLM_PROVIDER env var)
 
         if config_override:
             provider = config_override.get("provider", provider)
@@ -931,7 +1058,7 @@ class PlaygroundRuntime:
             from infrastructure_atlas.ai.usage_service import create_usage_service as create_ai_usage_service
 
             # Determine provider from model name or session config
-            provider = "anthropic"  # Default
+            provider = DEFAULT_LLM_PROVIDER  # Default
             if session.config_override:
                 provider = session.config_override.get("provider", provider)
 

@@ -25,8 +25,8 @@ class ConfluenceRAGSettings(BaseSettings):
     embedding_model: str = "nomic-ai/nomic-embed-text-v1.5"
     embedding_dimensions: int = 768  # Can be lower for Matryoshka
 
-    # Gemini embedding settings
-    gemini_model: str = "text-embedding-004"  # or "gemini-embedding-001"
+    # Gemini embedding settings (text-embedding-004 deprecated Jan 14, 2026)
+    gemini_model: str = "gemini-embedding-001"
 
     # Vector Store Backend: "qdrant" or "duckdb" (deprecated)
     vector_store: str = "qdrant"

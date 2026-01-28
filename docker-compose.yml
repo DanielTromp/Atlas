@@ -98,6 +98,7 @@ services:
     environment:
       - MONGODB_URI=mongodb://mongodb:27017
       - ATLAS_STORAGE_BACKEND=mongodb
+      - ATLAS_RAG_QDRANT_HOST=qdrant
       # Required for Slack Socket Mode:
       # - SLACK_BOT_TOKEN=xoxb-your-bot-token
       # - SLACK_APP_TOKEN=xapp-your-app-level-token

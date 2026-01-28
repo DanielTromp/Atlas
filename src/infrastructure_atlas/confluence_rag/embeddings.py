@@ -3,7 +3,7 @@ Embedding pipelines for Confluence RAG.
 
 Supports multiple embedding providers:
 - Local: Nomic embed (requires model download, runs on CPU/GPU)
-- Gemini: Google's text-embedding-004 (API-based, free tier available)
+- Gemini: Google's gemini-embedding-001 (API-based, free tier available)
 """
 
 import logging
@@ -123,22 +123,24 @@ class GeminiEmbeddingPipeline(BaseEmbeddingPipeline):
     Google Gemini embedding pipeline.
 
     Uses the Gemini API for embeddings. Supports:
-    - text-embedding-004: FREE, 768 dimensions, excellent quality
-    - gemini-embedding-001: Paid ($0.15/1M tokens), best multilingual
+    - gemini-embedding-001: FREE tier, 768-3072 dimensions, excellent multilingual
 
+    Note: text-embedding-004 was deprecated on Jan 14, 2026.
     Uses the new google.genai SDK (replaces deprecated google.generativeai).
     """
 
     # Gemini embedding dimensions by model
+    # Note: gemini-embedding-001 supports 768, 1536, or 3072 dimensions via MRL
+    # We default to 768 for compatibility with existing Qdrant collections
     MODEL_DIMENSIONS = {
-        "text-embedding-004": 768,
         "gemini-embedding-001": 768,
+        "text-embedding-004": 768,  # deprecated Jan 14, 2026
     }
 
     def __init__(
         self,
         api_key: str | None = None,
-        model_name: str = "text-embedding-004",
+        model_name: str = "gemini-embedding-001",
         batch_size: int = 100,  # Gemini supports up to 100 texts per request
     ):
         from google import genai
@@ -176,7 +178,10 @@ class GeminiEmbeddingPipeline(BaseEmbeddingPipeline):
             response = self._client.models.embed_content(
                 model=f"models/{self.model_name}",
                 contents=[text],
-                config=types.EmbedContentConfig(task_type=task_type),
+                config=types.EmbedContentConfig(
+                    task_type=task_type,
+                    output_dimensionality=self._dimensions,  # MRL: output 768 dims for compatibility
+                ),
             )
             # New SDK returns response.embeddings list
             emb = response.embeddings[0].values
@@ -247,7 +252,7 @@ def get_embedding_pipeline(
 
     if provider == "gemini":
         model = kwargs.pop("model_name", None) or os.environ.get(
-            "ATLAS_RAG_GEMINI_MODEL", "text-embedding-004"
+            "ATLAS_RAG_GEMINI_MODEL", "gemini-embedding-001"
         )
         return GeminiEmbeddingPipeline(model_name=model, **kwargs)
 

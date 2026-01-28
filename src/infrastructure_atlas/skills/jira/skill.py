@@ -50,18 +50,34 @@ class JiraSkill(BaseSkill):
     # =========================================================================
     # Custom field ID that contains the team name
     TEAM_FIELD = os.getenv("JIRA_TEAM_FIELD", "customfield_10575")
-    # Default project for team queries
+    # Default project for team queries (ESD is the internal service desk with team field)
     DEFAULT_PROJECT = os.getenv("JIRA_DEFAULT_PROJECT", "ESD")
     # Statuses to exclude when looking for "open" tickets
     CLOSED_STATUSES = ["Closed", "Canceled", "Resolved", "Done"]
+    # Known team names for fuzzy matching (lowercase key -> actual team name)
+    # This allows users to type "Systems" and match "Systems Infrastructure"
+    KNOWN_TEAMS = [
+        "Application Management",
+        "Business Intelligence",
+        "DBA",
+        "Dynamics 365",
+        "Functional Management",
+        "ITS Incident",
+        "ITS Request",
+        "Jira (all products)",
+        "Nomios",
+        "Quality & Security",
+        "Systems Infrastructure",
+    ]
 
     def __init__(self, config: SkillConfig | None = None):
         super().__init__(config)
 
         # Get configuration from environment or config
-        self._base_url = self._get_config("base_url") or os.getenv("ATLASSIAN_BASE_URL", "").strip()
-        self._email = self._get_config("email") or os.getenv("ATLASSIAN_EMAIL", "").strip()
-        self._api_token = self._get_config("api_token") or os.getenv("ATLASSIAN_API_TOKEN", "").strip()
+        # Strip quotes that may be embedded from .env file
+        self._base_url = (self._get_config("base_url") or os.getenv("ATLASSIAN_BASE_URL", "")).strip().strip('"')
+        self._email = (self._get_config("email") or os.getenv("ATLASSIAN_EMAIL", "")).strip().strip('"')
+        self._api_token = (self._get_config("api_token") or os.getenv("ATLASSIAN_API_TOKEN", "")).strip().strip('"')
 
         self._session: requests.Session | None = None
         self._api_root: str | None = None
@@ -203,21 +219,22 @@ class JiraSkill(BaseSkill):
             name="get_team_tickets",
             func=self.get_team_tickets,
             description=(
-                "Get NEW/UNASSIGNED tickets for a team that need attention. "
-                "Use this when asked for 'new tickets', 'unassigned tickets', or 'tickets for [team name]'. "
-                "By default returns only unassigned tickets (assignee = EMPTY). "
-                "Available teams: Systems Infrastructure, Network, Security, etc."
+                "Get open tickets for a team. Returns all open tickets (assigned and unassigned) by default. "
+                "Set unassigned_only=true to filter to only unassigned tickets that need pickup. "
+                "Partial team names work (e.g., 'Systems' matches 'Systems Infrastructure'). "
+                "Available teams: Systems Infrastructure, Application Management, DBA, "
+                "Quality & Security, Nomios, Business Intelligence, Dynamics 365, Functional Management."
             ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "team": {
                         "type": "string",
-                        "description": "Team name (e.g., 'Systems Infrastructure', 'Network')",
+                        "description": "Team name - can be partial (e.g., 'Systems' for 'Systems Infrastructure')",
                     },
                     "unassigned_only": {
                         "type": "boolean",
-                        "description": "If true (default), only return unassigned tickets. Set false to include assigned tickets.",
+                        "description": "If true, only return unassigned tickets. Default is false (all open tickets).",
                     },
                     "max_results": {
                         "type": "integer",
@@ -632,24 +649,63 @@ class JiraSkill(BaseSkill):
             fields=["summary", "status", "resolution", "updated", "assignee"],
         )
 
+    def _normalize_team_name(self, team: str) -> str:
+        """Normalize a team name by matching against known teams.
+
+        This allows users to type partial team names like "Systems" and have them
+        matched to the full name "Systems Infrastructure".
+
+        Args:
+            team: User-provided team name (may be partial)
+
+        Returns:
+            Full team name if a match is found, otherwise the original input
+        """
+        team_lower = team.lower().strip()
+
+        # First, check for exact match (case-insensitive)
+        for known_team in self.KNOWN_TEAMS:
+            if known_team.lower() == team_lower:
+                return known_team
+
+        # Then, check if any known team contains the search term
+        matches = []
+        for known_team in self.KNOWN_TEAMS:
+            if team_lower in known_team.lower():
+                matches.append(known_team)
+
+        # If exactly one match, use it
+        if len(matches) == 1:
+            logger.info(f"Normalized team '{team}' to '{matches[0]}'")
+            return matches[0]
+
+        # If multiple matches, log them but return first match
+        if len(matches) > 1:
+            logger.info(f"Multiple team matches for '{team}': {matches}, using first")
+            return matches[0]
+
+        # No match found, return original (will likely return no results)
+        logger.warning(f"No matching team found for '{team}', known teams: {self.KNOWN_TEAMS}")
+        return team
+
     def get_team_tickets(
         self,
         team: str,
-        unassigned_only: bool = True,
+        unassigned_only: bool = False,
         max_results: int = 20,
         project: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Get new/unassigned tickets for a team that need attention.
+        """Get open tickets for a team.
 
         This is a convenience method that constructs the JQL query automatically
-        based on the team name, making it easier to ask for "new tickets for Systems".
+        based on the team name, making it easier to ask for "tickets for Systems".
 
-        By default, returns only UNASSIGNED tickets (tickets that need to be picked up).
-        Set unassigned_only=False to include all open tickets regardless of assignee.
+        By default, returns ALL open tickets (both assigned and unassigned).
+        Set unassigned_only=True to filter to only unassigned tickets that need pickup.
 
         Args:
-            team: Team name (e.g., "Systems Infrastructure", "Network")
-            unassigned_only: If True (default), only return unassigned tickets
+            team: Team name (e.g., "Systems Infrastructure", "Network", or partial like "Systems")
+            unassigned_only: If True, only return unassigned tickets (default: False)
             max_results: Maximum number of results (default 20)
             project: Project key (defaults to JIRA_DEFAULT_PROJECT env var or "ESD")
 
@@ -659,15 +715,18 @@ class JiraSkill(BaseSkill):
         if not self._session:
             raise RuntimeError("Jira skill not initialized")
 
+        # Normalize team name (e.g., "Systems" -> "Systems Infrastructure")
+        normalized_team = self._normalize_team_name(team)
+
         # Use configured defaults
         project_key = project or self.DEFAULT_PROJECT
         team_field = self.TEAM_FIELD
         closed_statuses = ", ".join(f'"{s}"' for s in self.CLOSED_STATUSES)
 
-        # Build JQL query
+        # Build JQL query with exact match (~ doesn't work on select fields)
         jql_parts = [
             f"project = {project_key}",
-            f'{team_field} = "{team}"',
+            f'{team_field} = "{normalized_team}"',
             f"status NOT IN ({closed_statuses})",
         ]
 
@@ -678,7 +737,13 @@ class JiraSkill(BaseSkill):
 
         logger.info(
             f"Searching for team tickets: {team}",
-            extra={"jql": jql, "project": project_key, "unassigned_only": unassigned_only},
+            extra={
+                "jql": jql,
+                "project": project_key,
+                "unassigned_only": unassigned_only,
+                "original_team": team,
+                "normalized_team": normalized_team,
+            },
         )
 
         # Include the team field in results so it's visible
