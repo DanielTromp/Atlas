@@ -6,6 +6,7 @@ agents and skills without the full orchestration pipeline.
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -599,8 +600,14 @@ class PlaygroundRuntime:
             max_iterations = 10
             model = session.config_override.get("model", agent.config.model) if session.config_override else agent.config.model
 
-            for _ in range(max_iterations):
-                response = llm.invoke(langchain_messages)
+            for iteration in range(max_iterations):
+                logger.info(f"LLM iteration {iteration + 1}/{max_iterations} starting")
+                # Use async LLM call to avoid blocking the event loop
+                response = await asyncio.wait_for(
+                    llm.ainvoke(langchain_messages),
+                    timeout=120.0,  # 2 minute timeout for LLM calls
+                )
+                logger.info(f"LLM response received, type={type(response).__name__}, has_tool_calls={hasattr(response, 'tool_calls') and bool(response.tool_calls)}")
 
                 # Track tokens separately
                 if hasattr(response, "usage_metadata") and response.usage_metadata:
@@ -609,9 +616,11 @@ class PlaygroundRuntime:
 
                 # Check for tool calls
                 if hasattr(response, "tool_calls") and response.tool_calls:
+                    logger.info(f"Processing {len(response.tool_calls)} tool calls")
                     langchain_messages.append(response)
 
                     for tool_call in response.tool_calls:
+                        logger.info(f"Tool call: {tool_call}")
                         tool_name = tool_call["name"]
                         tool_args = tool_call.get("args", {})
 
@@ -621,7 +630,15 @@ class PlaygroundRuntime:
                         )
 
                         tool_start = time.perf_counter()
-                        tool_result = self._execute_agent_tool(agent, tool_name, tool_args)
+                        # Run tool execution in thread pool with timeout to avoid blocking
+                        try:
+                            tool_result = await asyncio.wait_for(
+                                asyncio.to_thread(self._execute_agent_tool, agent, tool_name, tool_args),
+                                timeout=60.0,  # 60 second timeout for tool execution
+                            )
+                        except asyncio.TimeoutError:
+                            tool_result = f"Tool '{tool_name}' timed out after 60 seconds"
+                            logger.warning(f"Tool {tool_name} timed out")
                         tool_duration = int((time.perf_counter() - tool_start) * 1000)
 
                         # Log tool call for usage tracking
