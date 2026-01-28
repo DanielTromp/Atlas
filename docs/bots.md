@@ -530,6 +530,20 @@ SLACK_APP_TOKEN=xapp-your-app-level-token
 TELEGRAM_BOT_TOKEN=your-bot-token-from-botfather
 ```
 
+### Container Networking for RAG
+
+When running bots in containers with the `--profile bots` or `--profile full` option, the bot containers need to access other services (MongoDB, Qdrant) by container hostname, not `localhost`.
+
+The `docker-compose.yml` already sets `MONGODB_URI=mongodb://mongodb:27017` for the bot containers. If using Confluence RAG search, ensure `ATLAS_RAG_QDRANT_HOST` is set to the Qdrant container name:
+
+```yaml
+# In docker-compose.yml, under slack-bot/telegram-bot environment:
+environment:
+  - ATLAS_RAG_QDRANT_HOST=qdrant  # Use container name, not localhost
+```
+
+Without this, RAG searches will fail with "connection refused" errors because the bot container tries to connect to `localhost:6333` instead of the Qdrant container.
+
 ### Container Features
 
 The bot containers include:

@@ -38,6 +38,22 @@ The CLI automatically loads `.env` from the project root. Use `--override-env` t
 | `ATLAS_LOG_LEVEL` | `info` | CLI/background task log level |
 | `ATLAS_LOG_STRUCTURED` | `false` | Enable structured JSON logging |
 
+### AI Provider Settings
+
+Atlas uses LLM providers for the Agent Playground and bot interactions. API keys can be set in `.env` or stored encrypted in MongoDB via the web UI Settings page.
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `ATLAS_DEFAULT_LLM_PROVIDER` | No | Default LLM provider: `anthropic` (default), `openai`, `gemini`, `azure_openai` |
+| `ANTHROPIC_API_KEY` | No* | Anthropic API key for Claude models |
+| `OPENAI_API_KEY` | No* | OpenAI API key |
+| `GOOGLE_API_KEY` | No* | Google API key for Gemini models |
+| `AZURE_OPENAI_API_KEY` | No* | Azure OpenAI API key |
+| `AZURE_OPENAI_ENDPOINT` | No | Azure OpenAI endpoint URL |
+| `AZURE_OPENAI_DEPLOYMENT` | No | Azure OpenAI deployment name |
+
+\* At least one provider API key is required for AI features. Keys stored in MongoDB's `secure_settings` collection are automatically loaded at startup.
+
 ### Data Storage
 
 | Variable | Default | Description |

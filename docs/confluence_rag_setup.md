@@ -6,9 +6,10 @@ This guide covers the setup and operation of the Confluence RAG (Retrieval-Augme
 
 The Confluence RAG system uses:
 - **Qdrant** - Vector database for storing and searching embeddings
-- **Google Gemini** - Cloud embedding API (`text-embedding-004`, FREE tier, 768 dimensions)
+- **Google Gemini** - Cloud embedding API (`gemini-embedding-001`, FREE tier, 768 dimensions)
 - **Docling** - Document parsing and intelligent chunking
 - **Semantic search** - Cosine similarity for finding relevant content
+- **CQL Fallback** - Direct Confluence text search when RAG returns no results
 
 ### Embedding Provider
 
@@ -16,9 +17,10 @@ The system supports two embedding providers:
 
 | Provider | Model | Dimensions | Cost | Notes |
 |----------|-------|------------|------|-------|
-| **gemini** (default) | `text-embedding-004` | 768 | FREE | Recommended, excellent quality |
-| gemini | `gemini-embedding-001` | 768 | $0.15/1M tokens | Best multilingual |
+| **gemini** (default) | `gemini-embedding-001` | 768 | FREE | Recommended, excellent multilingual |
 | local | `nomic-embed-text-v1.5` | 768 | Free (CPU/GPU) | Requires model download |
+
+> **Note**: `text-embedding-004` has been deprecated. Use `gemini-embedding-001` for new deployments.
 
 ### Data Flow
 
@@ -71,7 +73,7 @@ ATLAS_RAG_CONFLUENCE_API_TOKEN=your-api-token
 # Embedding configuration (recommended: Gemini)
 ATLAS_RAG_EMBEDDING_PROVIDER=gemini
 GOOGLE_API_KEY=your-google-api-key  # Get at https://aistudio.google.com/apikey
-ATLAS_RAG_GEMINI_MODEL=text-embedding-004  # FREE tier
+ATLAS_RAG_GEMINI_MODEL=gemini-embedding-001  # FREE tier
 
 # Qdrant collection name (important: must match your embeddings!)
 ATLAS_RAG_QDRANT_COLLECTION=confluence_chunks_gemini
@@ -256,6 +258,8 @@ Make sure Qdrant is running: docker compose up -d
 
 3. Run a full sync if empty
 
+**Automatic Fallback**: When RAG semantic search returns no results, the system automatically falls back to direct Confluence CQL text search. This ensures users still get results even for content not yet indexed in the RAG system. The response includes `search_type: "direct"` and `fallback_reason` to indicate when fallback was used.
+
 ### Sync Shows Many Duplicates
 
 Confluence Cloud uses cursor-based pagination. Duplicates are automatically skipped, but if sync doesn't progress:
@@ -288,7 +292,7 @@ This is normal and pages are skipped.
 | `ATLAS_RAG_QDRANT_COLLECTION` | `confluence_chunks` | Qdrant collection name |
 | `ATLAS_RAG_EMBEDDING_PROVIDER` | `gemini` | Embedding provider (`gemini` or `local`) |
 | `GOOGLE_API_KEY` | (required for gemini) | Google API key for Gemini embeddings |
-| `ATLAS_RAG_GEMINI_MODEL` | `text-embedding-004` | Gemini embedding model |
+| `ATLAS_RAG_GEMINI_MODEL` | `gemini-embedding-001` | Gemini embedding model |
 | `ATLAS_RAG_EMBEDDING_MODEL` | `nomic-ai/nomic-embed-text-v1.5` | Local embedding model (if provider=local) |
 | `ATLAS_RAG_EMBEDDING_DIMENSIONS` | `768` | Vector dimensions |
 | `ATLAS_RAG_MAX_CHUNK_TOKENS` | `512` | Max tokens per chunk |
