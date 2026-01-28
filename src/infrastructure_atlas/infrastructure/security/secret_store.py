@@ -25,32 +25,75 @@ logger = logging.getLogger(__name__)
 
 SECRET_KEY_ENV = "ATLAS_SECRET_KEY"  # noqa: S105 - env var name, not a secret value
 SECURE_ENV_KEYS: tuple[str, ...] = (
+    # Core Atlas settings
     "ATLAS_API_TOKEN",
     "ATLAS_UI_SECRET",
+    "ATLAS_SSL_KEY_PASSWORD",
+    # Zabbix
+    "ZABBIX_API_URL",
+    "ZABBIX_HOST",
+    "ZABBIX_WEB_URL",
+    "ZABBIX_API_TOKEN",
+    "ZABBIX_SEVERITIES",
+    "ZABBIX_GROUP_ID",
+    # NetBox
+    "NETBOX_URL",
     "NETBOX_TOKEN",
+    "NETBOX_DEBUG",
+    "NETBOX_EXTRA_HEADERS",
+    "NETBOX_DATA_DIR",
+    # Atlassian / Confluence
+    "ATLASSIAN_BASE_URL",
     "ATLASSIAN_EMAIL",
     "ATLASSIAN_API_TOKEN",
+    "CONFLUENCE_CMDB_PAGE_ID",
+    "CONFLUENCE_DEVICES_PAGE_ID",
+    "CONFLUENCE_VMS_PAGE_ID",
+    "CONFLUENCE_ENABLE_TABLE_FILTER",
+    "CONFLUENCE_ENABLE_TABLE_SORT",
+    # Commvault
+    "COMMVAULT_BASE_URL",
     "COMMVAULT_EMAIL",
     "COMMVAULT_API_TOKEN",
+    # AI Chat providers - API keys
     "OPENAI_API_KEY",
     "OPENROUTER_API_KEY",
     "ANTHROPIC_API_KEY",
     "AZURE_OPENAI_API_KEY",
+    "AZURE_OPENAI_ENDPOINT",
+    "AZURE_OPENAI_DEPLOYMENT",
+    "AZURE_OPENAI_API_VERSION",
     "GOOGLE_API_KEY",
-    "BACKUP_PASSWORD",
     "CONTEXT7_API_KEY",
-    "ATLAS_SSL_KEY_PASSWORD",
-    # Airtable / Suggestions
-    "AIRTABLE_PAT",
-    "AIRTABLE_BASE_ID",
-    "AIRTABLE_TABLE_NAME",
-    "AIRTABLE_CACHE_TTL",
-    # AI provider default models (persisted to survive restarts)
+    # AI Chat providers - default models
     "OPENAI_DEFAULT_MODEL",
     "OPENROUTER_DEFAULT_MODEL",
     "ANTHROPIC_DEFAULT_MODEL",
     "AZURE_OPENAI_DEFAULT_MODEL",
     "GEMINI_DEFAULT_MODEL",
+    "CHAT_DEFAULT_MODEL_OPENAI",
+    "CHAT_DEFAULT_MODEL_OPENROUTER",
+    "CHAT_DEFAULT_MODEL_CLAUDE",
+    "CHAT_DEFAULT_MODEL_GEMINI",
+    "CHAT_DEFAULT_PROVIDER",
+    "CHAT_DEFAULT_TEMPERATURE",
+    # Backup settings
+    "BACKUP_PASSWORD",
+    "BACKUP_ENABLE",
+    "BACKUP_TYPE",
+    "BACKUP_LOCAL_PATH",
+    "BACKUP_HOST",
+    "BACKUP_USERNAME",
+    "BACKUP_PRIVATE_KEY_PATH",
+    "BACKUP_REMOTE_PATH",
+    "BACKUP_SCHEDULE",
+    "BACKUP_RETENTION",
+    # Airtable / Suggestions
+    "AIRTABLE_PAT",
+    "AIRTABLE_BASE_ID",
+    "AIRTABLE_TABLE_NAME",
+    "AIRTABLE_CACHE_TTL",
+    "SUGGESTIONS_BACKEND",
 )
 
 

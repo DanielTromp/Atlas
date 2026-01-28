@@ -8,23 +8,23 @@ This guide deploys Atlas (production + development) on a server using Podman wit
                          ┌─────────────────────────────────────────┐
                          │         sa-mgmt-tools-prod2             │
                          │                                         │
-    HTTPS :443 ─────────►│  ┌─────────┐                           │
-    (atlas.internal)     │  │ Traefik │──► Atlas Prod (:8000)     │
-                         │  │  Proxy  │                           │
-    HTTPS :8443 ────────►│  │         │──► Atlas Dev  (:8001)     │
-    (atlas-dev.internal) │  └─────────┘                           │
+    HTTPS :443 ─────────►│  ┌─────────┐                            │
+    (atlas.internal)     │  │ Traefik │──► Atlas Prod (:8000)      │
+                         │  │  Proxy  │                            │
+    HTTPS :8443 ────────►│  │         │──► Atlas Dev  (:8001)      │
+    (atlas-dev.internal) │  └─────────┘                            │
                          │       │                                 │
                          │       ▼                                 │
-                         │  ┌─────────┐    ┌─────────┐            │
-                         │  │ MongoDB │    │ MongoDB │            │
-                         │  │  Prod   │    │   Dev   │            │
-                         │  │ (:27017)│    │ (:27018)│            │
-                         │  └─────────┘    └─────────┘            │
+                         │  ┌─────────┐    ┌─────────┐             │
+                         │  │ MongoDB │    │ MongoDB │             │
+                         │  │  Prod   │    │   Dev   │             │
+                         │  │ (:27017)│    │ (:27018)│             │
+                         │  └─────────┘    └─────────┘             │
                          │                                         │
-                         │  /var/lib/data/                        │
-                         │  ├── Atlas/      (production)          │
-                         │  ├── Atlas-dev/  (development)         │
-                         │  └── traefik/    (reverse proxy)       │
+                         │  /var/lib/data/                         │
+                         │  ├── Atlas/      (production)           │
+                         │  ├── Atlas-dev/  (development)          │
+                         │  └── traefik/    (reverse proxy)        │
                          └─────────────────────────────────────────┘
 ```
 
@@ -325,4 +325,160 @@ cd /var/lib/data/scripts
 
 # Restart Traefik
 cd /var/lib/data/traefik && podman-compose restart
+```
+
+---
+
+## Server-Specific Configuration
+
+### DNS Configuration for Containers
+
+Containers need DNS servers that are allowed by the host firewall. Check which DNS servers are allowed:
+
+```bash
+# Check host DNS servers
+resolvectl status | grep "DNS Servers"
+
+# Check which DNS servers are allowed in firewall (iptables OUTPUT chain)
+sudo iptables -L OUTPUT -n | grep "dpt:53"
+```
+
+Update `docker-compose.yml` to use the allowed DNS servers:
+
+```yaml
+services:
+  atlas:
+    dns:
+      - 172.18.37.25  # Use your allowed internal DNS
+      - 172.18.37.26
+```
+
+### Firewall Configuration (packetfilter/iptables)
+
+If the server uses a custom firewall like `packetfilter`, add rules for Atlas:
+
+**Inbound rules** (`/etc/packetfilter.conf.d/40.services/atlas.conf`):
+```
+# Atlas Infrastructure Platform - Inbound Rules
+# raddr			|rp	|laddr			|lp	|pro |i	|dev |a|
+
+# Allow HTTPS to Atlas Development (port 8443) from internal networks
+172.18.0.0/16           |       |                       |8443   |tcp |R |    | |
+10.0.0.0/8              |       |                       |8443   |tcp |R |    | |
+```
+
+**Outbound rules** (`/etc/packetfilter.conf.d/40.services/atlas-outbound.conf`):
+```
+# Atlas Infrastructure Platform - Outbound Rules
+# raddr			|rp	|laddr			|lp	|pro |i	|dev |a|
+
+# GitLab SSH access (for git operations)
+                        |22     |                       |       |tcp |L |    | |
+```
+
+Reload firewall after changes:
+```bash
+sudo /usr/sbin/packetfilter reload
+```
+
+### Rootless Podman Networking Issues
+
+Rootless Podman uses `slirp4netns` or `pasta` for networking. If containers can't reach external services:
+
+**1. Check which network backend is in use:**
+```bash
+ps aux | grep -E "pasta|slirp" | grep -v grep
+```
+
+**2. Test container connectivity:**
+```bash
+podman exec atlas-prod curl -sk --connect-timeout 10 https://netbox.example.com/ -o /dev/null -w "%{http_code}\n"
+```
+
+**3. If DNS resolution fails, reload the network:**
+```bash
+# Kill aardvark-dns and reload network
+pkill -u $(whoami) aardvark-dns
+podman network reload atlas-prod
+```
+
+**4. If slirp4netns has issues, switch to pasta:**
+```bash
+# Create config
+mkdir -p ~/.config/containers
+cat > ~/.config/containers/containers.conf << 'EOF'
+[network]
+default_rootless_network_cmd = "pasta"
+EOF
+
+# Recreate containers
+cd /var/lib/data/Atlas && podman-compose down && podman-compose up -d
+```
+
+### Verifying Outbound Connectivity
+
+Test connectivity from containers to required services:
+
+```bash
+# Test from inside container
+for srv in netbox.example.com zabbix.example.com vcenter.example.com; do
+  podman exec atlas-prod curl -sk --connect-timeout 5 "https://${srv}/" \
+    -o /dev/null -w "${srv}: %{http_code}\n"
+done
+```
+
+Required outbound destinations for Atlas:
+| Service | Port | Protocol |
+|---------|------|----------|
+| vCenter servers | 443 | HTTPS |
+| NetBox | 443 | HTTPS |
+| Zabbix | 443 | HTTPS |
+| Commvault | 443 | HTTPS |
+| Foreman | 443 | HTTPS |
+| Atlassian | 443 | HTTPS |
+| GitLab | 22 | SSH |
+| AI APIs (OpenAI, etc.) | 443 | HTTPS |
+
+---
+
+## Settings Persistence
+
+Admin UI settings are stored encrypted in MongoDB. For settings to persist across container restarts:
+
+1. **Ensure `.env` file has real values** (not placeholders):
+   ```bash
+   # Check for placeholder values
+   grep -E "example\.com|your-domain|placeholder" /var/lib/data/Atlas/.env
+   ```
+
+2. **Settings are synced to MongoDB** when saved via the admin UI. The sync uses the `SECURE_ENV_KEYS` list in `secret_store.py`.
+
+3. **After updating `.env`, recreate containers** (restart is not enough):
+   ```bash
+   cd /var/lib/data/Atlas && podman-compose down && podman-compose up -d
+   ```
+
+---
+
+## MongoDB Data Migration
+
+### Copy data between instances (prod to dev):
+
+```bash
+# Direct pipeline - no intermediate files
+podman exec atlas-mongodb-prod mongodump --archive --db=atlas | \
+  podman exec -i atlas-mongodb-dev mongorestore --archive --drop
+```
+
+### Import from external MongoDB:
+
+```bash
+# Export from source
+mongodump --uri="mongodb://source:27017" --archive > backup.archive
+
+# Copy to server
+scp backup.archive user@sa-mgmt-tools-prod2:/tmp/
+
+# Import to container
+podman exec -i atlas-mongodb-prod mongorestore --archive --drop < /tmp/backup.archive
 ```
