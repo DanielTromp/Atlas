@@ -382,23 +382,36 @@ def sync_secure_settings(keys: Iterable[str] | None = None) -> None:
 
 
 def _sync_secure_settings_mongodb(cipher: Fernet, names: tuple[str, ...]) -> None:
-    """Sync secure settings using MongoDB."""
+    """Sync secure settings using MongoDB.
+
+    Database values have priority over .env values:
+    1. If database has a value, use it (inject into os.environ)
+    2. If database is empty but .env has a value, bootstrap database from .env
+    """
     if not _mongodb_available():
         return
 
     store = _MongoDBSecretStore(cipher)
     for name in names:
-        env_value = os.getenv(name)
-        if env_value is not None and env_value.strip():
-            store.set(name, env_value)
+        # First check database - it has priority
+        db_value = store.get(name)
+        if db_value:
+            # Database value exists - use it, overriding any .env value
+            os.environ[name] = db_value
         else:
-            secret = store.get(name)
-            if secret:
-                os.environ[name] = secret
+            # Database is empty - check if .env has a value to bootstrap
+            env_value = os.getenv(name)
+            if env_value is not None and env_value.strip():
+                store.set(name, env_value)
 
 
 def _sync_secure_settings_sqlite(cipher: Fernet, names: tuple[str, ...]) -> None:
-    """Sync secure settings using SQLite."""
+    """Sync secure settings using SQLite.
+
+    Database values have priority over .env values:
+    1. If database has a value, use it (inject into os.environ)
+    2. If database is empty but .env has a value, bootstrap database from .env
+    """
     from sqlalchemy.exc import SQLAlchemyError
 
     if not _has_secure_table():
@@ -412,14 +425,17 @@ def _sync_secure_settings_sqlite(cipher: Fernet, names: tuple[str, ...]) -> None
         changed = False
         try:
             for name in names:
-                env_value = os.getenv(name)
-                if env_value is not None and env_value.strip():
-                    if store.set(name, env_value):
-                        changed = True
+                # First check database - it has priority
+                db_value = store.get(name)
+                if db_value:
+                    # Database value exists - use it, overriding any .env value
+                    os.environ[name] = db_value
                 else:
-                    secret = store.get(name)
-                    if secret:
-                        os.environ[name] = secret
+                    # Database is empty - check if .env has a value to bootstrap
+                    env_value = os.getenv(name)
+                    if env_value is not None and env_value.strip():
+                        if store.set(name, env_value):
+                            changed = True
             if changed:
                 session.commit()
         except SQLAlchemyError as exc:
